@@ -14,18 +14,19 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-# Add prat module to path
-sys.path.insert(0, str(Path(__file__).parent))
-
-from prat.workflow import run_complete_workflow, WorkflowCheckpoint
-from prat.discovery import (
+from .workflow import run_complete_workflow, WorkflowCheckpoint
+from .discovery import (
     discover_features_make,
     discover_features_cmake,
     discover_features_autotools,
     discover_features_cargo
 )
-from prat.compilation import BuildSystem, detect_build_system
-from prat.environment import verify_dependencies
+from .compilation import BuildSystem, detect_build_system
+from .environment import verify_dependencies
+from .batch import run_batch_analysis
+from .removal import remove_feature_code
+from .verification import verify_correctness
+from .symbolic import KleeConfig
 
 
 class ProgressIndicator:
@@ -174,7 +175,10 @@ def run_analysis(
     run_tests: bool = False,
     extract: bool = False,
     verbose: bool = False,
-    output_dir: Optional[str] = None
+    output_dir: Optional[str] = None,
+    symbolic: bool = False,
+    remove: bool = False,
+    verify: bool = False,
 ) -> int:
     """
     Run PRAT analysis workflow.
@@ -207,7 +211,8 @@ def run_analysis(
             project_path=project_path,
             feature=feature,
             run_tests=run_tests,
-            output_dir=output_dir
+            output_dir=output_dir,
+            symbolic=symbolic,
         )
         
         if not result.success:
@@ -259,10 +264,36 @@ def run_analysis(
             for filename, lines in sorted_files[:5]:
                 print(f"  {filename}: {lines} lines")
         
-        print(f"\n💡 Next steps:")
-        print(f"   - Review HTML report for detailed analysis")
-        print(f"   - Inspect diff files in diff_{feature}/")
-        print(f"   - Verify results match expectations")
+        # Optional: Remove feature code
+        if remove and result.extraction_result:
+            print(f"\n{'='*70}")
+            print(f"Feature Removal: {feature}")
+            print(f"{'='*70}")
+            diff_r = result.diff_result
+            removal_result = remove_feature_code(
+                result.extraction_result,
+                project_path,
+                feature,
+                feature_only_files=diff_r.feature_only_files if diff_r else None,
+                rebuild=True,
+            )
+            if removal_result.success:
+                print(f"✓ Removed {removal_result.lines_removed} lines")
+            else:
+                print(f"✗ Removal failed: {removal_result.error_message}")
+        
+        # Optional: Post-removal verification
+        if verify:
+            ver_result = verify_correctness(project_path)
+            if not ver_result.success:
+                print(f"⚠ Verification: {ver_result.total_tests_failed} test(s) failed")
+                return 1
+        
+        if not remove:
+            print(f"\n💡 Next steps:")
+            print(f"   - Review HTML report for detailed analysis")
+            print(f"   - Run with --remove to strip feature code")
+            print(f"   - Run with --verify to test after removal")
         
         return 0
         
@@ -353,10 +384,34 @@ For more information, see docs/API.md
         help="Output directory for results (default: project directory)"
     )
     
+    parser.add_argument(
+        "--batch",
+        action="store_true",
+        help="Analyze ALL discovered features (batch mode)"
+    )
+    
+    parser.add_argument(
+        "--remove",
+        action="store_true",
+        help="Remove identified feature code from source (creates backup)"
+    )
+    
+    parser.add_argument(
+        "--symbolic",
+        action="store_true",
+        help="Generate KLEE symbolic tests for coverage amplification"
+    )
+    
+    parser.add_argument(
+        "--verify",
+        action="store_true",
+        help="Run post-removal verification (rebuild + test replay)"
+    )
+    
     args = parser.parse_args()
     
     # Validate arguments
-    if not args.list and not args.feature:
+    if not args.list and not args.batch and not args.feature:
         parser.error("feature is required unless --list is used")
     
     # Check project exists
@@ -369,6 +424,18 @@ For more information, see docs/API.md
     # List features mode
     if args.list:
         return list_features(str(project_path), args.verbose)
+    
+    # Batch mode
+    if args.batch:
+        batch_result = run_batch_analysis(
+            project_path=str(project_path),
+            output_dir=args.output,
+            run_tests=args.tests,
+        )
+        if batch_result.success:
+            print(f"\n✓ Batch analysis complete: {batch_result.features_analyzed} features analyzed")
+            return 0
+        return 1
     
     # Dry run mode
     if args.dry_run:
@@ -386,7 +453,10 @@ For more information, see docs/API.md
         run_tests=args.tests,
         extract=args.extract,
         verbose=args.verbose,
-        output_dir=args.output
+        output_dir=args.output,
+        symbolic=getattr(args, 'symbolic', False),
+        remove=getattr(args, 'remove', False),
+        verify=getattr(args, 'verify', False),
     )
 
 

@@ -20,6 +20,8 @@ from . import adapters
 from . import removal
 from . import batch
 from . import feature_graph
+from . import symbolic
+from . import verification
 
 # Import key classes and functions
 from .environment import setup_environment, verify_dependencies
@@ -33,6 +35,8 @@ from .discovery import discover_features, discover_features_cmake, discover_feat
 from .removal import remove_feature_code, restore_from_backup, RemovalResult
 from .batch import run_batch_analysis, BatchResult
 from .feature_graph import build_feature_graph, build_feature_graph_from_single, generate_feature_graph_html, FeatureGraph
+from .symbolic import generate_symbolic_tests, run_klee, compile_to_bytecode, replay_tests, check_klee_available, KleeConfig, SymbolicResult
+from .verification import verify_correctness, VerificationResult
 from .adapters import ProjectAdapter, MosquittoAdapter, FFmpegAdapter, RustAdapter, CMakeAdapter, get_adapter
 
 __all__ = [

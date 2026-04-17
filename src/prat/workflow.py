@@ -19,6 +19,7 @@ from .extraction import extract_features, ExtractionResult
 from .environment import verify_dependencies
 from .reporting import generate_html_report, generate_dot_graph, generate_html_diffs, generate_json_report
 from .adapters import get_adapter, ProjectAdapter
+from .symbolic import generate_symbolic_tests, check_klee_available, KleeConfig, SymbolicResult
 
 
 class WorkflowCheckpoint(Enum):
@@ -78,7 +79,9 @@ def run_complete_workflow(
     run_tests: bool = False,
     output_dir: Optional[str] = None,
     build_system: Optional[BuildSystem] = None,
-    adapter: Optional[ProjectAdapter] = None
+    adapter: Optional[ProjectAdapter] = None,
+    symbolic: bool = False,
+    klee_config: Optional[KleeConfig] = None,
 ) -> WorkflowResult:
     """
     Execute complete PRAT analysis workflow.
@@ -101,6 +104,9 @@ def run_complete_workflow(
         build_system: Build system to use (auto-detected if None)
         adapter: ProjectAdapter to use (auto-detected if None).
                  When provided, overrides build_system and uses adapter paths.
+        symbolic: If True, generate KLEE symbolic tests to amplify coverage.
+                  Requires KLEE (local or Docker). Falls back gracefully if unavailable.
+        klee_config: KLEE configuration (uses paper defaults if None).
         
     Returns:
         WorkflowResult with all outputs and statistics
@@ -157,6 +163,26 @@ def run_complete_workflow(
             print(f"    Source dirs: {', '.join(adapter.source_directories)}\n")
         else:
             print("[+] No project-specific adapter found — using generic pipeline\n")
+
+        # Optional: Symbolic test generation (KLEE)
+        symbolic_result = None
+        if symbolic:
+            print("[*] Symbolic test generation requested...")
+            klee_available = check_klee_available(use_docker=True) or check_klee_available(use_docker=False)
+            if klee_available:
+                symbolic_result = generate_symbolic_tests(
+                    project_path=project_path,
+                    config=klee_config,
+                    output_dir=str(Path(output_dir) / "klee_tests"),
+                    use_docker=not check_klee_available(use_docker=False),
+                )
+                if symbolic_result.success:
+                    print(f"[+] Generated {symbolic_result.test_count} symbolic test cases\n")
+                else:
+                    print(f"[!] Symbolic test generation failed (continuing without): "
+                          f"{symbolic_result.error_message}\n")
+            else:
+                print("[!] KLEE not available (local or Docker) — skipping symbolic tests\n")
 
         # Step 2: Compile with feature enabled
         print(f"[2/8] Compiling with {feature} ENABLED...")
