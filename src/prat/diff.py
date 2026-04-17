@@ -58,7 +58,8 @@ def match_coverage_files(dir1: str, dir2: str) -> List[Tuple[str, str]]:
 
 
 def diff_coverage_files(enabled_dir: str, disabled_dir: str, 
-                       feature: str) -> DiffResult:
+                       feature: str,
+                       output_dir: Optional[str] = None) -> DiffResult:
     """
     Generate unified diffs between matching coverage files.
     
@@ -66,6 +67,7 @@ def diff_coverage_files(enabled_dir: str, disabled_dir: str,
         enabled_dir: Directory with feature-enabled coverage
         disabled_dir: Directory with feature-disabled coverage
         feature: Feature name for output directory naming
+        output_dir: Base directory for diff output (default: current directory)
     
     Returns:
         DiffResult with paths to diff files and statistics
@@ -94,9 +96,13 @@ def diff_coverage_files(enabled_dir: str, disabled_dir: str,
         )
     
     # Create output directory
-    outdir = f"diff_{feature}"
+    base_dir = output_dir if output_dir else os.getcwd()
+    outdir = os.path.join(base_dir, f"diff_{feature}")
     os.makedirs(outdir, exist_ok=True)
-    os.makedirs("reports", exist_ok=True)
+
+    # Create reports directory alongside diff output
+    reports_dir = os.path.join(base_dir, "reports")
+    os.makedirs(reports_dir, exist_ok=True)
     
     # Match files between directories
     matches = match_coverage_files(enabled_dir, disabled_dir)

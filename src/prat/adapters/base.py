@@ -4,7 +4,7 @@ Base project adapter for PRAT.
 Defines the common interface that all project adapters must implement.
 """
 
-from abc import ABC, abstractmethod
+from abc import ABC, abstractmethod, abstractproperty
 from typing import List, Optional, Dict
 from pathlib import Path
 
@@ -123,6 +123,28 @@ class ProjectAdapter(ABC):
         Validate that this adapter is appropriate for the project.
         
         Returns:
-            True if project structure matches adapter expectations
+        True if project structure matches adapter expectations
         """
         return self.project_path.exists()
+
+    def get_execution_commands(self, feature: str, enabled: bool) -> List[List[str]]:
+        """
+        Get commands to execute the binary for dynamic coverage.
+
+        Dynamic coverage requires actually running the compiled binary
+        (or its test suite) so that .gcda profile data is generated.
+        Override this in project-specific adapters.
+
+        Args:
+            feature: Feature being analyzed
+            enabled: Whether the feature is enabled in this build
+
+        Returns:
+            List of commands to execute. Each command is a list of strings.
+            Empty list means "just run the test suite" (default behavior).
+        """
+        # Default: if there's a test command, use that
+        test_cmd = self.get_test_command()
+        if test_cmd:
+            return [test_cmd]
+        return []

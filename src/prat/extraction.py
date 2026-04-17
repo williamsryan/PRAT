@@ -19,6 +19,8 @@ class ExtractionResult:
     total_removable_lines: int
     file_line_numbers: Dict[str, List[int]]  # filename -> list of line numbers
     file_line_content: Dict[str, List[str]]  # filename -> list of line content
+    html_report_path: Optional[str] = None
+    dot_graph_path: Optional[str] = None
     error_message: Optional[str] = None
 
 
@@ -50,12 +52,17 @@ def count_removable_lines(diff_file: str) -> int:
     return count
 
 
-def extract_features(diff_dir: str) -> ExtractionResult:
+def extract_features(
+    diff_dir: str,
+    feature: str = "",
+    output_dir: Optional[str] = None) -> ExtractionResult:
     """
     Parse diff files and extract feature-specific code.
     
     Args:
         diff_dir: Directory containing diff files
+        feature: Feature name (used for report labeling)
+        output_dir: Base directory for output reports (default: current directory)
     
     Returns:
         ExtractionResult with line counts and file mappings
