@@ -25,3 +25,9 @@ clean :
 
 reallyclean : clean
 	rm -rf klee-*
+
+democlean : clean
+	rm -rf ../artifacts/mosquitto
+	cp -r ../App/mosquitto ../artifacts/
+	rm -rf ../artifacts/FFmpeg
+	cp -r ../App/FFmpeg ../artifacts/

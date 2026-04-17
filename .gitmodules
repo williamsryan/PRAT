@@ -1,0 +1,27 @@
+[submodule "rav1e"]
+	path = rav1e
+	url = https://github.com/xiph/rav1e.git
+[submodule "artifacts/rav1e"]
+	path = artifacts/rav1e
+	url = https://github.com/xiph/rav1e.git
+[submodule "artifacts/quiche"]
+	path = artifacts/quiche
+	url = https://github.com/cloudflare/quiche.git
+[submodule "artifacts/aom"]
+	path = artifacts/aom
+	url = https://aomedia.googlesource.com/aom
+[submodule "App/aom"]
+	path = App/aom
+	url = https://aomedia.googlesource.com/aom
+[submodule "App/quiche"]
+	path = App/quiche
+	url = https://github.com/cloudflare/quiche.git
+[submodule "App/rav1e"]
+	path = App/rav1e
+	url = https://github.com/xiph/rav1e.git
+[submodule "App/FFmpeg"]
+	path = App/FFmpeg
+	url = https://github.com/FFmpeg/FFmpeg.git
+[submodule "artifacts/FFmpeg"]
+	path = artifacts/FFmpeg
+	url = https://github.com/FFmpeg/FFmpeg.git
