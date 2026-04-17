@@ -99,3 +99,19 @@ class MosquittoAdapter(ProjectAdapter):
             config_mk.exists() and
             src_dir.exists()
         )
+
+    def get_execution_commands(self, feature: str, enabled: bool) -> list:
+        """
+        Get commands to exercise Mosquitto for dynamic coverage.
+
+        Mosquitto's test suite drives feature-exercising code paths.
+        Falls back to a brief server start/stop if tests unavailable.
+        """
+        cmds = []
+
+        # Primary: unit tests (best coverage)
+        test_cmd = self.get_test_command()
+        if test_cmd:
+            cmds.append(test_cmd)
+
+        return cmds

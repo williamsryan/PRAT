@@ -423,3 +423,96 @@ def _compile_cargo(
         coverage_enabled=True,
         build_system=BuildSystem.CARGO
     )
+
+
+def compile_with_adapter(
+    adapter,
+    feature: str,
+    enabled: bool,
+    run_tests: bool = False
+) -> CompilationResult:
+    """
+    Compile a project using a ProjectAdapter.
+
+    This is the preferred compilation path when an adapter is available.
+    The adapter provides project-specific commands, flags, and paths
+    instead of using the generic build-system dispatch.
+
+    Args:
+        adapter: A ProjectAdapter instance for the target project
+        feature: Feature name to enable/disable
+        enabled: True for feature enabled, False for disabled
+        run_tests: Whether to run test suite after compilation
+
+    Returns:
+        CompilationResult with status, binary path, and error messages
+    """
+    start_time = time.time()
+
+    try:
+        project_path = str(adapter.project_path)
+        env = os.environ.copy()
+        env.update(adapter.get_coverage_environment())
+
+        # Step 1: Clean
+        clean_cmd = adapter.get_clean_command()
+        subprocess.run(
+            clean_cmd,
+            cwd=project_path,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+
+        # Step 2: Compile
+        compile_cmd = adapter.get_compile_command(feature, enabled, with_coverage=True)
+        compile_proc = subprocess.run(
+            compile_cmd,
+            cwd=project_path,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
+
+        if compile_proc.returncode != 0:
+            return CompilationResult(
+                success=False,
+                binary_path=None,
+                error_message=f"Compilation failed: {compile_proc.stderr}",
+                compilation_time=time.time() - start_time,
+                coverage_enabled=True,
+                build_system=adapter.build_system,
+            )
+
+        # Step 3: Tests (optional)
+        if run_tests:
+            test_cmd = adapter.get_test_command()
+            if test_cmd:
+                test_proc = subprocess.run(
+                    test_cmd,
+                    cwd=project_path,
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                )
+                if test_proc.returncode != 0:
+                    print(f"[!] Tests failed: {test_proc.stderr}")
+
+        return CompilationResult(
+            success=True,
+            binary_path=adapter.get_binary_path(),
+            error_message=None,
+            compilation_time=time.time() - start_time,
+            coverage_enabled=True,
+            build_system=adapter.build_system,
+        )
+
+    except Exception as e:
+        return CompilationResult(
+            success=False,
+            binary_path=None,
+            error_message=f"Compilation with adapter failed: {e}",
+            compilation_time=time.time() - start_time,
+            coverage_enabled=False,
+            build_system=adapter.build_system,
+        )

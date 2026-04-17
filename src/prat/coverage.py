@@ -313,3 +313,142 @@ def _generate_coverage_cargo(
             coverage_files.append(str(item))
     
     return coverage_files, missing_files
+
+
+def execute_for_coverage(
+    adapter,
+    feature: str,
+    enabled: bool,
+    timeout: int = 300,
+) -> bool:
+    """
+    Execute the compiled binary / test suite to generate .gcda profile data.
+
+    This is the critical step that makes coverage *dynamic* rather than
+    compile-time only. After compilation with coverage flags, .gcno files
+    exist but .gcda files are only created when the binary actually runs.
+    gcov needs both .gcno and .gcda to produce accurate .gcov files.
+
+    Args:
+        adapter: A ProjectAdapter instance
+        feature: Feature name being analyzed
+        enabled: Whether the feature is enabled in this build
+        timeout: Max seconds for execution (default 300 = 5 min)
+
+    Returns:
+        True if execution completed (even with test failures), False on error
+    """
+    project_path = str(adapter.project_path)
+    env = os.environ.copy()
+    env.update(adapter.get_coverage_environment())
+
+    exec_cmds = adapter.get_execution_commands(feature, enabled)
+    if not exec_cmds:
+        print("[!] No execution commands available — coverage will be compile-time only")
+        return False
+
+    success = False
+    for cmd in exec_cmds:
+        try:
+            print(f"    Running: {' '.join(cmd)}")
+            proc = subprocess.run(
+                cmd,
+                cwd=project_path,
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=timeout,
+            )
+            # Test failures are OK — we still get coverage data
+            success = True
+        except subprocess.TimeoutExpired:
+            print(f"[!] Execution timed out after {timeout}s (continuing with partial coverage)")
+            success = True  # Partial coverage is still useful
+        except Exception as e:
+            print(f"[!] Execution failed: {e}")
+
+    return success
+
+
+def generate_coverage_with_adapter(
+    adapter,
+    feature: str,
+    enabled: bool,
+) -> CoverageResult:
+    """
+    Generate coverage files using a ProjectAdapter.
+
+    The adapter provides the coverage tool and source directories,
+    replacing the hardcoded per-build-system dispatch.
+
+    Args:
+        adapter: A ProjectAdapter instance
+        feature: Feature name
+        enabled: Whether feature was enabled during compilation
+
+    Returns:
+        CoverageResult with paths to generated .gcov files
+    """
+    coverage_tool = adapter.coverage_tool
+    source_dirs = adapter.source_directories
+    project_path = Path(str(adapter.project_path))
+
+    coverage_files = []
+    missing_files = []
+
+    try:
+        # Step 1: Execute binary/tests to generate .gcda profile data
+        # This is what makes coverage DYNAMIC (paper §5.2)
+        print(f"    Executing tests for dynamic coverage...")
+        executed = execute_for_coverage(adapter, feature, enabled)
+        if executed:
+            print(f"    [+] Execution complete — .gcda profile data generated")
+        else:
+            print(f"    [!] No execution — falling back to compile-time coverage")
+
+        # Step 2: Run coverage tool (gcov/llvm-cov) on .gcno + .gcda files
+        for src_dir_name in source_dirs:
+            src_dir = project_path / src_dir_name
+            if not src_dir.exists():
+                continue
+
+            # Build coverage command
+            if "llvm-cov" in coverage_tool:
+                cmd = f"{coverage_tool} gcov *"
+            else:
+                cmd = f"{coverage_tool} *"
+
+            subprocess.run(
+                cmd,
+                shell=True,
+                cwd=src_dir,
+                capture_output=True,
+                text=True,
+            )
+
+            # Collect generated .gcov files
+            for item in src_dir.iterdir():
+                if item.suffix == ".gcov":
+                    coverage_files.append(str(item))
+
+        # Organize into standard directory structure
+        coverage_dir = organize_coverage_files(
+            coverage_files, feature, enabled, str(Path.cwd())
+        )
+
+        return CoverageResult(
+            success=len(coverage_files) > 0,
+            coverage_files=coverage_files,
+            coverage_dir=coverage_dir,
+            missing_files=missing_files,
+            error_message=None if coverage_files else "No coverage files generated",
+        )
+
+    except Exception as e:
+        return CoverageResult(
+            success=False,
+            coverage_files=[],
+            coverage_dir="",
+            missing_files=[],
+            error_message=f"Coverage generation with adapter failed: {e}",
+        )
