@@ -36,10 +36,10 @@ def count_removable_lines(diff_file: str) -> int:
     """
     if not os.path.exists(diff_file):
         return 0
-    
+
     count = 0
     try:
-        with open(diff_file, 'r', encoding='utf-8', errors='ignore') as f:
+        with open(diff_file, encoding='utf-8', errors='ignore') as f:
             for line in f:
                 # Look for ##### markers (never-executed code)
                 # Exclude /*EOF*/ markers
@@ -48,7 +48,7 @@ def count_removable_lines(diff_file: str) -> int:
     except Exception as e:
         print(f"[-] Error reading {diff_file}: {e}")
         return 0
-    
+
     return count
 
 
@@ -68,7 +68,7 @@ def extract_features(
         ExtractionResult with line counts and file mappings
     """
     print(f"[+] Extract features for removal from: {diff_dir}")
-    
+
     if not os.path.exists(diff_dir):
         return ExtractionResult(
             success=False,
@@ -78,11 +78,11 @@ def extract_features(
             file_line_content={},
             error_message=f"Diff directory does not exist: {diff_dir}"
         )
-    
+
     # Get all diff files
-    diff_files = [f for f in os.listdir(diff_dir) 
+    diff_files = [f for f in os.listdir(diff_dir)
                   if os.path.isfile(os.path.join(diff_dir, f))]
-    
+
     if not diff_files:
         return ExtractionResult(
             success=False,
@@ -92,29 +92,29 @@ def extract_features(
             file_line_content={},
             error_message=f"No diff files found in {diff_dir}"
         )
-    
+
     # Data structures to store results
     file_line_counts = {}
     file_line_numbers = {}
     file_line_content = {}
     total_lines = 0
-    
+
     # Process each diff file
     for diff_file in diff_files:
         file_path = os.path.join(diff_dir, diff_file)
-        
+
         # Extract base filename (remove .gcov extension)
         # Format: filename.c.gcov -> filename.c
         file_name = diff_file
         if file_name.endswith('.gcov'):
             file_name = file_name[:-5]  # Remove .gcov
-        
+
         # Parse the diff file
         line_numbers = []
         line_contents = []
-        
+
         try:
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+            with open(file_path, encoding='utf-8', errors='ignore') as f:
                 for line in f:
                     # Look for ##### markers (never-executed code)
                     # Exclude /*EOF*/ markers
@@ -124,7 +124,7 @@ def extract_features(
                         if match:
                             line_num = int(match.group(1))
                             line_numbers.append(line_num)
-                        
+
                         # Extract source code content
                         # Format: "    #####:  123:source code here"
                         match = re.search(r'\d+:(.*)', line)
@@ -136,7 +136,7 @@ def extract_features(
         except Exception as e:
             print(f"[-] Error parsing {diff_file}: {e}")
             continue
-        
+
         # Store results if we found removable lines
         if line_numbers:
             count = len(line_numbers)
@@ -144,20 +144,20 @@ def extract_features(
             file_line_numbers[file_name] = line_numbers
             file_line_content[file_name] = line_contents
             total_lines += count
-            
-            print(f"\n------------------")
+
+            print("\n------------------")
             print(f"Lines to remove from {file_name}")
-            print(f"------------------")
+            print("------------------")
             print(f"Count: {count}")
-    
-    print(f"\n------------------")
+
+    print("\n------------------")
     print(f"Total lines to remove: {total_lines}")
-    print(f"------------------")
-    
+    print("------------------")
+
     # Print summary
     for file_name, line_nums in file_line_numbers.items():
         print(f"\t{file_name}: {line_nums}")
-    
+
     return ExtractionResult(
         success=True,
         file_line_counts=file_line_counts,

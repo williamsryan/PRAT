@@ -12,7 +12,6 @@ This module runs:
 No fuzzing — just deterministic test replay.
 """
 
-import os
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -23,7 +22,7 @@ from .symbolic import SymbolicResult, replay_tests
 
 
 @dataclass
-class TestSuiteResult:
+class SuiteResult:
     """Result of running a single test suite."""
     name: str
     success: bool
@@ -40,7 +39,7 @@ class VerificationResult:
     """Result of complete post-removal verification."""
     success: bool
     compiles: bool
-    test_suites: List[TestSuiteResult] = field(default_factory=list)
+    test_suites: List[SuiteResult] = field(default_factory=list)
     total_tests_run: int = 0
     total_tests_passed: int = 0
     total_tests_failed: int = 0
@@ -88,7 +87,7 @@ def verify_correctness(
     project = Path(project_path)
 
     print(f"\n{'='*50}")
-    print(f"PRAT Post-Removal Verification")
+    print("PRAT Post-Removal Verification")
     print(f"{'='*50}\n")
 
     result = VerificationResult(success=False, compiles=False)
@@ -101,10 +100,10 @@ def verify_correctness(
     if not compiles:
         result.error_message = "Debloated project failed to compile"
         result.total_time = time.time() - start_time
-        print(f"    [✗] Compilation FAILED — verification aborted\n")
+        print("    [✗] Compilation FAILED — verification aborted\n")
         return result
 
-    print(f"    [✓] Compilation successful\n")
+    print("    [✓] Compilation successful\n")
 
     # --- Step 2: Run project test suites ---
     print("[2] Running project test suites...")
@@ -143,7 +142,7 @@ def verify_correctness(
         status = "✓" if failed == 0 else "✗"
         print(f"    [{status}] KLEE replay: {passed}/{len(replay_results)} passed")
     else:
-        print(f"\n[3] No KLEE tests to replay — skipping")
+        print("\n[3] No KLEE tests to replay — skipping")
 
     # --- Summary ---
     result.total_time = time.time() - start_time
@@ -262,7 +261,7 @@ def _run_test_suite(
     command: List[str],
     project_path: str,
     timeout: int,
-) -> TestSuiteResult:
+) -> SuiteResult:
     """Run a single test suite and parse results."""
     start = time.time()
 
@@ -281,7 +280,7 @@ def _run_test_suite(
         # Try to parse test counts from output
         tests_run, tests_passed, tests_failed = _parse_test_output(output, proc.returncode)
 
-        return TestSuiteResult(
+        return SuiteResult(
             name=name,
             success=(proc.returncode == 0),
             tests_run=tests_run,
@@ -292,7 +291,7 @@ def _run_test_suite(
         )
 
     except subprocess.TimeoutExpired:
-        return TestSuiteResult(
+        return SuiteResult(
             name=name,
             success=False,
             tests_run=0, tests_passed=0, tests_failed=0,
@@ -300,7 +299,7 @@ def _run_test_suite(
             error_message=f"Timed out after {timeout}s",
         )
     except Exception as e:
-        return TestSuiteResult(
+        return SuiteResult(
             name=name,
             success=False,
             tests_run=0, tests_passed=0, tests_failed=0,

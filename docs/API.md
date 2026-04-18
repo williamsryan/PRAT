@@ -2,7 +2,7 @@
 
 ## Overview
 
-PRAT provides a modular Python API for analyzing feature-specific code in C/C++ projects. This document describes the public interfaces for each module.
+PRAT provides a modular Python API for analyzing feature-specific code in C/C++/Rust projects. This document describes the public interfaces for each module.
 
 ## Core Modules
 
@@ -20,7 +20,10 @@ def run_complete_workflow(
     feature: str,
     run_tests: bool = False,
     output_dir: Optional[str] = None,
-    build_system: Optional[BuildSystem] = None
+    build_system: Optional[BuildSystem] = None,
+    adapter: Optional[ProjectAdapter] = None,
+    symbolic: bool = False,
+    klee_config: Optional[KleeConfig] = None,
 ) -> WorkflowResult
 ```
 
@@ -30,6 +33,9 @@ def run_complete_workflow(
 - `run_tests`: Whether to run test suite after compilation
 - `output_dir`: Directory for output files (defaults to project_path)
 - `build_system`: Build system to use (auto-detected if None)
+- `adapter`: ProjectAdapter to use (auto-detected if None); overrides build_system
+- `symbolic`: Generate KLEE symbolic tests to amplify coverage (requires KLEE)
+- `klee_config`: KLEE configuration (uses paper defaults if None)
 
 **Returns:** `WorkflowResult` with all outputs and statistics
 
@@ -50,6 +56,8 @@ if result.success:
 
 Resume workflow from a checkpoint after error.
 
+> **Note:** Resume logic is not yet fully implemented. The function currently re-runs the complete workflow from the beginning regardless of the checkpoint. The checkpoint file still records which step failed, which is useful for debugging.
+
 ```python
 def resume_workflow(
     checkpoint_file: str,
@@ -60,22 +68,13 @@ def resume_workflow(
 ) -> WorkflowResult
 ```
 
-**Parameters:**
-- `checkpoint_file`: Path to checkpoint JSON file
-- `project_path`: Path to project root directory
-- `feature`: Feature name to analyze
-- `run_tests`: Whether to run test suite
-- `output_dir`: Directory for output files
-
-**Returns:** `WorkflowResult` from resumed execution
-
 ### compilation.py
 
 Module for compiling projects with feature flags.
 
 #### `compile_project()`
 
-Compile project with specified feature flag.
+Compile project with specified feature flag (generic, build-system-dispatch path).
 
 ```python
 def compile_project(
@@ -87,24 +86,28 @@ def compile_project(
 ) -> CompilationResult
 ```
 
-**Parameters:**
-- `project_path`: Path to project root
-- `feature`: Feature name (e.g., "TLS")
-- `enabled`: True for feature enabled, False for disabled
-- `run_tests`: Whether to run test suite after compilation
-- `build_system`: Build system to use (auto-detected if None)
+#### `compile_with_adapter()`
 
-**Returns:** `CompilationResult` with status and error messages
+Compile using a ProjectAdapter (preferred path when an adapter is available).
+
+```python
+def compile_with_adapter(
+    adapter: ProjectAdapter,
+    feature: str,
+    enabled: bool,
+    run_tests: bool = False
+) -> CompilationResult
+```
 
 #### `detect_build_system()`
 
-Detect project build system.
+Detect project build system from project files.
 
 ```python
 def detect_build_system(project_path: str) -> BuildSystem
 ```
 
-**Returns:** `BuildSystem` enum value (MAKE, CMAKE, AUTOTOOLS, CARGO)
+**Returns:** `BuildSystem` enum value (MAKE, CMAKE, AUTOTOOLS, CARGO, UNKNOWN)
 
 ### coverage.py
 
@@ -118,16 +121,36 @@ Run gcov/llvm-cov on compiled source files.
 def generate_coverage(
     project_path: str,
     feature: str,
-    enabled: bool
+    enabled: bool,
+    build_system: BuildSystem,
+    coverage_tool: str = "auto"
 ) -> CoverageResult
 ```
 
-**Parameters:**
-- `project_path`: Path to project root
-- `feature`: Feature name
-- `enabled`: Whether feature was enabled during compilation
+#### `generate_coverage_with_adapter()`
 
-**Returns:** `CoverageResult` with paths to generated .gcov files
+Generate coverage using a ProjectAdapter (preferred path).
+
+```python
+def generate_coverage_with_adapter(
+    adapter: ProjectAdapter,
+    feature: str,
+    enabled: bool,
+) -> CoverageResult
+```
+
+#### `execute_for_coverage()`
+
+Execute the compiled binary/test suite to generate `.gcda` profile data (dynamic coverage).
+
+```python
+def execute_for_coverage(
+    adapter: ProjectAdapter,
+    feature: str,
+    enabled: bool,
+    timeout: int = 300,
+) -> bool
+```
 
 ### diff.py
 
@@ -146,12 +169,6 @@ def diff_coverage_files(
 ) -> DiffResult
 ```
 
-**Parameters:**
-- `enabled_dir`: Directory with feature-enabled coverage
-- `disabled_dir`: Directory with feature-disabled coverage
-- `feature`: Feature name for output directory naming
-- `output_dir`: Base directory for diff output
-
 **Returns:** `DiffResult` with paths to diff files and statistics
 
 ### extraction.py
@@ -165,25 +182,56 @@ Parse diff files and extract feature-specific code.
 ```python
 def extract_features(
     diff_dir: str,
-    feature: str,
+    feature: str = "",
     output_dir: Optional[str] = None
 ) -> ExtractionResult
 ```
 
-**Parameters:**
-- `diff_dir`: Directory containing diff files
-- `feature`: Feature name
-- `output_dir`: Directory for output reports
-
 **Returns:** `ExtractionResult` with line counts and file mappings
+
+### discovery.py
+
+Module for discovering available features in projects.
+
+All discovery functions return `List[Feature]` (not `List[str]`).
+
+#### `discover_features()`
+
+Auto-detect build system and discover features.
+
+```python
+def discover_features(project_path: str) -> List[Feature]
+```
+
+#### `discover_features_make()`
+
+```python
+def discover_features_make(project_path: str) -> List[Feature]
+```
+
+#### `discover_features_cmake()`
+
+```python
+def discover_features_cmake(project_path: str) -> List[Feature]
+```
+
+#### `discover_features_autotools()`
+
+```python
+def discover_features_autotools(project_path: str) -> List[Feature]
+```
+
+#### `discover_features_cargo()`
+
+```python
+def discover_features_cargo(project_path: str) -> List[Feature]
+```
 
 ### docker_runner.py
 
 Module for Docker container orchestration.
 
 #### `build_docker_image()`
-
-Build Docker image from Dockerfile.
 
 ```python
 def build_docker_image(
@@ -195,18 +243,7 @@ def build_docker_image(
 ) -> bool
 ```
 
-**Parameters:**
-- `dockerfile_path`: Path to Dockerfile
-- `image_name`: Name and tag for the image
-- `build_context`: Build context directory
-- `build_args`: Build arguments to pass to Docker
-- `no_cache`: If True, build without cache
-
-**Returns:** True if build successful
-
 #### `run_docker_container()`
-
-Run Docker container and return results.
 
 ```python
 def run_docker_container(
@@ -221,59 +258,9 @@ def run_docker_container(
 ) -> ContainerResult
 ```
 
-**Parameters:**
-- `image_name`: Name of Docker image to run
-- `container_name`: Optional name for the container
-- `volumes`: Dictionary mapping host paths to container paths
-- `environment`: Environment variables to set
-- `command`: Command to run (overrides Dockerfile CMD)
-- `remove`: Auto-remove container when it exits
-- `detach`: Run in background
-- `timeout`: Maximum execution time in seconds
-
-**Returns:** `ContainerResult` with output and exit code
-
-### discovery.py
-
-Module for discovering available features in projects.
-
-#### `discover_features_make()`
-
-Discover features in Make-based projects.
-
-```python
-def discover_features_make(project_path: str) -> List[str]
-```
-
-#### `discover_features_cmake()`
-
-Discover features in CMake projects.
-
-```python
-def discover_features_cmake(project_path: str) -> List[str]
-```
-
-#### `discover_features_autotools()`
-
-Discover features in Autotools projects.
-
-```python
-def discover_features_autotools(project_path: str) -> List[str]
-```
-
-#### `discover_features_cargo()`
-
-Discover features in Rust/Cargo projects.
-
-```python
-def discover_features_cargo(project_path: str) -> List[str]
-```
-
 ## Data Models
 
 ### WorkflowResult
-
-Complete workflow execution result.
 
 ```python
 @dataclass
@@ -294,8 +281,6 @@ class WorkflowResult:
 
 ### CompilationResult
 
-Result of project compilation.
-
 ```python
 @dataclass
 class CompilationResult:
@@ -304,11 +289,10 @@ class CompilationResult:
     error_message: Optional[str]
     compilation_time: float
     coverage_enabled: bool
+    build_system: BuildSystem
 ```
 
 ### CoverageResult
-
-Result of coverage generation.
 
 ```python
 @dataclass
@@ -321,8 +305,6 @@ class CoverageResult:
 ```
 
 ### DiffResult
-
-Result of coverage diff analysis.
 
 ```python
 @dataclass
@@ -337,22 +319,30 @@ class DiffResult:
 
 ### ExtractionResult
 
-Result of feature extraction.
-
 ```python
 @dataclass
 class ExtractionResult:
     success: bool
-    file_line_counts: Dict[str, int]
+    file_line_counts: Dict[str, int]       # filename -> removable line count
     total_removable_lines: int
+    file_line_numbers: Dict[str, List[int]] # filename -> list of line numbers
+    file_line_content: Dict[str, List[str]] # filename -> list of source snippets
     html_report_path: Optional[str]
     dot_graph_path: Optional[str]
     error_message: Optional[str]
 ```
 
-### ContainerResult
+### Feature
 
-Result of Docker container execution.
+```python
+@dataclass
+class Feature:
+    name: str
+    description: Optional[str] = None
+    default_enabled: Optional[bool] = None
+```
+
+### ContainerResult
 
 ```python
 @dataclass
@@ -370,7 +360,7 @@ class ContainerResult:
 ### Example 1: Analyze Mosquitto TLS
 
 ```python
-from src.prat.workflow import run_complete_workflow
+from prat.workflow import run_complete_workflow
 
 result = run_complete_workflow(
     project_path="App/mosquitto",
@@ -388,18 +378,18 @@ if result.success:
 ### Example 2: Discover Features
 
 ```python
-from src.prat.discovery import discover_features_make
+from prat.discovery import discover_features_make
 
 features = discover_features_make("App/mosquitto")
-print(f"Available features: {', '.join(features)}")
+for f in features:
+    print(f"{f.name}: {f.description}")
 ```
 
 ### Example 3: Build and Run Docker Demo
 
 ```python
-from src.prat.docker_runner import build_docker_image, run_docker_container
+from prat.docker_runner import build_docker_image, run_docker_container
 
-# Build image
 success = build_docker_image(
     dockerfile_path="docker/demo1/Dockerfile",
     image_name="prat-demo:mosquitto-tls",
@@ -407,20 +397,18 @@ success = build_docker_image(
 )
 
 if success:
-    # Run container
     result = run_docker_container(
         image_name="prat-demo:mosquitto-tls",
         volumes={"./output": "/prat/output"},
         remove=True
     )
-    
     print(f"Container exit code: {result.exit_code}")
 ```
 
 ### Example 4: Custom Build System
 
 ```python
-from src.prat.compilation import BuildSystem, compile_project
+from prat.compilation import BuildSystem, compile_project
 
 result = compile_project(
     project_path="my-project",
@@ -431,6 +419,45 @@ result = compile_project(
 
 if result.success:
     print(f"Compilation successful: {result.binary_path}")
+```
+
+### Example 5: Custom Project Adapter
+
+```python
+from prat.adapters.base import ProjectAdapter
+from prat.compilation import BuildSystem
+from typing import List, Optional
+
+class MyProjectAdapter(ProjectAdapter):
+    @property
+    def build_system(self) -> BuildSystem:
+        return BuildSystem.MAKE
+
+    @property
+    def coverage_tool(self) -> str:
+        return "gcov"
+
+    @property
+    def source_directories(self) -> List[str]:
+        return ["src"]
+
+    def get_compile_command(
+        self, feature: str, enabled: bool, with_coverage: bool = True
+    ) -> List[str]:
+        flag = "yes" if enabled else "no"
+        cmd = ["make", f"WITH_{feature.upper()}={flag}"]
+        if with_coverage:
+            cmd.append("WITH_COVERAGE=yes")
+        return cmd
+
+    def get_clean_command(self) -> List[str]:
+        return ["make", "clean"]
+
+    def get_test_command(self) -> Optional[List[str]]:
+        return ["make", "test"]
+
+    def format_feature_flag(self, feature: str, enabled: bool) -> str:
+        return f"WITH_{feature.upper()}={'yes' if enabled else 'no'}"
 ```
 
 ## Error Handling
@@ -452,13 +479,15 @@ else:
     pass
 ```
 
-## Checkpoints and Resume
+## Checkpoints
 
-PRAT saves checkpoints during workflow execution. To resume after failure:
+PRAT saves a `workflow_checkpoint.json` after each step. The checkpoint records which step was last completed and is useful for debugging failures:
 
 ```python
-from src.prat.workflow import resume_workflow
+from prat.workflow import resume_workflow
 
+# Note: currently re-runs from the beginning, but checkpoint file
+# contains the failure context for inspection.
 result = resume_workflow(
     checkpoint_file="App/mosquitto/workflow_checkpoint.json",
     project_path="App/mosquitto",
@@ -466,46 +495,8 @@ result = resume_workflow(
 )
 ```
 
-## Advanced Usage
-
-### Custom Project Adapters
-
-Create custom adapters for unsupported build systems:
-
-```python
-from src.prat.adapters.base import ProjectAdapter
-
-class MyProjectAdapter(ProjectAdapter):
-    def get_compile_command(self, feature: str, enabled: bool) -> List[str]:
-        # Return custom compile command
-        pass
-    
-    def get_clean_command(self) -> List[str]:
-        # Return custom clean command
-        pass
-```
-
-### Parallel Processing
-
-For large projects, consider running coverage generation in parallel:
-
-```python
-from concurrent.futures import ThreadPoolExecutor
-from src.prat.coverage import generate_coverage
-
-with ThreadPoolExecutor(max_workers=4) as executor:
-    # Submit coverage tasks
-    futures = [
-        executor.submit(generate_coverage, path, feature, enabled)
-        for path, feature, enabled in tasks
-    ]
-    
-    # Collect results
-    results = [f.result() for f in futures]
-```
-
 ## See Also
 
 - [Troubleshooting Guide](TROUBLESHOOTING.md)
 - [Docker Demo Guide](../docker/README.md)
-- [Contributing Guidelines](CONTRIBUTING.md)
+- [Contributing Guidelines](../CONTRIBUTING.md)

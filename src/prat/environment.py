@@ -31,35 +31,46 @@ def verify_dependencies() -> EnvironmentResult:
     required_tools = {
         # Build tools
         'gcc': 'gcc',
-        'clang': 'clang',
         'make': 'make',
-        'cmake': 'cmake',
-        
-        # Coverage tools
-        'gcov': 'gcov',
-        'llvm-cov-9': 'llvm-cov-9',
-        
+
         # Python
         'python3': 'python3',
-        
+
         # Perl
         'perl': 'perl',
-        
-        # Optional tools
+    }
+
+    optional_tools = {
+        # Optional build tools
+        'clang': 'clang',
+        'cmake': 'cmake',
+
+        # Coverage tools (need at least one)
+        'gcov': 'gcov',
+        'llvm-cov-9': 'llvm-cov-9',
+
+        # Report tools
         'pygmentize': 'pygmentize',
         'xdot': 'xdot',
     }
-    
+
     available_tools = {}
     missing_tools = []
-    
+
     for tool_name, command in required_tools.items():
         is_available = shutil.which(command) is not None
         available_tools[tool_name] = is_available
-        
-        if not is_available and tool_name not in ['pygmentize', 'xdot']:
+        if not is_available:
             missing_tools.append(tool_name)
-    
+
+    for tool_name, command in optional_tools.items():
+        available_tools[tool_name] = shutil.which(command) is not None
+
+    # Require at least one coverage tool
+    has_coverage_tool = available_tools.get('gcov') or available_tools.get('llvm-cov-9')
+    if not has_coverage_tool:
+        missing_tools.append('gcov (or llvm-cov-9)')
+
     # Check Python packages
     python_packages = ['toml', 'pandas']
     for package in python_packages:
@@ -69,13 +80,13 @@ def verify_dependencies() -> EnvironmentResult:
         except ImportError:
             available_tools[f'python-{package}'] = False
             missing_tools.append(f'python-{package}')
-    
+
     success = len(missing_tools) == 0
     error_message = None
-    
+
     if not success:
         error_message = f"Missing required dependencies: {', '.join(missing_tools)}"
-    
+
     return EnvironmentResult(
         success=success,
         available_tools=available_tools,
@@ -96,17 +107,17 @@ def setup_environment() -> EnvironmentResult:
     """
     # First verify what's already available
     initial_check = verify_dependencies()
-    
+
     if initial_check.success:
         return initial_check
-    
+
     print("[+] Setting up PRAT environment...")
     print(f"[+] Missing dependencies: {', '.join(initial_check.missing_tools)}")
-    
+
     # Attempt to install system packages
     system_packages = []
     python_packages = []
-    
+
     for tool in initial_check.missing_tools:
         if tool.startswith('python-'):
             python_packages.append(tool.replace('python-', ''))
@@ -116,7 +127,7 @@ def setup_environment() -> EnvironmentResult:
             python_packages.append('Pygments')
         else:
             system_packages.append(tool)
-    
+
     # Install system packages
     if system_packages:
         print(f"[+] Installing system packages: {', '.join(system_packages)}")
@@ -138,7 +149,7 @@ def setup_environment() -> EnvironmentResult:
                 missing_tools=initial_check.missing_tools,
                 error_message=f"Failed to install system packages: {e}"
             )
-    
+
     # Install Python packages
     if python_packages:
         print(f"[+] Installing Python packages: {', '.join(python_packages)}")
@@ -155,15 +166,15 @@ def setup_environment() -> EnvironmentResult:
                 missing_tools=initial_check.missing_tools,
                 error_message=f"Failed to install Python packages: {e}"
             )
-    
+
     # Verify installation was successful
     final_check = verify_dependencies()
-    
+
     if final_check.success:
         print("[+] Environment setup complete!")
     else:
         print(f"[-] Some dependencies could not be installed: {', '.join(final_check.missing_tools)}")
-    
+
     return final_check
 
 

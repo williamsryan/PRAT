@@ -1,6 +1,7 @@
 """Tests for prat.symbolic module."""
 
 import os
+import subprocess
 import pytest
 from unittest.mock import patch, MagicMock
 from pathlib import Path
@@ -188,7 +189,6 @@ class TestReplayTests:
         mock_which.return_value = "/usr/bin/klee-replay"
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="test", timeout=10)
 
-        import subprocess
         results = replay_tests("/bin/test", ["/tmp/test000001.ktest"])
         assert results["test000001.ktest"] is True
 

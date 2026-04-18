@@ -131,12 +131,12 @@ def remove_feature_code(
         # --- Rebuild verification ---
         rebuild_success = None
         if rebuild:
-            print(f"\n[+] Rebuilding to verify removal...")
+            print("\n[+] Rebuilding to verify removal...")
             rebuild_success = _rebuild_project(project_path, build_command)
             if rebuild_success:
-                print(f"    [+] Rebuild successful — removal is safe")
+                print("    [+] Rebuild successful — removal is safe")
             else:
-                print(f"    [!] Rebuild FAILED — removal may have broken compilation")
+                print("    [!] Rebuild FAILED — removal may have broken compilation")
 
         return RemovalResult(
             success=True,
@@ -239,7 +239,7 @@ def _remove_lines_from_file(file_path: Path, line_numbers: Set[int]) -> int:
         Number of lines actually removed
     """
     try:
-        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+        with open(file_path, encoding="utf-8", errors="ignore") as f:
             lines = f.readlines()
 
         removed = 0

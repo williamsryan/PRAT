@@ -7,12 +7,12 @@ for feature extraction results. No external CDN dependencies.
 
 import json
 import os
-import subprocess
 import shutil
+import subprocess
 from pathlib import Path
-from typing import Optional, Dict
-from .extraction import ExtractionResult
+from typing import Dict
 
+from .extraction import ExtractionResult
 
 # ---------------------------------------------------------------------------
 # HTML report

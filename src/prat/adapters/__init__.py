@@ -9,10 +9,10 @@ from pathlib import Path
 from typing import Optional
 
 from .base import ProjectAdapter
-from .mosquitto import MosquittoAdapter
-from .ffmpeg import FFmpegAdapter
-from .rust import RustAdapter
 from .cmake import CMakeAdapter
+from .ffmpeg import FFmpegAdapter
+from .mosquitto import MosquittoAdapter
+from .rust import RustAdapter
 
 __all__ = [
     'ProjectAdapter',

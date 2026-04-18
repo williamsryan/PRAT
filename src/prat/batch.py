@@ -11,10 +11,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 
-from .discovery import discover_features, Feature
-from .workflow import run_complete_workflow, WorkflowResult
+from .adapters import ProjectAdapter, get_adapter
 from .compilation import BuildSystem
-from .adapters import get_adapter, ProjectAdapter
+from .discovery import Feature, discover_features
+from .workflow import WorkflowResult, run_complete_workflow
 
 
 @dataclass
@@ -167,14 +167,14 @@ def run_batch_analysis(
             print(f"    [!] Exception: {e}")
 
     # Step 3: Build cross-feature dependency map
-    print(f"\n[3] Building cross-feature dependency map...")
+    print("\n[3] Building cross-feature dependency map...")
     cross_map = _build_cross_feature_map(feature_results)
 
     # Print summary
     elapsed = time.time() - start_time
 
     print(f"\n{'='*70}")
-    print(f"BATCH ANALYSIS COMPLETE")
+    print("BATCH ANALYSIS COMPLETE")
     print(f"{'='*70}")
     print(f"  Features discovered: {len(features)}")
     print(f"  Features analyzed:   {analyzed}")
@@ -183,11 +183,11 @@ def run_batch_analysis(
     print(f"  Total time:          {elapsed:.1f}s")
 
     if cross_map.shared_files:
-        print(f"\n  Cross-feature file sharing:")
+        print("\n  Cross-feature file sharing:")
         for pair, files in sorted(cross_map.shared_files.items()):
             print(f"    {pair}: {len(files)} shared files")
 
-    print(f"\n  Per-feature breakdown:")
+    print("\n  Per-feature breakdown:")
     for name, fa in sorted(
         feature_results.items(),
         key=lambda x: x[1].removable_lines,

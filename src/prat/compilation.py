@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional
 
 
 class BuildSystem(Enum):
@@ -46,23 +46,23 @@ def detect_build_system(project_path: str) -> BuildSystem:
         BuildSystem enum value indicating detected build system
     """
     project_path = Path(project_path)
-    
+
     # Check for Cargo.toml (Rust)
     if (project_path / "Cargo.toml").exists():
         return BuildSystem.CARGO
-    
+
     # Check for CMakeLists.txt (CMake)
     if (project_path / "CMakeLists.txt").exists():
         return BuildSystem.CMAKE
-    
+
     # Check for configure script (Autotools)
     if (project_path / "configure").exists():
         return BuildSystem.AUTOTOOLS
-    
+
     # Check for Makefile (Make)
     if (project_path / "Makefile").exists():
         return BuildSystem.MAKE
-    
+
     return BuildSystem.UNKNOWN
 
 
@@ -87,11 +87,11 @@ def compile_project(
         CompilationResult with status, binary path, and error messages
     """
     start_time = time.time()
-    
+
     # Auto-detect build system if not specified
     if build_system is None:
         build_system = detect_build_system(project_path)
-    
+
     if build_system == BuildSystem.UNKNOWN:
         return CompilationResult(
             success=False,
@@ -101,7 +101,7 @@ def compile_project(
             coverage_enabled=False,
             build_system=build_system
         )
-    
+
     # Dispatch to appropriate compilation function
     try:
         if build_system == BuildSystem.MAKE:
@@ -121,13 +121,13 @@ def compile_project(
                 coverage_enabled=False,
                 build_system=build_system
             )
-        
+
         compilation_time = time.time() - start_time
         result.compilation_time = compilation_time
         result.build_system = build_system
-        
+
         return result
-        
+
     except Exception as e:
         return CompilationResult(
             success=False,
@@ -148,7 +148,7 @@ def _compile_make(
     """Compile Make-based project (e.g., Mosquitto)."""
     flag = "yes" if enabled else "no"
     target = f"WITH_{feature.upper()}={flag}"
-    
+
     # Clean previous build
     clean_proc = subprocess.run(
         ["make", "clean"],
@@ -156,7 +156,7 @@ def _compile_make(
         capture_output=True,
         text=True
     )
-    
+
     # Compile with coverage enabled
     compile_proc = subprocess.run(
         ["make", "binary", "-j", "WITH_COVERAGE=yes", target],
@@ -164,7 +164,7 @@ def _compile_make(
         capture_output=True,
         text=True
     )
-    
+
     if compile_proc.returncode != 0:
         return CompilationResult(
             success=False,
@@ -174,7 +174,7 @@ def _compile_make(
             coverage_enabled=True,
             build_system=BuildSystem.MAKE
         )
-    
+
     # Run tests if requested
     if run_tests:
         test_proc = subprocess.run(
@@ -185,7 +185,7 @@ def _compile_make(
         )
         if test_proc.returncode != 0:
             print(f"[!] Tests failed: {test_proc.stderr}")
-    
+
     # Find binary (project-specific, may need adjustment)
     binary_path = None
     src_dir = Path(project_path) / "src"
@@ -195,7 +195,7 @@ def _compile_make(
             if item.is_file() and os.access(item, os.X_OK):
                 binary_path = str(item)
                 break
-    
+
     return CompilationResult(
         success=True,
         binary_path=binary_path,
@@ -215,19 +215,19 @@ def _compile_cmake(
     """Compile CMake-based project."""
     flag = "1" if enabled else "0"
     target = f"-DCONFIG_{feature.upper()}={flag}"
-    
+
     build_dir = Path(project_path) / "build"
     build_dir.mkdir(exist_ok=True)
-    
+
     # Configure with CMake
     cmake_proc = subprocess.run(
-        ["cmake", target, "-DCMAKE_BUILD_TYPE=Debug", 
+        ["cmake", target, "-DCMAKE_BUILD_TYPE=Debug",
          "-DCMAKE_C_FLAGS=--coverage", "-DCMAKE_CXX_FLAGS=--coverage", ".."],
         cwd=build_dir,
         capture_output=True,
         text=True
     )
-    
+
     if cmake_proc.returncode != 0:
         return CompilationResult(
             success=False,
@@ -237,7 +237,7 @@ def _compile_cmake(
             coverage_enabled=True,
             build_system=BuildSystem.CMAKE
         )
-    
+
     # Build
     make_proc = subprocess.run(
         ["make", "-j3"],
@@ -245,7 +245,7 @@ def _compile_cmake(
         capture_output=True,
         text=True
     )
-    
+
     if make_proc.returncode != 0:
         return CompilationResult(
             success=False,
@@ -255,7 +255,7 @@ def _compile_cmake(
             coverage_enabled=True,
             build_system=BuildSystem.CMAKE
         )
-    
+
     # Run tests if requested
     if run_tests:
         test_proc = subprocess.run(
@@ -266,7 +266,7 @@ def _compile_cmake(
         )
         if test_proc.returncode != 0:
             print(f"[!] Tests failed: {test_proc.stderr}")
-    
+
     return CompilationResult(
         success=True,
         binary_path=str(build_dir),
@@ -288,16 +288,16 @@ def _compile_autotools(
     if enabled:
         configure_args = ["bash", "configure", "--toolchain=gcov"]
     else:
-        configure_args = ["bash", "configure", "--toolchain=gcov", 
+        configure_args = ["bash", "configure", "--toolchain=gcov",
                          f"--disable-{feature.lower()}"]
-    
+
     configure_proc = subprocess.run(
         configure_args,
         cwd=project_path,
         capture_output=True,
         text=True
     )
-    
+
     if configure_proc.returncode != 0:
         return CompilationResult(
             success=False,
@@ -307,7 +307,7 @@ def _compile_autotools(
             coverage_enabled=True,
             build_system=BuildSystem.AUTOTOOLS
         )
-    
+
     # Clean
     clean_proc = subprocess.run(
         ["make", "clean"],
@@ -315,7 +315,7 @@ def _compile_autotools(
         capture_output=True,
         text=True
     )
-    
+
     # Build
     make_proc = subprocess.run(
         ["make", "-j3"],
@@ -323,7 +323,7 @@ def _compile_autotools(
         capture_output=True,
         text=True
     )
-    
+
     if make_proc.returncode != 0:
         return CompilationResult(
             success=False,
@@ -333,7 +333,7 @@ def _compile_autotools(
             coverage_enabled=True,
             build_system=BuildSystem.AUTOTOOLS
         )
-    
+
     # Run tests if requested
     if run_tests:
         test_proc = subprocess.run(
@@ -344,7 +344,7 @@ def _compile_autotools(
         )
         if test_proc.returncode != 0:
             print(f"[!] Tests failed: {test_proc.stderr}")
-    
+
     return CompilationResult(
         success=True,
         binary_path=project_path,
@@ -367,7 +367,7 @@ def _compile_cargo(
     env["CARGO_INCREMENTAL"] = "0"
     env["RUSTFLAGS"] = "-Zprofile -Ccodegen-units=1 -Copt-level=0 -Clink-dead-code -Coverflow-checks=off -Zpanic_abort_tests -Cpanic=abort"
     env["RUSTDOCFLAGS"] = "-Cpanic=abort"
-    
+
     # Clean
     clean_proc = subprocess.run(
         ["cargo", "clean"],
@@ -376,13 +376,13 @@ def _compile_cargo(
         text=True,
         env=env
     )
-    
+
     # Build
     if enabled:
         build_args = ["cargo", "build", "--features", feature.lower()]
     else:
         build_args = ["cargo", "build", "--no-default-features"]
-    
+
     build_proc = subprocess.run(
         build_args,
         cwd=project_path,
@@ -390,7 +390,7 @@ def _compile_cargo(
         text=True,
         env=env
     )
-    
+
     if build_proc.returncode != 0:
         return CompilationResult(
             success=False,
@@ -400,7 +400,7 @@ def _compile_cargo(
             coverage_enabled=True,
             build_system=BuildSystem.CARGO
         )
-    
+
     # Run tests if requested
     if run_tests:
         test_proc = subprocess.run(
@@ -412,9 +412,9 @@ def _compile_cargo(
         )
         if test_proc.returncode != 0:
             print(f"[!] Tests failed: {test_proc.stderr}")
-    
+
     binary_path = str(Path(project_path) / "target" / "debug")
-    
+
     return CompilationResult(
         success=True,
         binary_path=binary_path,
@@ -464,25 +464,25 @@ def compile_with_adapter(
             env=env,
         )
 
-        # Step 2: Compile
-        compile_cmd = adapter.get_compile_command(feature, enabled, with_coverage=True)
-        compile_proc = subprocess.run(
-            compile_cmd,
-            cwd=project_path,
-            capture_output=True,
-            text=True,
-            env=env,
-        )
-
-        if compile_proc.returncode != 0:
-            return CompilationResult(
-                success=False,
-                binary_path=None,
-                error_message=f"Compilation failed: {compile_proc.stderr}",
-                compilation_time=time.time() - start_time,
-                coverage_enabled=True,
-                build_system=adapter.build_system,
+        # Step 2: Compile (adapters may require multiple commands, e.g. configure + make)
+        build_cmds = adapter.get_build_commands(feature, enabled, with_coverage=True)
+        for build_cmd in build_cmds:
+            compile_proc = subprocess.run(
+                build_cmd,
+                cwd=project_path,
+                capture_output=True,
+                text=True,
+                env=env,
             )
+            if compile_proc.returncode != 0:
+                return CompilationResult(
+                    success=False,
+                    binary_path=None,
+                    error_message=f"Compilation failed ({' '.join(build_cmd[:2])}): {compile_proc.stderr}",
+                    compilation_time=time.time() - start_time,
+                    coverage_enabled=True,
+                    build_system=adapter.build_system,
+                )
 
         # Step 3: Tests (optional)
         if run_tests:

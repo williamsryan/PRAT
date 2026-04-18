@@ -16,7 +16,6 @@ KLEE requires a specific environment (LLVM 9/11, uclibc, etc.).
 This module supports both local KLEE and Docker-based execution.
 """
 
-import json
 import os
 import shutil
 import subprocess
@@ -384,7 +383,7 @@ def generate_symbolic_tests(
         config = KleeConfig()
 
     print(f"\n{'='*50}")
-    print(f"PRAT Symbolic Test Generation")
+    print("PRAT Symbolic Test Generation")
     print(f"{'='*50}\n")
 
     # Step 1: Find source files if not specified

@@ -12,11 +12,10 @@ and generates a self-contained interactive HTML visualization.
 import json
 import os
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Dict, List, Optional, Set, Any
+from typing import Any, Dict, List, Set
 
+from .batch import BatchResult
 from .extraction import ExtractionResult
-from .batch import BatchResult, FeatureAnalysis, CrossFeatureMap
 
 
 @dataclass
