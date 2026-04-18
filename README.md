@@ -55,6 +55,13 @@ prat App/mosquitto TLS                  # analyze a feature
 prat App/mosquitto --list               # list discovered features
 prat App/mosquitto TLS --dry-run        # preview without executing
 prat App/mosquitto TLS --tests --verbose
+
+# Equivalent module invocations (no install required if venv is active):
+python3 -m prat App/mosquitto TLS
+python3 -m prat.cli App/mosquitto TLS
+
+# Without a venv (from repo root):
+PYTHONPATH=src python3 -m prat App/mosquitto TLS
 ```
 
 ### Workflow API
