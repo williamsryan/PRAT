@@ -44,8 +44,9 @@ WORKDIR /prat
 # Copy PRAT source code
 COPY src/ /prat/src/
 
-# Copy FFmpeg source code
-COPY App/FFmpeg/ /prat/App/FFmpeg/
+# Fetch FFmpeg source (pinned version — matches scripts/fetch-targets.sh)
+RUN git clone --depth 1 --branch n5.1.4 \
+    https://github.com/FFmpeg/FFmpeg.git /prat/App/FFmpeg
 
 # Set environment variables
 ENV PROJECT_PATH=/prat/App/FFmpeg

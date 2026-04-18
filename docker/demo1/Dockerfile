@@ -38,8 +38,9 @@ WORKDIR /prat
 # Copy PRAT source code
 COPY src/ /prat/src/
 
-# Copy Mosquitto source code
-COPY App/mosquitto/ /prat/App/mosquitto/
+# Fetch Mosquitto source (pinned version — matches scripts/fetch-targets.sh)
+RUN git clone --depth 1 --branch v2.0.15 \
+    https://github.com/eclipse/mosquitto.git /prat/App/mosquitto
 
 # Set environment variables
 ENV PROJECT_PATH=/prat/App/mosquitto
