@@ -21,27 +21,43 @@ PRAT identifies and extracts feature-specific code from C/C++/Rust projects usin
 - Build tools: gcc, make, cmake
 - Coverage tools: gcov or llvm-cov
 
-### Installation
+### Setup
 
 ```bash
 git clone <repository-url>
 cd PRAT
-pip install -e ".[dev]"
+make setup      # create .venv and install prat + dev deps
+make fetch      # clone Mosquitto v2.0.15 and FFmpeg n5.1.4 into App/
 ```
 
-### Fetch Target Projects
-
-Target projects (Mosquitto, FFmpeg) are not vendored in the repo. Fetch them with:
+Or manually:
 
 ```bash
-./scripts/fetch-targets.sh          # All targets
-./scripts/fetch-targets.sh mosquitto  # Just Mosquitto
-./scripts/fetch-targets.sh ffmpeg     # Just FFmpeg
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
+./scripts/fetch-targets.sh
 ```
 
-### Running PRAT
+### Run an Analysis
 
-#### Using the Workflow API (Recommended)
+```bash
+make demo-mosquitto-tls    # analyze Mosquitto TLS → results/mosquitto-tls/
+make demo-mosquitto-bridge # analyze Mosquitto BRIDGE
+make demo-ffmpeg-x264      # analyze FFmpeg x264
+make demo-all              # run all three
+make graph                 # open the HTML report in your browser
+```
+
+Or with the CLI directly (after `source .venv/bin/activate`):
+
+```bash
+prat App/mosquitto TLS                  # analyze a feature
+prat App/mosquitto --list               # list discovered features
+prat App/mosquitto TLS --dry-run        # preview without executing
+prat App/mosquitto TLS --tests --verbose
+```
+
+### Workflow API
 
 ```python
 from prat.workflow import run_complete_workflow
@@ -55,31 +71,20 @@ result = run_complete_workflow(
 print(f"Removable lines: {result.extraction_result.total_removable_lines}")
 ```
 
-#### Using the CLI
+### Docker Demos
+
+Self-contained demos that clone and build the target projects inside the image:
 
 ```bash
-# Analyze a feature
-prat App/mosquitto TLS
-
-# List available features
-prat App/mosquitto --list
-
-# Dry run (preview operations)
-prat App/mosquitto TLS --dry-run
-
-# With test suite
-prat App/mosquitto TLS --tests --verbose
+make docker-build   # build all three demo images
+make docker-run     # run all demos → results/docker/ + demo_report.txt
 ```
 
-#### Using Docker Demos
+Or individually:
 
 ```bash
-# Build and run a demo
-python3 src/demo-runner.py --build mosquitto-tls
-python3 src/demo-runner.py --run mosquitto-tls --output demo_output
-
-# Run all demos with comparison report
-python3 src/demo-runner.py --run-all --output demo_output
+make docker-demo-mosquitto-tls
+make docker-demo-ffmpeg
 ```
 
 ## Architecture
@@ -135,17 +140,16 @@ See `docker/README.md` for detailed Docker instructions.
 ## Development
 
 ```bash
-# Install with dev dependencies
-pip install -e ".[dev]"
+source .venv/bin/activate   # activate venv first
 
-# Run tests
-pytest
+make test        # run full test suite (158 tests)
+make test-fast   # stop on first failure
+make lint        # ruff check src/prat/
+mypy src/prat/   # type checking (49 pre-existing errors, cosmetic)
 
-# Type checking
-mypy src/prat/
-
-# Lint
-ruff check src/
+# Run a single test file or test by name
+pytest src/tests/test_workflow.py
+pytest -k "test_name"
 ```
 
 ## Documentation
@@ -157,4 +161,4 @@ ruff check src/
 
 ## License
 
-See `LICENSE.txt` for license information.
+MIT License. See `pyproject.toml` for details.
