@@ -223,7 +223,7 @@ def run_complete_workflow(
         result.checkpoint = WorkflowCheckpoint.COVERAGE_ENABLED
 
         if adapter:
-            cov_enabled = generate_coverage_with_adapter(adapter, feature, True)
+            cov_enabled = generate_coverage_with_adapter(adapter, feature, True, output_dir=output_dir)
         else:
             cov_enabled = generate_coverage(
                 project_path=project_path,
@@ -272,7 +272,7 @@ def run_complete_workflow(
         result.checkpoint = WorkflowCheckpoint.COVERAGE_DISABLED
 
         if adapter:
-            cov_disabled = generate_coverage_with_adapter(adapter, feature, False)
+            cov_disabled = generate_coverage_with_adapter(adapter, feature, False, output_dir=output_dir)
         else:
             cov_disabled = generate_coverage(
                 project_path=project_path,

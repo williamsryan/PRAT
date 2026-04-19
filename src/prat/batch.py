@@ -14,6 +14,7 @@ from typing import Dict, List, Optional, Set
 from .adapters import ProjectAdapter, get_adapter
 from .compilation import BuildSystem
 from .discovery import Feature, discover_features
+from .feature_graph import build_feature_graph, generate_feature_graph_html
 from .workflow import WorkflowResult, run_complete_workflow
 
 

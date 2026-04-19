@@ -1,7 +1,7 @@
 {
   "feature": "TLS",
-  "total_removable_lines": 2809,
-  "files_affected": 47,
+  "total_removable_lines": 2783,
+  "files_affected": 45,
   "files": [
     {
       "file": "handle_connect.c",
@@ -2612,7 +2612,7 @@
     },
     {
       "file": "mux_poll.c",
-      "removable_lines": 32,
+      "removable_lines": 30,
       "line_numbers": [
         118,
         122,
@@ -2623,8 +2623,6 @@
         147,
         154,
         156,
-        225,
-        227,
         269,
         273,
         292,
@@ -2646,40 +2644,6 @@
         346,
         347,
         348
-      ]
-    },
-    {
-      "file": "bridge.c",
-      "removable_lines": 28,
-      "line_numbers": [
-        101,
-        104,
-        105,
-        106,
-        107,
-        108,
-        109,
-        110,
-        111,
-        112,
-        113,
-        114,
-        115,
-        117,
-        118,
-        623,
-        624,
-        626,
-        627,
-        628,
-        629,
-        631,
-        720,
-        721,
-        735,
-        737,
-        869,
-        870
       ]
     },
     {
@@ -2716,35 +2680,6 @@
       ]
     },
     {
-      "file": "plugin.c",
-      "removable_lines": 23,
-      "line_numbers": [
-        130,
-        135,
-        137,
-        138,
-        139,
-        141,
-        142,
-        143,
-        145,
-        146,
-        148,
-        182,
-        184,
-        185,
-        197,
-        198,
-        199,
-        203,
-        204,
-        205,
-        210,
-        211,
-        216
-      ]
-    },
-    {
       "file": "messages_mosq.c",
       "removable_lines": 22,
       "line_numbers": [
@@ -2770,6 +2705,34 @@
         312,
         314,
         317
+      ]
+    },
+    {
+      "file": "bridge.c",
+      "removable_lines": 22,
+      "line_numbers": [
+        101,
+        104,
+        105,
+        106,
+        107,
+        108,
+        109,
+        110,
+        111,
+        112,
+        113,
+        114,
+        115,
+        117,
+        118,
+        623,
+        624,
+        626,
+        627,
+        628,
+        629,
+        631
       ]
     },
     {
@@ -2841,6 +2804,26 @@
         151,
         166,
         176
+      ]
+    },
+    {
+      "file": "plugin.c",
+      "removable_lines": 14,
+      "line_numbers": [
+        130,
+        135,
+        137,
+        138,
+        139,
+        141,
+        142,
+        143,
+        145,
+        146,
+        148,
+        182,
+        184,
+        185
       ]
     },
     {
@@ -2967,21 +2950,6 @@
       ]
     },
     {
-      "file": "keepalive.c",
-      "removable_lines": 9,
-      "line_numbers": [
-        28,
-        30,
-        32,
-        55,
-        56,
-        71,
-        74,
-        76,
-        77
-      ]
-    },
-    {
       "file": "strings_mosq.c",
       "removable_lines": 9,
       "line_numbers": [
@@ -3025,6 +2993,19 @@
       ]
     },
     {
+      "file": "keepalive.c",
+      "removable_lines": 7,
+      "line_numbers": [
+        28,
+        30,
+        32,
+        71,
+        74,
+        76,
+        77
+      ]
+    },
+    {
       "file": "logging_mosq.c",
       "removable_lines": 5,
       "line_numbers": [
@@ -3036,31 +3017,12 @@
       ]
     },
     {
-      "file": "will_delay.c",
-      "removable_lines": 4,
-      "line_numbers": [
-        71,
-        93,
-        95,
-        99
-      ]
-    },
-    {
       "file": "util_topic.c",
       "removable_lines": 3,
       "line_numbers": [
         59,
         64,
         82
-      ]
-    },
-    {
-      "file": "session_expiry.c",
-      "removable_lines": 3,
-      "line_numbers": [
-        133,
-        164,
-        166
       ]
     },
     {

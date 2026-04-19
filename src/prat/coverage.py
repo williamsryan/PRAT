@@ -374,6 +374,7 @@ def generate_coverage_with_adapter(
     adapter,
     feature: str,
     enabled: bool,
+    output_dir: Optional[str] = None,
 ) -> CoverageResult:
     """
     Generate coverage files using a ProjectAdapter.
@@ -438,8 +439,9 @@ def generate_coverage_with_adapter(
                         coverage_files.append(str(item))
 
         # Organize into standard directory structure
+        base_dir = output_dir if output_dir else str(Path.cwd())
         coverage_dir = organize_coverage_files(
-            coverage_files, feature, enabled, str(Path.cwd())
+            coverage_files, feature, enabled, base_dir
         )
 
         return CoverageResult(
