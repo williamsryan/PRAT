@@ -124,8 +124,9 @@ class MosquittoAdapter(ProjectAdapter):
 
     def _write_mosquitto_config(self, feature: str, enabled: bool) -> str:
         """Write a minimal mosquitto.conf for the PRAT test run and return its path."""
-        ssl_dir = self.project_path / "test" / "ssl"
-        config_path = self.project_path / "build" / f"prat_{feature.lower()}_{int(enabled)}.conf"
+        root = self.project_path.resolve()
+        ssl_dir = root / "test" / "ssl"
+        config_path = root / "build" / f"prat_{feature.lower()}_{int(enabled)}.conf"
 
         use_tls = feature.upper() == "TLS" and enabled and ssl_dir.exists()
         port = 18883 if use_tls else 11883
@@ -153,17 +154,19 @@ class MosquittoAdapter(ProjectAdapter):
             test_cmd = self.get_test_command()
             return [test_cmd] if test_cmd else []
 
-        broker = str(self.project_path / "build" / "src" / "mosquitto")
-        pub = str(self.project_path / "build" / "client" / "mosquitto_pub")
-        ssl_dir = self.project_path / "test" / "ssl"
+        root = self.project_path.resolve()
+        broker = str(root / "build" / "src" / "mosquitto")
+        pub = str(root / "build" / "client" / "mosquitto_pub")
+        ssl_dir = root / "test" / "ssl"
         config_path = self._write_mosquitto_config(feature, enabled)
 
         use_tls = feature.upper() == "TLS" and enabled and ssl_dir.exists()
         port = 18883 if use_tls else 11883
+        ssl_dir_str = str(ssl_dir)
 
         if use_tls:
             client_cmd = (
-                f"{pub} --cafile {ssl_dir}/test-root-ca.crt --insecure"
+                f"{pub} --cafile {ssl_dir_str}/test-root-ca.crt --insecure"
                 f" -h localhost -p {port} -t prat/test -m hello || true"
             )
         else:

@@ -406,30 +406,36 @@ def generate_coverage_with_adapter(
         else:
             print("    [!] No execution — falling back to compile-time coverage")
 
-        # Step 2: Run coverage tool (gcov/llvm-cov) on .gcno + .gcda files
-        for src_dir_name in source_dirs:
-            src_dir = project_path / src_dir_name
-            if not src_dir.exists():
-                continue
-
-            # Build coverage command
-            if "llvm-cov" in coverage_tool:
-                cmd = f"{coverage_tool} gcov *"
-            else:
-                cmd = f"{coverage_tool} *"
-
-            subprocess.run(
-                cmd,
-                shell=True,
-                cwd=src_dir,
-                capture_output=True,
-                text=True,
+        # Step 2: Run coverage tool (gcov/llvm-cov) on .gcno + .gcda files.
+        # CMake builds put .gcda files under build/; use the cmake path.
+        # Make/Autotools builds put them alongside source files.
+        from .compilation import BuildSystem as _BS
+        if adapter.build_system == _BS.CMAKE:
+            coverage_files, missing_files = _generate_coverage_cmake(
+                str(project_path), coverage_tool
             )
+        else:
+            for src_dir_name in source_dirs:
+                src_dir = project_path / src_dir_name
+                if not src_dir.exists():
+                    continue
 
-            # Collect generated .gcov files
-            for item in src_dir.iterdir():
-                if item.suffix == ".gcov":
-                    coverage_files.append(str(item))
+                if "llvm-cov" in coverage_tool:
+                    cmd = f"{coverage_tool} gcov *"
+                else:
+                    cmd = f"{coverage_tool} *"
+
+                subprocess.run(
+                    cmd,
+                    shell=True,
+                    cwd=src_dir,
+                    capture_output=True,
+                    text=True,
+                )
+
+                for item in src_dir.iterdir():
+                    if item.suffix == ".gcov":
+                        coverage_files.append(str(item))
 
         # Organize into standard directory structure
         coverage_dir = organize_coverage_files(
