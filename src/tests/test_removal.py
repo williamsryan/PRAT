@@ -128,7 +128,9 @@ class TestRemoveFeatureCode:
         )
 
         assert result.files_deleted == 1
-        assert not (sample_project / "src" / "tls_mosq.c").exists()
+        stub = (sample_project / "src" / "tls_mosq.c")
+        assert stub.exists()
+        assert "removed by PRAT" in stub.read_text()
 
     def test_per_file_stats(self, sample_project, sample_extraction):
         result = remove_feature_code(

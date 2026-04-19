@@ -168,30 +168,33 @@ def _rebuild(
     adapter=None,
 ) -> bool:
     """Rebuild the project to verify it still compiles."""
-    if build_command is None:
-        if adapter:
-            build_command = adapter.get_compile_command("", True, with_coverage=False)
+    if build_command is not None:
+        commands = [build_command]
+    elif adapter:
+        commands = adapter.get_build_commands("", True, with_coverage=False)
+    else:
+        project = Path(project_path)
+        if (project / "Cargo.toml").exists():
+            commands = [["cargo", "build"]]
+        elif (project / "CMakeLists.txt").exists():
+            commands = [["make", "-C", "build", "-j"]]
+        elif (project / "Makefile").exists():
+            commands = [["make", "-j"]]
         else:
-            # Auto-detect
-            project = Path(project_path)
-            if (project / "Cargo.toml").exists():
-                build_command = ["cargo", "build"]
-            elif (project / "CMakeLists.txt").exists():
-                build_command = ["make", "-j3"]
-            elif (project / "Makefile").exists():
-                build_command = ["make", "-j"]
-            else:
-                return False
+            return False
 
     try:
-        proc = subprocess.run(
-            build_command,
-            cwd=project_path,
-            capture_output=True,
-            text=True,
-            timeout=600,
-        )
-        return proc.returncode == 0
+        for cmd in commands:
+            proc = subprocess.run(
+                cmd,
+                cwd=project_path,
+                capture_output=True,
+                text=True,
+                timeout=600,
+            )
+            if proc.returncode != 0:
+                return False
+        return True
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return False
 

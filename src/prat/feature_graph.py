@@ -14,7 +14,6 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Set
 
-from .batch import BatchResult
 from .extraction import ExtractionResult
 
 
@@ -81,7 +80,7 @@ class FeatureGraph:
         return output_path
 
 
-def build_feature_graph(batch_result: BatchResult) -> FeatureGraph:
+def build_feature_graph(batch_result: "BatchResult") -> FeatureGraph:
     """
     Build a feature graph from batch analysis results.
 

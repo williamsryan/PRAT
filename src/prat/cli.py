@@ -208,12 +208,16 @@ def run_analysis(
 
     # Run workflow
     try:
+        from .adapters import get_adapter
+        adapter = get_adapter(project_path)
+
         result = run_complete_workflow(
             project_path=project_path,
             feature=feature,
             run_tests=run_tests,
             output_dir=output_dir,
             symbolic=symbolic,
+            adapter=adapter,
         )
 
         if not result.success:
@@ -288,7 +292,7 @@ def run_analysis(
 
         # Optional: Post-removal verification
         if verify:
-            ver_result = verify_correctness(project_path)
+            ver_result = verify_correctness(project_path, adapter=adapter)
             if not ver_result.success:
                 print(f"⚠ Verification: {ver_result.total_tests_failed} test(s) failed")
                 return 1

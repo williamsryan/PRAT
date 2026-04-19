@@ -120,10 +120,11 @@ def remove_feature_code(
                     backup_path.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(source_file, backup_path)
 
-                # Delete
-                os.remove(source_file)
+                # Replace with empty stub so build systems (e.g. CMake) that
+                # unconditionally list the file as a source can still find it.
+                source_file.write_text(f"/* {file_name}: removed by PRAT (feature-only file) */\n")
                 files_deleted += 1
-                print(f"    {file_name}: deleted (feature-only file)")
+                print(f"    {file_name}: stubbed (feature-only file)")
 
         print(f"\n    Summary: {total_removed} lines removed, "
               f"{files_modified} files modified, {files_deleted} files deleted")
@@ -280,7 +281,7 @@ def _rebuild_project(
         if (project / "Cargo.toml").exists():
             build_command = ["cargo", "build"]
         elif (project / "CMakeLists.txt").exists():
-            build_command = ["make", "-j3"]
+            build_command = ["make", "-C", "build", "-j"]
         elif (project / "Makefile").exists():
             build_command = ["make", "-j"]
         else:

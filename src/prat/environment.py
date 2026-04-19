@@ -71,7 +71,7 @@ def verify_dependencies() -> EnvironmentResult:
     if not has_coverage_tool:
         missing_tools.append('gcov (or llvm-cov-9)')
 
-    # Check Python packages
+    # Check optional Python packages (not required for core workflow)
     python_packages = ['toml', 'pandas']
     for package in python_packages:
         try:
@@ -79,7 +79,6 @@ def verify_dependencies() -> EnvironmentResult:
             available_tools[f'python-{package}'] = True
         except ImportError:
             available_tools[f'python-{package}'] = False
-            missing_tools.append(f'python-{package}')
 
     success = len(missing_tools) == 0
     error_message = None
