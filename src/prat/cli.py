@@ -442,6 +442,8 @@ For more information, see docs/API.md
         )
         if batch_result.success:
             print(f"\n✓ Batch analysis complete: {batch_result.features_analyzed} features analyzed")
+            if batch_result.feature_graph_path:
+                print(f"📈 Feature graph: {batch_result.feature_graph_path}")
             return 0
         return 1
 

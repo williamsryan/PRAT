@@ -88,7 +88,7 @@ class TestGenerateHtmlReport:
         with open(output) as f:
             html = f.read()
 
-        assert "sortTable" in html
+        assert "renderTable" in html
         assert "filter" in html
 
 

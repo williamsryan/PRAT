@@ -49,6 +49,7 @@ class BatchResult:
     total_removable_lines: int
     feature_results: Dict[str, FeatureAnalysis] = field(default_factory=dict)
     cross_feature_map: Optional[CrossFeatureMap] = None
+    feature_graph_path: Optional[str] = None
     total_time: float = 0.0
     error_message: Optional[str] = None
 
@@ -171,6 +172,26 @@ def run_batch_analysis(
     print("\n[3] Building cross-feature dependency map...")
     cross_map = _build_cross_feature_map(feature_results)
 
+    graph_path = None
+    if analyzed:
+        try:
+            graph = build_feature_graph(
+                BatchResult(
+                    success=True,
+                    project=project_name,
+                    features_discovered=len(features),
+                    features_analyzed=analyzed,
+                    features_failed=failed,
+                    total_removable_lines=total_lines,
+                    feature_results=feature_results,
+                    cross_feature_map=cross_map,
+                )
+            )
+            graph_path = str(Path(output_dir) / "feature_graph.html")
+            generate_feature_graph_html(graph, graph_path)
+        except Exception as e:
+            print(f"    [!] Failed to generate feature graph: {e}")
+
     # Print summary
     elapsed = time.time() - start_time
 
@@ -182,6 +203,8 @@ def run_batch_analysis(
     print(f"  Features failed:     {failed}")
     print(f"  Total removable LoC: {total_lines}")
     print(f"  Total time:          {elapsed:.1f}s")
+    if graph_path:
+        print(f"  Feature graph:       {graph_path}")
 
     if cross_map.shared_files:
         print("\n  Cross-feature file sharing:")
@@ -207,6 +230,7 @@ def run_batch_analysis(
         total_removable_lines=total_lines,
         feature_results=feature_results,
         cross_feature_map=cross_map,
+        feature_graph_path=graph_path,
         total_time=elapsed,
     )
 

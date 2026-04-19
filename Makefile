@@ -84,7 +84,10 @@ batch-mosquitto: $(RESULTS)  ## Batch-analyze ALL Mosquitto features
 
 .PHONY: graph
 graph: $(RESULTS)  ## Open feature graph HTML (requires prior analysis run)
-	@GRAPH=$$(find $(RESULTS) -name "*.html" | head -1); \
+	@GRAPH=$$(find $(RESULTS) -name "feature_graph.html" | head -1); \
+	if [ -z "$$GRAPH" ]; then \
+	  GRAPH=$$(find $(RESULTS) -name "*.html" | head -1); \
+	fi; \
 	if [ -z "$$GRAPH" ]; then \
 	  echo "✗ No HTML reports found in $(RESULTS)/ — run an analysis first"; exit 1; \
 	fi; \
