@@ -123,7 +123,7 @@ _HTML_TEMPLATE = """\
   }}
   .layout {{
     display: grid;
-    grid-template-columns: minmax(0, 1.2fr) 420px;
+    grid-template-columns: minmax(0, 1fr);
     gap: 16px;
   }}
   .panel {{
@@ -198,7 +198,7 @@ _HTML_TEMPLATE = """\
   }}
   #graphSvg {{
     width: 100%;
-    height: 430px;
+    height: 470px;
     display: block;
   }}
   .node-feature {{
@@ -220,6 +220,26 @@ _HTML_TEMPLATE = """\
   }}
   .link-dimmed {{
     opacity: .12;
+  }}
+  .flow-band {{
+    fill: none;
+    stroke-linecap: round;
+    opacity: .82;
+  }}
+  .flow-band.dimmed {{
+    opacity: .12;
+  }}
+  .flow-bar {{
+    fill: rgba(21,122,110,.16);
+    stroke: rgba(21,122,110,.18);
+  }}
+  .flow-bar-selected {{
+    fill: rgba(47,103,216,.14);
+    stroke: rgba(47,103,216,.3);
+  }}
+  .flow-chip {{
+    fill: rgba(255,253,248,.96);
+    stroke: var(--border);
   }}
   .graph-label {{
     fill: var(--text);
@@ -289,27 +309,6 @@ _HTML_TEMPLATE = """\
     border-radius: 999px;
     background: linear-gradient(90deg, var(--primary), var(--accent));
   }}
-  .details-body {{
-    padding: 18px 20px 20px;
-    max-height: 980px;
-    overflow-y: auto;
-  }}
-  .eyebrow {{
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: .08em;
-    color: var(--text-muted);
-    margin-bottom: 8px;
-  }}
-  .details-title {{
-    font-size: 24px;
-    margin-bottom: 6px;
-  }}
-  .details-subtitle {{
-    font-size: 13px;
-    color: var(--text-secondary);
-    margin-bottom: 16px;
-  }}
   .detail-grid {{
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -341,60 +340,100 @@ _HTML_TEMPLATE = """\
     font-size: 14px;
     margin-bottom: 10px;
   }}
-  .insight-list {{
-    display: grid;
-    gap: 10px;
-  }}
-  .insight {{
+  .inline-drawer {{
+    margin-bottom: 16px;
     border: 1px solid var(--border);
-    border-radius: 14px;
-    padding: 12px 14px;
-    background: var(--surface);
+    border-radius: 18px;
+    background: rgba(255,253,248,.96);
+    box-shadow: 0 10px 28px rgba(41, 51, 70, 0.08);
+    overflow: hidden;
+    max-height: 0;
+    opacity: 0;
+    transform: translateY(-6px);
+    transition: max-height .22s ease, opacity .18s ease, transform .18s ease;
   }}
-  .insight strong {{
-    display: block;
+  .inline-drawer.open {{
+    max-height: 620px;
+    opacity: 1;
+    transform: translateY(0);
+  }}
+  .drawer-header {{
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    align-items: start;
+    padding: 16px 18px 14px;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, rgba(47,103,216,.08), rgba(21,122,110,.04));
+  }}
+  .drawer-eyebrow {{
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+  }}
+  .drawer-title {{
+    font-size: 22px;
+    font-weight: 700;
     margin-bottom: 4px;
   }}
-  details.code-block {{
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    background: #fffefb;
-    overflow: hidden;
-    margin-bottom: 10px;
-  }}
-  details.code-block summary {{
-    list-style: none;
-    cursor: pointer;
-    padding: 12px 14px;
-    background: var(--surface-alt);
-    font-size: 12px;
+  .drawer-subtitle {{
+    font-size: 13px;
     color: var(--text-secondary);
-    border-bottom: 1px solid transparent;
   }}
-  details.code-block[open] summary {{
-    border-bottom-color: var(--border);
+  .drawer-close {{
+    border: 1px solid var(--border);
+    background: rgba(255,253,248,.85);
+    color: var(--text-secondary);
+    border-radius: 999px;
+    padding: 8px 12px;
+    font-size: 12px;
+    cursor: pointer;
   }}
-  details.code-block summary::-webkit-details-marker {{
-    display: none;
+  .drawer-close:hover {{
+    background: var(--surface-hover);
   }}
-  details.code-block summary::before {{
-    content: '▸';
-    display: inline-block;
-    margin-right: 8px;
-    transition: transform .12s;
+  .drawer-body {{
+    padding: 16px 18px 18px;
   }}
-  details.code-block[open] summary::before {{
-    transform: rotate(90deg);
+  .source-panel {{
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    overflow: hidden;
+    background: #fffefb;
   }}
-  .code-meta {{
-    margin-left: 22px;
+  .source-header {{
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: center;
+    padding: 12px 14px;
+    background: linear-gradient(180deg, rgba(47,103,216,.08), rgba(21,122,110,.04));
+    border-bottom: 1px solid var(--border);
+  }}
+  .source-title {{
+    font-size: 13px;
+    font-weight: 700;
+  }}
+  .source-subtitle {{
+    margin-top: 3px;
     font-size: 11px;
-    color: var(--text-muted);
+    color: var(--text-secondary);
+  }}
+  .source-badge {{
+    padding: 6px 9px;
+    border-radius: 999px;
+    background: rgba(47,103,216,.1);
+    color: var(--primary);
+    font-size: 11px;
+    font-family: var(--mono);
+    white-space: nowrap;
   }}
   .code-view {{
-    max-height: 320px;
+    max-height: 430px;
     overflow: auto;
-    padding: 10px 0;
+    padding: 8px 0 12px;
   }}
   .code-line {{
     display: grid;
@@ -417,6 +456,12 @@ _HTML_TEMPLATE = """\
     white-space: pre-wrap;
     word-break: break-word;
   }}
+  .tok-keyword {{ color: #7a43c3; font-weight: 600; }}
+  .tok-string {{ color: #0d7b62; }}
+  .tok-comment {{ color: #8a94a5; font-style: italic; }}
+  .tok-number {{ color: #c15d2a; }}
+  .tok-preproc {{ color: #2f67d8; font-weight: 600; }}
+  .tok-fn {{ color: #aa4b1f; }}
   .empty-state {{
     border: 1px dashed var(--border);
     border-radius: 16px;
@@ -429,11 +474,6 @@ _HTML_TEMPLATE = """\
     text-align: center;
     color: var(--text-muted);
     font-size: 11px;
-  }}
-  @media (max-width: 1200px) {{
-    .layout {{
-      grid-template-columns: 1fr;
-    }}
   }}
   @media (max-width: 900px) {{
     body {{
@@ -490,20 +530,32 @@ _HTML_TEMPLATE = """\
   <section class="layout">
     <div class="panel">
       <div class="panel-header">
-        <h2>Interactive File Graph</h2>
-        <p>Click nodes or rows to inspect removable source lines inline. This view is self-contained and does not jump to raw HTML diffs.</p>
+        <h2>Interactive Impact Graph</h2>
+        <p>Click a band, bar, or row to inspect removable source lines inline. The flow ranks files by impact so the connections communicate magnitude instead of just adjacency.</p>
       </div>
       <div class="panel-body">
         <div class="graph-toolbar">
           <input class="search" id="filter" type="text" placeholder="Filter files…">
           <div class="legend">
-            <div class="legend-item"><span class="legend-swatch" style="background: var(--primary)"></span><span>Feature hub</span></div>
-            <div class="legend-item"><span class="legend-swatch" style="background: var(--accent)"></span><span>Source file</span></div>
+            <div class="legend-item"><span class="legend-swatch" style="background: var(--primary)"></span><span>Feature source</span></div>
+            <div class="legend-item"><span class="legend-swatch" style="background: var(--accent)"></span><span>Ranked file impact</span></div>
           </div>
         </div>
 
         <div class="graph-frame">
-          <svg id="graphSvg" viewBox="0 0 980 430" preserveAspectRatio="xMidYMid meet"></svg>
+          <svg id="graphSvg" viewBox="0 0 980 470" preserveAspectRatio="xMidYMid meet"></svg>
+        </div>
+
+        <div class="inline-drawer" id="inlineDrawer">
+          <div class="drawer-header">
+            <div>
+              <div class="drawer-eyebrow">Inline Source Preview</div>
+              <div class="drawer-title" id="drawerTitle">Select a file</div>
+              <div class="drawer-subtitle" id="drawerSubtitle">Click a graph band or table row to expand the relevant source lines here.</div>
+            </div>
+            <button class="drawer-close" id="drawerClose" type="button">Collapse</button>
+          </div>
+          <div class="drawer-body" id="drawerBody"></div>
         </div>
 
         <div class="table-shell">
@@ -520,15 +572,6 @@ _HTML_TEMPLATE = """\
         </div>
       </div>
     </div>
-
-    <aside class="panel">
-      <div class="panel-header">
-        <div class="eyebrow">Inspector</div>
-        <h2 id="detailsHeading">Feature overview</h2>
-        <p id="detailsLead">Select a file from the graph or table to inspect the exact removable lines inline.</p>
-      </div>
-      <div class="details-body" id="detailsBody"></div>
-    </aside>
   </section>
 
   <p class="footer">Generated by PRAT — Protocol Representation and Analysis Toolkit</p>
@@ -542,10 +585,12 @@ const FILES = {file_data_json};
   const body = document.getElementById('resultsBody');
   const headers = Array.from(document.querySelectorAll('th'));
   const filterInput = document.getElementById('filter');
-  const detailsHeading = document.getElementById('detailsHeading');
-  const detailsLead = document.getElementById('detailsLead');
-  const detailsBody = document.getElementById('detailsBody');
   const svg = document.getElementById('graphSvg');
+  const inlineDrawer = document.getElementById('inlineDrawer');
+  const drawerTitle = document.getElementById('drawerTitle');
+  const drawerSubtitle = document.getElementById('drawerSubtitle');
+  const drawerBody = document.getElementById('drawerBody');
+  const drawerClose = document.getElementById('drawerClose');
 
   let activeFile = null;
   let sortCol = 'count';
@@ -561,9 +606,39 @@ const FILES = {file_data_json};
       .replace(/'/g, '&#39;');
   }}
 
+  function highlightCode(source, fileName) {{
+    const placeholders = [];
+    let text = String(source || '');
+
+    function stash(pattern, cls) {{
+      text = text.replace(pattern, match => {{
+        const token = `<span class="${{cls}}">${{escapeHtml(match)}}</span>`;
+        placeholders.push(token);
+        return `@@TOKEN_${{placeholders.length - 1}}@@`;
+      }});
+    }}
+
+    const cLike = /\\.(c|cc|cpp|cxx|h|hpp)$/i.test(fileName || '');
+    stash(/\\/\\*[\\s\\S]*?\\*\\/|\\/\\/.*$/gm, 'tok-comment');
+    stash(/"(?:\\\\.|[^"\\\\])*"|'(?:\\\\.|[^'\\\\])*'/g, 'tok-string');
+    stash(/#[A-Za-z_][A-Za-z0-9_]*/g, 'tok-preproc');
+    stash(/\\b\\d+(?:\\.\\d+)?\\b/g, 'tok-number');
+    if (cLike) {{
+      stash(/\\b(?:if|else|for|while|switch|case|default|break|continue|return|goto|do|struct|typedef|enum|union|const|static|extern|inline|void|char|short|int|long|float|double|signed|unsigned|bool|NULL|true|false|sizeof)\\b/g, 'tok-keyword');
+    }}
+    stash(/\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\()/g, 'tok-fn');
+
+    return escapeHtml(text).replace(/@@TOKEN_(\\d+)@@/g, (_, index) => placeholders[Number(index)]);
+  }}
+
   function getLineSpan(file) {{
     if (!file.line_numbers.length) return 0;
     return file.line_numbers[file.line_numbers.length - 1] - file.line_numbers[0] + 1;
+  }}
+
+  function shortenLabel(value, maxLength) {{
+    if (value.length <= maxLength) return value;
+    return value.slice(0, maxLength - 1) + '…';
   }}
 
   function visibleFiles() {{
@@ -629,110 +704,86 @@ const FILES = {file_data_json};
 
   function renderGraph() {{
     const files = visibleFiles();
-    const cx = 300;
-    const cy = 215;
-    const radius = files.length > 1 ? 150 : 0;
+    const graphFiles = files.slice(0, 8);
     const maxCount = Math.max(...FILES.map(item => item.removable_lines), 1);
 
-    const featureCircle = `
-      <circle cx="${{cx}}" cy="${{cy}}" r="48" class="node-feature ${{activeFile ? 'node-dimmed' : 'node-selected'}}"></circle>
-      <text x="${{cx}}" y="${{cy - 4}}" text-anchor="middle" class="graph-label">${{escapeHtml(FEATURE_NAME)}}</text>
-      <text x="${{cx}}" y="${{cy + 16}}" text-anchor="middle" class="graph-subtle">${{FILES.length}} files</text>`;
+    const sourceX = 132;
+    const sourceY = 235;
+    const sourceWidth = 130;
+    const rowStartY = 82;
+    const rowGap = 42;
+    const barStartX = 530;
+    const barMaxWidth = 340;
+    const visibleTotal = graphFiles.reduce((sum, file) => sum + file.removable_lines, 0);
+    const hiddenCount = Math.max(files.length - graphFiles.length, 0);
 
-    const nodes = files.map((file, index) => {{
-      const angle = files.length === 1 ? 0 : (Math.PI * 2 * index) / files.length - (Math.PI / 2);
-      const x = cx + Math.cos(angle) * radius + 260;
-      const y = cy + Math.sin(angle) * radius;
-      const nodeRadius = 18 + ((file.removable_lines / maxCount) * 22);
+    const sourceMarkup = `
+      <rect x="${{sourceX - 58}}" y="${{sourceY - 48}}" width="${{sourceWidth}}" height="96" rx="24" class="flow-chip"></rect>
+      <circle cx="${{sourceX}}" cy="${{sourceY}}" r="34" class="node-feature ${{activeFile ? 'node-dimmed' : 'node-selected'}}"></circle>
+      <text x="${{sourceX}}" y="${{sourceY - 4}}" text-anchor="middle" class="graph-label">${{escapeHtml(FEATURE_NAME)}}</text>
+      <text x="${{sourceX}}" y="${{sourceY + 16}}" text-anchor="middle" class="graph-subtle">${{FILES.length}} files</text>
+      <text x="${{sourceX - 46}}" y="70" class="graph-subtle">Removal source</text>
+    `;
+
+    const rowsMarkup = graphFiles.map((file, index) => {{
+      const y = rowStartY + index * rowGap;
+      const thickness = Math.max(6, (file.removable_lines / maxCount) * 22);
+      const barWidth = Math.max(42, (file.removable_lines / maxCount) * barMaxWidth);
       const dimmed = activeFile && activeFile !== file.file;
       const selected = activeFile === file.file;
-      return {{
-        file,
-        x,
-        y,
-        nodeRadius,
-        dimmed,
-        selected,
-      }};
-    }});
+      const path = `M ${{sourceX + 34}} ${{sourceY}} C 270 ${{sourceY}}, 345 ${{y}}, ${{barStartX - 28}} ${{y}}`;
+      return `
+        <g data-file="${{escapeHtml(file.file)}}" style="cursor:pointer">
+          <path d="${{path}}" class="flow-band ${{dimmed ? 'dimmed' : ''}}" stroke="url(#impactFlowGradient)" stroke-width="${{thickness}}"></path>
+          <rect x="${{barStartX}}" y="${{y - 14}}" width="${{barWidth}}" height="28" rx="14" class="${{selected ? 'flow-bar-selected' : 'flow-bar'}} ${{dimmed ? 'node-dimmed' : ''}}"></rect>
+          <text x="${{barStartX + 12}}" y="${{y - 18}}" class="graph-label ${{dimmed ? 'node-dimmed' : ''}}">${{index + 1}}. ${{escapeHtml(shortenLabel(file.file, 24))}}</text>
+          <text x="${{barStartX + 12}}" y="${{y + 5}}" class="graph-subtle ${{dimmed ? 'node-dimmed' : ''}}">${{file.removable_lines}} LoC · span ${{getLineSpan(file)}}</text>
+        </g>
+      `;
+    }}).join('');
 
-    const linksMarkup = nodes.map(node => `
-      <line x1="${{cx + 48}}" y1="${{cy}}" x2="${{node.x - node.nodeRadius}}" y2="${{node.y}}" class="link ${{node.dimmed ? 'link-dimmed' : ''}}"></line>
-    `).join('');
-
-    const nodesMarkup = nodes.map(node => `
-      <g data-file="${{escapeHtml(node.file.file)}}" class="${{node.dimmed ? 'node-dimmed' : ''}}">
-        <circle cx="${{node.x}}" cy="${{node.y}}" r="${{node.nodeRadius}}" class="node-file ${{node.selected ? 'node-selected' : ''}}"></circle>
-        <text x="${{node.x}}" y="${{node.y - 4}}" text-anchor="middle" class="graph-label">${{escapeHtml(node.file.file)}}</text>
-        <text x="${{node.x}}" y="${{node.y + 16}}" text-anchor="middle" class="graph-subtle">${{node.file.removable_lines}} LoC</text>
-      </g>
-    `).join('');
+    const summaryMarkup = hiddenCount
+      ? `
+        <rect x="530" y="424" width="330" height="30" rx="15" class="flow-chip"></rect>
+        <text x="546" y="443" class="graph-subtle">${{hiddenCount}} more files remain below in the table · ${{visibleTotal}} visible LoC shown here</text>
+      `
+      : '';
 
     svg.innerHTML = `
-      <rect x="0" y="0" width="980" height="430" fill="transparent"></rect>
-      ${{featureCircle}}
-      ${{linksMarkup}}
-      ${{nodesMarkup}}
+      <defs>
+        <linearGradient id="impactFlowGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" stop-color="rgba(47,103,216,.42)"></stop>
+          <stop offset="100%" stop-color="rgba(21,122,110,.6)"></stop>
+        </linearGradient>
+      </defs>
+      <rect x="0" y="0" width="980" height="470" fill="transparent"></rect>
+      <text x="48" y="40" class="graph-subtle">Ranked impact flow</text>
+      <text x="530" y="40" class="graph-subtle">Top affected files</text>
+      ${{sourceMarkup}}
+      ${{rowsMarkup}}
+      ${{summaryMarkup}}
     `;
 
     Array.from(svg.querySelectorAll('g[data-file]')).forEach(group => {{
-      group.style.cursor = 'pointer';
       group.addEventListener('click', () => selectFile(group.dataset.file));
     }});
   }}
 
-  function renderOverview() {{
-    const topFiles = FILES.slice().sort((a, b) => b.removable_lines - a.removable_lines).slice(0, 4);
-
-    detailsHeading.textContent = 'Feature overview';
-    detailsLead.textContent = 'Select a file from the graph or table to inspect the exact removable lines inline.';
-    detailsBody.innerHTML = `
-      <div class="detail-grid">
-        <div class="detail-card">
-          <div class="detail-card-label">Feature</div>
-          <div class="detail-card-value">${{escapeHtml(FEATURE_NAME)}}</div>
-        </div>
-        <div class="detail-card">
-          <div class="detail-card-label">Files affected</div>
-          <div class="detail-card-value">${{FILES.length}}</div>
-        </div>
-      </div>
-      <div class="detail-section">
-        <h3>Highest-impact files</h3>
-        <div class="insight-list">
-          ${{
-            topFiles.map(file => `
-              <div class="insight">
-                <strong>${{escapeHtml(file.file)}}</strong>
-                <span>${{file.removable_lines}} removable lines · span ${{getLineSpan(file)}} source lines</span>
-              </div>
-            `).join('')
-          }}
-        </div>
-      </div>
-      <div class="detail-section">
-        <h3>What changed here</h3>
-        <div class="insight-list">
-          <div class="insight">
-            <strong>Interactive graph</strong>
-            <span>The feature sits at the center, with impacted source files sized by removable LoC.</span>
-          </div>
-          <div class="insight">
-            <strong>Inline source inspection</strong>
-            <span>Every file now exposes expandable source LoC blocks directly in this report.</span>
-          </div>
-        </div>
-      </div>`;
+  function closeDrawer() {{
+    inlineDrawer.classList.remove('open');
+    drawerTitle.textContent = 'Select a file';
+    drawerSubtitle.textContent = 'Click a graph band or table row to expand the relevant source lines here.';
+    drawerBody.innerHTML = '';
   }}
 
-  function renderFileDetails(file) {{
-    detailsHeading.textContent = file.file;
-    detailsLead.textContent = `${{file.removable_lines}} removable lines across ${{file.line_numbers.length}} captured source entries.`;
+  function renderFileDrawer(file) {{
+    drawerTitle.textContent = file.file;
+    drawerSubtitle.textContent = `${{file.removable_lines}} removable lines across ${{file.line_numbers.length}} captured source entries.`;
 
     const firstLine = file.line_numbers.length ? file.line_numbers[0] : 'n/a';
     const lastLine = file.line_numbers.length ? file.line_numbers[file.line_numbers.length - 1] : 'n/a';
 
-    detailsBody.innerHTML = `
+    drawerBody.innerHTML = `
       <div class="detail-grid">
         <div class="detail-card">
           <div class="detail-card-label">Removable LoC</div>
@@ -748,32 +799,50 @@ const FILES = {file_data_json};
         ${{
           file.snippets.length
             ? `
-              <details class="code-block" open>
-                <summary>Source LoC</summary>
-                <div class="code-meta">Expandable inline source snippet for ${{escapeHtml(file.file)}}</div>
+              <div class="source-panel">
+                <div class="source-header">
+                  <div>
+                    <div class="source-title">${{escapeHtml(file.file)}}</div>
+                    <div class="source-subtitle">Integrated source preview with syntax highlighting</div>
+                  </div>
+                  <div class="source-badge">${{file.snippets.length}} lines</div>
+                </div>
                 <div class="code-view">
                   ${{
                     file.snippets.map(line => `
                       <div class="code-line">
                         <span class="line-number">${{line.line_number ?? ''}}</span>
-                        <span class="line-content">${{escapeHtml(line.content)}}</span>
+                        <span class="line-content">${{highlightCode(line.content, file.file)}}</span>
                       </div>
                     `).join('')
                   }}
                 </div>
-              </details>
+              </div>
             `
             : '<div class="empty-state">No captured source lines are available for this file.</div>'
         }}
       </div>`;
+
+    inlineDrawer.classList.add('open');
   }}
 
   function selectFile(fileName) {{
+    if (activeFile === fileName) {{
+      activeFile = null;
+      renderTable();
+      renderGraph();
+      closeDrawer();
+      return;
+    }}
+
     activeFile = fileName;
     const file = FILES.find(item => item.file === fileName);
     renderTable();
     renderGraph();
-    if (file) renderFileDetails(file);
+    if (file) {{
+      renderFileDrawer(file);
+      inlineDrawer.scrollIntoView({{ block: 'nearest', behavior: 'smooth' }});
+    }}
   }}
 
   headers.forEach(header => {{
@@ -793,15 +862,22 @@ const FILES = {file_data_json};
     filterQuery = filterInput.value;
     if (activeFile && !visibleFiles().some(file => file.file === activeFile)) {{
       activeFile = null;
-      renderOverview();
+      closeDrawer();
     }}
     renderTable();
     renderGraph();
   }});
 
+  drawerClose.addEventListener('click', () => {{
+    activeFile = null;
+    renderTable();
+    renderGraph();
+    closeDrawer();
+  }});
+
   renderTable();
   renderGraph();
-  renderOverview();
+  closeDrawer();
 }})();
 </script>
 </body>
