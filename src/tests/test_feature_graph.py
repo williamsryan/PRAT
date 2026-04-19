@@ -139,6 +139,18 @@ class TestBuildFeatureGraph:
             data = json.load(f)
         assert data["project"] == "mosquitto"
 
+    def test_file_nodes_include_source_details(self):
+        batch = _make_batch({"TLS": {"net.c": 3}})
+        graph = build_feature_graph(batch)
+
+        file_node = next(n for n in graph.nodes if n.label == "net.c")
+        details = file_node.metadata["per_feature_details"]
+
+        assert len(details) == 1
+        assert details[0]["feature"] == "TLS"
+        assert details[0]["line_numbers"] == [0, 1, 2]
+        assert details[0]["snippet_lines"][0]["content"] == "code_0"
+
 
 class TestBuildFromSingle:
     def test_single_feature(self):
@@ -200,3 +212,17 @@ class TestGenerateHtml:
             html = f.read()
         assert "bootstrap" not in html.lower()
         assert "jquery" not in html.lower()
+
+    def test_html_contains_inline_source_ui(self, tmp_path):
+        batch = _make_batch({"TLS": {"net.c": 3}})
+        graph = build_feature_graph(batch)
+
+        path = str(tmp_path / "feature_graph.html")
+        generate_feature_graph_html(graph, path)
+
+        with open(path) as f:
+            html = f.read()
+
+        assert "Source LoC" in html
+        assert "Interactive removal map" in html
+        assert "light-mode analysis workspace" in html
