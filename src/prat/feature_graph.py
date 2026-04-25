@@ -12,7 +12,7 @@ and generates a self-contained interactive HTML visualization.
 import json
 import os
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Set
+from typing import Any
 
 from .extraction import ExtractionResult
 
@@ -25,7 +25,7 @@ class GraphNode:
     label: str
     node_type: str  # "feature" | "file" | "snippet"
     size: float = 1.0
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -35,7 +35,7 @@ class GraphEdge:
     source: str
     target: str
     weight: float = 1.0
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -43,12 +43,12 @@ class FeatureGraph:
     """Complete feature graph for a project."""
 
     project: str
-    nodes: List[GraphNode] = field(default_factory=list)
-    edges: List[GraphEdge] = field(default_factory=list)
-    features: List[str] = field(default_factory=list)
+    nodes: list[GraphNode] = field(default_factory=list)
+    edges: list[GraphEdge] = field(default_factory=list)
+    features: list[str] = field(default_factory=list)
     total_removable_lines: int = 0
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Serialize to dictionary for JSON/HTML embedding."""
         return {
             "project": self.project,
@@ -87,7 +87,7 @@ def _build_file_detail(
     extraction_result: ExtractionResult,
     file_name: str,
     feature_name: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Build UI-friendly detail payload for a file-feature pair."""
     line_numbers = extraction_result.file_line_numbers.get(file_name, [])
     line_content = extraction_result.file_line_content.get(file_name, [])
@@ -100,10 +100,7 @@ def _build_file_detail(
             "content": content,
         })
 
-    if line_numbers:
-        line_preview = f"{line_numbers[0]}-{line_numbers[-1]}"
-    else:
-        line_preview = "n/a"
+    line_preview = f"{line_numbers[0]}-{line_numbers[-1]}" if line_numbers else "n/a"
 
     return {
         "feature": feature_name,
@@ -127,9 +124,9 @@ def build_feature_graph(batch_result: "BatchResult") -> FeatureGraph:
         total_removable_lines=batch_result.total_removable_lines,
     )
 
-    file_features: Dict[str, Set[str]] = {}
-    file_lines: Dict[str, Dict[str, int]] = {}
-    file_details: Dict[str, List[Dict[str, Any]]] = {}
+    file_features: dict[str, set[str]] = {}
+    file_lines: dict[str, dict[str, int]] = {}
+    file_details: dict[str, list[dict[str, Any]]] = {}
 
     for feat_name, feature_analysis in batch_result.feature_results.items():
         if (

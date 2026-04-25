@@ -16,7 +16,7 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Optional
 
 from .symbolic import SymbolicResult, replay_tests
 
@@ -39,11 +39,11 @@ class VerificationResult:
     """Result of complete post-removal verification."""
     success: bool
     compiles: bool
-    test_suites: List[SuiteResult] = field(default_factory=list)
+    test_suites: list[SuiteResult] = field(default_factory=list)
     total_tests_run: int = 0
     total_tests_passed: int = 0
     total_tests_failed: int = 0
-    klee_replay_results: Optional[Dict[str, bool]] = None
+    klee_replay_results: Optional[dict[str, bool]] = None
     total_time: float = 0.0
     error_message: Optional[str] = None
 
@@ -57,8 +57,8 @@ class VerificationResult:
 def verify_correctness(
     project_path: str,
     adapter=None,
-    build_command: Optional[List[str]] = None,
-    test_commands: Optional[List[List[str]]] = None,
+    build_command: Optional[list[str]] = None,
+    test_commands: Optional[list[list[str]]] = None,
     symbolic_result: Optional[SymbolicResult] = None,
     binary_path: Optional[str] = None,
     timeout: int = 600,
@@ -84,7 +84,7 @@ def verify_correctness(
         VerificationResult with pass/fail details
     """
     start_time = time.time()
-    project = Path(project_path)
+    Path(project_path)
 
     print(f"\n{'='*50}")
     print("PRAT Post-Removal Verification")
@@ -164,7 +164,7 @@ def verify_correctness(
 
 def _rebuild(
     project_path: str,
-    build_command: Optional[List[str]],
+    build_command: Optional[list[str]],
     adapter=None,
 ) -> bool:
     """Rebuild the project to verify it still compiles."""
@@ -202,8 +202,8 @@ def _rebuild(
 def _discover_test_commands(
     project_path: str,
     adapter=None,
-    override: Optional[List[List[str]]] = None,
-) -> List[tuple]:
+    override: Optional[list[list[str]]] = None,
+) -> list[tuple]:
     """Discover available test commands. Returns list of (name, command)."""
     if override:
         return [(f"custom-{i}", cmd) for i, cmd in enumerate(override)]
@@ -261,7 +261,7 @@ def _discover_test_commands(
 
 def _run_test_suite(
     name: str,
-    command: List[str],
+    command: list[str],
     project_path: str,
     timeout: int,
 ) -> SuiteResult:

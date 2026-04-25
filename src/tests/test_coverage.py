@@ -1,17 +1,16 @@
 """Tests for prat.coverage module."""
 
-import pytest
 from pathlib import Path
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import MagicMock, patch
 
+from prat.compilation import BuildSystem
 from prat.coverage import (
+    CoverageResult,
+    execute_for_coverage,
     generate_coverage,
     generate_coverage_with_adapter,
     organize_coverage_files,
-    execute_for_coverage,
-    CoverageResult,
 )
-from prat.compilation import BuildSystem
 
 
 class TestOrganizeCoverageFiles:

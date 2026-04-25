@@ -1,15 +1,13 @@
 """Tests for prat.compilation module."""
 
-import pytest
-from unittest.mock import patch, MagicMock
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from prat.compilation import (
-    detect_build_system,
+    BuildSystem,
     compile_project,
     compile_with_adapter,
-    BuildSystem,
-    CompilationResult,
+    detect_build_system,
 )
 
 

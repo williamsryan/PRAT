@@ -63,7 +63,7 @@ class ProgressIndicator:
 def list_features(project_path: str, verbose: bool = False) -> int:
     """
     List available features for a project.
-    
+
     Returns:
         Exit code (0 for success)
     """
@@ -128,7 +128,7 @@ def dry_run_analysis(
 ) -> int:
     """
     Preview what the analysis will do without executing.
-    
+
     Returns:
         Exit code (0 for success)
     """
@@ -183,7 +183,7 @@ def run_analysis(
 ) -> int:
     """
     Run PRAT analysis workflow.
-    
+
     Returns:
         Exit code (0 for success)
     """

@@ -4,7 +4,7 @@ Rust project adapter for PRAT.
 Handles Cargo-based builds with --features flags.
 """
 
-from typing import Dict, List, Optional
+from typing import Optional
 
 from ..compilation import BuildSystem
 from .base import ProjectAdapter
@@ -13,7 +13,7 @@ from .base import ProjectAdapter
 class RustAdapter(ProjectAdapter):
     """
     Adapter for Rust projects using Cargo.
-    
+
     Build system: Cargo
     Feature format: --features feature / --no-default-features
     Coverage tool: gcov-9 (via grcov)
@@ -30,7 +30,7 @@ class RustAdapter(ProjectAdapter):
         return "gcov-9"
 
     @property
-    def source_directories(self) -> List[str]:
+    def source_directories(self) -> list[str]:
         """Rust source directories."""
         return ["src"]
 
@@ -39,10 +39,10 @@ class RustAdapter(ProjectAdapter):
         feature: str,
         enabled: bool,
         with_coverage: bool = True
-    ) -> List[str]:
+    ) -> list[str]:
         """
         Get Cargo build command.
-        
+
         Example: cargo build --features tls
         Example: cargo build --no-default-features
         """
@@ -55,22 +55,22 @@ class RustAdapter(ProjectAdapter):
 
         return cmd
 
-    def get_clean_command(self) -> List[str]:
+    def get_clean_command(self) -> list[str]:
         """Get Cargo clean command."""
         return ["cargo", "clean"]
 
-    def get_test_command(self) -> Optional[List[str]]:
+    def get_test_command(self) -> Optional[list[str]]:
         """Get Cargo test command."""
         return ["cargo", "test"]
 
     def format_feature_flag(self, feature: str, enabled: bool) -> str:
         """
         Format feature flag for Cargo.
-        
+
         Args:
             feature: Feature name
             enabled: True for --features, False for --no-default-features
-            
+
         Returns:
             Formatted flag
         """
@@ -86,10 +86,10 @@ class RustAdapter(ProjectAdapter):
             return str(target_dir)
         return None
 
-    def get_coverage_environment(self) -> Dict[str, str]:
+    def get_coverage_environment(self) -> dict[str, str]:
         """
         Get environment variables for Rust coverage.
-        
+
         Returns:
             Environment variables for coverage instrumentation
         """

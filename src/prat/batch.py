@@ -9,7 +9,7 @@ dependency map and aggregate report.
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Optional
 
 from .adapters import ProjectAdapter, get_adapter
 from .compilation import BuildSystem
@@ -24,18 +24,18 @@ class FeatureAnalysis:
     feature: Feature
     workflow_result: Optional[WorkflowResult] = None
     removable_lines: int = 0
-    affected_files: List[str] = field(default_factory=list)
+    affected_files: list[str] = field(default_factory=list)
 
 
 @dataclass
 class CrossFeatureMap:
     """Map of which files are shared across features."""
     # file_name -> set of feature names that affect it
-    file_to_features: Dict[str, Set[str]] = field(default_factory=dict)
+    file_to_features: dict[str, set[str]] = field(default_factory=dict)
     # feature_name -> set of file names it affects
-    feature_to_files: Dict[str, Set[str]] = field(default_factory=dict)
+    feature_to_files: dict[str, set[str]] = field(default_factory=dict)
     # Pairs of features that share files
-    shared_files: Dict[str, List[str]] = field(default_factory=dict)
+    shared_files: dict[str, list[str]] = field(default_factory=dict)
 
 
 @dataclass
@@ -47,7 +47,7 @@ class BatchResult:
     features_analyzed: int
     features_failed: int
     total_removable_lines: int
-    feature_results: Dict[str, FeatureAnalysis] = field(default_factory=dict)
+    feature_results: dict[str, FeatureAnalysis] = field(default_factory=dict)
     cross_feature_map: Optional[CrossFeatureMap] = None
     feature_graph_path: Optional[str] = None
     total_time: float = 0.0
@@ -60,7 +60,7 @@ def run_batch_analysis(
     run_tests: bool = False,
     build_system: Optional[BuildSystem] = None,
     adapter: Optional[ProjectAdapter] = None,
-    skip_features: Optional[List[str]] = None,
+    skip_features: Optional[list[str]] = None,
 ) -> BatchResult:
     """
     Run PRAT analysis for ALL discovered features in a project.
@@ -124,7 +124,7 @@ def run_batch_analysis(
     print(f"\n[2] Running per-feature analysis ({len(active_features)} features)...\n")
 
     # Step 2: Analyze each feature
-    feature_results: Dict[str, FeatureAnalysis] = {}
+    feature_results: dict[str, FeatureAnalysis] = {}
     analyzed = 0
     failed = 0
     total_lines = 0
@@ -236,7 +236,7 @@ def run_batch_analysis(
 
 
 def _build_cross_feature_map(
-    feature_results: Dict[str, FeatureAnalysis],
+    feature_results: dict[str, FeatureAnalysis],
 ) -> CrossFeatureMap:
     """
     Build a map of cross-feature file dependencies.

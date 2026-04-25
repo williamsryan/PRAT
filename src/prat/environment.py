@@ -9,22 +9,22 @@ including build tools, coverage tools, and Python/Perl packages.
 import shutil
 import subprocess
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Optional
 
 
 @dataclass
 class EnvironmentResult:
     """Result of environment setup or verification operation."""
     success: bool
-    available_tools: Dict[str, bool]
-    missing_tools: List[str]
+    available_tools: dict[str, bool]
+    missing_tools: list[str]
     error_message: Optional[str] = None
 
 
 def verify_dependencies() -> EnvironmentResult:
     """
     Check if required tools are available on the system.
-    
+
     Returns:
         EnvironmentResult with availability status for each tool
     """
@@ -97,10 +97,10 @@ def verify_dependencies() -> EnvironmentResult:
 def setup_environment() -> EnvironmentResult:
     """
     Install and verify all dependencies.
-    
+
     This function attempts to install missing dependencies using apt-get
     and pip. It requires sudo privileges for system package installation.
-    
+
     Returns:
         EnvironmentResult indicating success or failure of setup
     """
@@ -180,10 +180,10 @@ def setup_environment() -> EnvironmentResult:
 def is_tool_available(tool_name: str) -> bool:
     """
     Check if a specific tool is available.
-    
+
     Args:
         tool_name: Name of the tool to check
-        
+
     Returns:
         True if tool is available, False otherwise
     """

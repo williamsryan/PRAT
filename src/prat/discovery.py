@@ -9,7 +9,7 @@ import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 from .compilation import BuildSystem, detect_build_system
 
@@ -22,15 +22,15 @@ class Feature:
     default_enabled: Optional[bool] = None
 
 
-def discover_features(project_path: str) -> List[Feature]:
+def discover_features(project_path: str) -> list[Feature]:
     """
     Discover available features in a project.
-    
+
     Automatically detects build system and calls appropriate discovery function.
-    
+
     Args:
         project_path: Path to project root directory
-        
+
     Returns:
         List of discovered features
     """
@@ -48,16 +48,16 @@ def discover_features(project_path: str) -> List[Feature]:
         return []
 
 
-def discover_features_cmake(project_path: str) -> List[Feature]:
+def discover_features_cmake(project_path: str) -> list[Feature]:
     """
     Discover features in CMake projects by parsing CMakeLists.txt.
-    
+
     Looks for option() declarations with BOOL type.
     Example: option(CONFIG_TLS "Enable TLS support" ON)
-    
+
     Args:
         project_path: Path to project root directory
-        
+
     Returns:
         List of discovered features
     """
@@ -133,15 +133,15 @@ def discover_features_cmake(project_path: str) -> List[Feature]:
     return features
 
 
-def discover_features_autotools(project_path: str) -> List[Feature]:
+def discover_features_autotools(project_path: str) -> list[Feature]:
     """
     Discover features in Autotools projects by parsing configure --help.
-    
+
     Looks for --enable-* and --disable-* flags.
-    
+
     Args:
         project_path: Path to project root directory
-        
+
     Returns:
         List of discovered features
     """
@@ -208,15 +208,15 @@ def discover_features_autotools(project_path: str) -> List[Feature]:
     return features
 
 
-def discover_features_cargo(project_path: str) -> List[Feature]:
+def discover_features_cargo(project_path: str) -> list[Feature]:
     """
     Discover features in Rust projects by parsing Cargo.toml.
-    
+
     Looks for [features] section.
-    
+
     Args:
         project_path: Path to project root directory
-        
+
     Returns:
         List of discovered features
     """
@@ -239,10 +239,7 @@ def discover_features_cargo(project_path: str) -> List[Feature]:
                         continue
 
                     # Create description from dependencies
-                    if dependencies:
-                        description = f"Enables: {', '.join(dependencies)}"
-                    else:
-                        description = None
+                    description = f"Enables: {', '.join(dependencies)}" if dependencies else None
 
                     features.append(Feature(
                         name=feature_name.upper(),
@@ -297,15 +294,15 @@ def discover_features_cargo(project_path: str) -> List[Feature]:
     return features
 
 
-def discover_features_make(project_path: str) -> List[Feature]:
+def discover_features_make(project_path: str) -> list[Feature]:
     """
     Discover features in Make-based projects by parsing Makefile.
-    
+
     Looks for WITH_* variables and config.mk files.
-    
+
     Args:
         project_path: Path to project root directory
-        
+
     Returns:
         List of discovered features
     """
@@ -370,10 +367,10 @@ def discover_features_make(project_path: str) -> List[Feature]:
     return features
 
 
-def print_features(features: List[Feature], project_name: str = "Project"):
+def print_features(features: list[Feature], project_name: str = "Project"):
     """
     Print discovered features in a readable format.
-    
+
     Args:
         features: List of features to print
         project_name: Name of project for display

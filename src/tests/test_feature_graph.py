@@ -2,20 +2,16 @@
 
 import json
 import os
-import pytest
 
+from prat.batch import BatchResult, FeatureAnalysis
+from prat.discovery import Feature
+from prat.extraction import ExtractionResult
 from prat.feature_graph import (
     build_feature_graph,
     build_feature_graph_from_single,
     generate_feature_graph_html,
-    FeatureGraph,
-    GraphNode,
-    GraphEdge,
 )
-from prat.batch import BatchResult, FeatureAnalysis
-from prat.extraction import ExtractionResult
-from prat.discovery import Feature
-from prat.workflow import WorkflowResult, WorkflowCheckpoint
+from prat.workflow import WorkflowCheckpoint, WorkflowResult
 
 
 def _make_extraction(files, total=None):

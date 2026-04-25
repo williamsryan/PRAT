@@ -11,7 +11,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Optional
 
 from .extraction import ExtractionResult
 
@@ -26,17 +26,17 @@ class RemovalResult:
     backup_dir: Optional[str] = None
     rebuild_success: Optional[bool] = None
     error_message: Optional[str] = None
-    per_file_stats: Dict[str, int] = field(default_factory=dict)
+    per_file_stats: dict[str, int] = field(default_factory=dict)
 
 
 def remove_feature_code(
     extraction_result: ExtractionResult,
     project_path: str,
     feature: str,
-    feature_only_files: Optional[List[str]] = None,
+    feature_only_files: Optional[list[str]] = None,
     backup: bool = True,
     rebuild: bool = True,
-    build_command: Optional[List[str]] = None,
+    build_command: Optional[list[str]] = None,
 ) -> RemovalResult:
     """
     Remove feature-specific code from source tree.
@@ -64,7 +64,7 @@ def remove_feature_code(
     total_removed = 0
     files_modified = 0
     files_deleted = 0
-    per_file_stats: Dict[str, int] = {}
+    per_file_stats: dict[str, int] = {}
     backup_dir = None
 
     print(f"\n[+] Removing {feature} feature code from {project_path}")
@@ -225,7 +225,7 @@ def _find_source_file(project: Path, file_name: str) -> Optional[Path]:
     return None
 
 
-def _remove_lines_from_file(file_path: Path, line_numbers: Set[int]) -> int:
+def _remove_lines_from_file(file_path: Path, line_numbers: set[int]) -> int:
     """
     Remove specific lines from a source file.
 
@@ -244,7 +244,7 @@ def _remove_lines_from_file(file_path: Path, line_numbers: Set[int]) -> int:
             lines = f.readlines()
 
         removed = 0
-        for i, line in enumerate(lines):
+        for i, _line in enumerate(lines):
             line_num = i + 1  # 1-indexed
             if line_num in line_numbers:
                 # Replace with empty line to preserve numbering
@@ -263,7 +263,7 @@ def _remove_lines_from_file(file_path: Path, line_numbers: Set[int]) -> int:
 
 def _rebuild_project(
     project_path: str,
-    build_command: Optional[List[str]] = None,
+    build_command: Optional[list[str]] = None,
 ) -> bool:
     """
     Attempt to rebuild the project after code removal.

@@ -1,19 +1,17 @@
 """Tests for prat.symbolic module."""
 
-import os
 import subprocess
-import pytest
-from unittest.mock import patch, MagicMock
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from prat.symbolic import (
     KleeConfig,
     SymbolicResult,
     check_klee_available,
     compile_to_bytecode,
-    run_klee,
-    replay_tests,
     generate_symbolic_tests,
+    replay_tests,
+    run_klee,
 )
 
 

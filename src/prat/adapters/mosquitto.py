@@ -7,7 +7,7 @@ On macOS: CMake-based build (Makefile requires CMake on Mac OS X).
 
 import platform
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 from ..compilation import BuildSystem
 from .base import ProjectAdapter
@@ -34,7 +34,7 @@ class MosquittoAdapter(ProjectAdapter):
         return "gcov" if _is_macos() else "llvm-cov-9"
 
     @property
-    def source_directories(self) -> List[str]:
+    def source_directories(self) -> list[str]:
         return ["src", "lib"]
 
     def _build_dir(self) -> Path:
@@ -47,7 +47,7 @@ class MosquittoAdapter(ProjectAdapter):
         feature: str,
         enabled: bool,
         with_coverage: bool = True,
-    ) -> List[str]:
+    ) -> list[str]:
         if _is_macos():
             # Use -B/-S so cmake can run from project root (cwd=project_path)
             cmd = ["cmake", "-B", "build", "-S", ".", "-DCMAKE_POLICY_VERSION_MINIMUM=3.5",
@@ -72,7 +72,7 @@ class MosquittoAdapter(ProjectAdapter):
         feature: str,
         enabled: bool,
         with_coverage: bool = True,
-    ) -> List[List[str]]:
+    ) -> list[list[str]]:
         if _is_macos():
             return [
                 self.get_compile_command(feature, enabled, with_coverage),
@@ -80,13 +80,13 @@ class MosquittoAdapter(ProjectAdapter):
             ]
         return [self.get_compile_command(feature, enabled, with_coverage)]
 
-    def get_clean_command(self) -> List[str]:
+    def get_clean_command(self) -> list[str]:
         if _is_macos():
             # Remove .gcda files too so stale counters don't cause "cannot merge" errors
             return ["bash", "-c", "cmake --build build --target clean 2>/dev/null; find build -name '*.gcda' -delete 2>/dev/null; true"]
         return ["make", "clean"]
 
-    def get_test_command(self) -> Optional[List[str]]:
+    def get_test_command(self) -> Optional[list[str]]:
         if _is_macos():
             return ["ctest", "--output-on-failure"]
         return ["make", "utest", "-j", "WITH_COVERAGE=yes"]

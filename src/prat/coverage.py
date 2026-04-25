@@ -11,7 +11,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 from .compilation import BuildSystem
 
@@ -20,9 +20,9 @@ from .compilation import BuildSystem
 class CoverageResult:
     """Result of coverage generation operation."""
     success: bool
-    coverage_files: List[str]
+    coverage_files: list[str]
     coverage_dir: str
-    missing_files: List[str]
+    missing_files: list[str]
     error_message: Optional[str] = None
 
 
@@ -35,14 +35,14 @@ def generate_coverage(
 ) -> CoverageResult:
     """
     Run gcov/llvm-cov on compiled source files.
-    
+
     Args:
         project_path: Path to project root
         feature: Feature name
         enabled: Whether feature was enabled during compilation
         build_system: Build system used for compilation
         coverage_tool: Coverage tool to use ("gcov", "llvm-cov-9", or "auto")
-    
+
     Returns:
         CoverageResult with paths to generated .gcov files
     """
@@ -81,7 +81,6 @@ def generate_coverage(
             )
 
         # Organize coverage files
-        flag = "yes" if enabled else "no"
         coverage_dir = organize_coverage_files(
             coverage_files, feature, enabled, os.getcwd()
         )
@@ -113,20 +112,20 @@ def generate_coverage(
 
 
 def organize_coverage_files(
-    coverage_files: List[str],
+    coverage_files: list[str],
     feature: str,
     enabled: bool,
     output_dir: str
 ) -> str:
     """
     Move coverage files to organized directory structure.
-    
+
     Args:
         coverage_files: List of paths to .gcov files
         feature: Feature name
         enabled: Whether feature was enabled
         output_dir: Base output directory
-    
+
     Returns:
         Path to coverage directory
     """
@@ -167,7 +166,7 @@ def _detect_coverage_tool() -> str:
 def _generate_coverage_make(
     project_path: str,
     coverage_tool: str
-) -> tuple[List[str], List[str]]:
+) -> tuple[list[str], list[str]]:
     """Generate coverage for Make-based projects (e.g., Mosquitto)."""
     coverage_files = []
     missing_files = []
@@ -181,12 +180,9 @@ def _generate_coverage_make(
             continue
 
         # Run coverage tool
-        if coverage_tool == "llvm-cov-9":
-            cmd = "llvm-cov-9 gcov *"
-        else:
-            cmd = "gcov *"
+        cmd = "llvm-cov-9 gcov *" if coverage_tool == "llvm-cov-9" else "gcov *"
 
-        proc = subprocess.run(
+        subprocess.run(
             cmd,
             shell=True,
             cwd=directory,
@@ -205,7 +201,7 @@ def _generate_coverage_make(
 def _generate_coverage_cmake(
     project_path: str,
     coverage_tool: str
-) -> tuple[List[str], List[str]]:
+) -> tuple[list[str], list[str]]:
     """Generate coverage for CMake-based projects."""
     coverage_files = []
     missing_files = []
@@ -224,7 +220,7 @@ def _generate_coverage_cmake(
         else:
             cmd = f"gcov {gcda_file.name}"
 
-        proc = subprocess.run(
+        subprocess.run(
             cmd,
             shell=True,
             cwd=parent_dir,
@@ -243,7 +239,7 @@ def _generate_coverage_cmake(
 def _generate_coverage_autotools(
     project_path: str,
     coverage_tool: str
-) -> tuple[List[str], List[str]]:
+) -> tuple[list[str], list[str]]:
     """Generate coverage for Autotools-based projects (e.g., FFmpeg)."""
     coverage_files = []
     missing_files = []
@@ -264,7 +260,7 @@ def _generate_coverage_autotools(
         else:
             cmd = f"gcov {lib_dir}/*"
 
-        proc = subprocess.run(
+        subprocess.run(
             cmd,
             shell=True,
             cwd=project_path,
@@ -283,7 +279,7 @@ def _generate_coverage_autotools(
 def _generate_coverage_cargo(
     project_path: str,
     coverage_tool: str
-) -> tuple[List[str], List[str]]:
+) -> tuple[list[str], list[str]]:
     """Generate coverage for Cargo-based Rust projects."""
     coverage_files = []
     missing_files = []
@@ -294,12 +290,9 @@ def _generate_coverage_cargo(
         return coverage_files, missing_files
 
     # Run coverage tool
-    if coverage_tool == "llvm-cov-9":
-        cmd = "llvm-cov-9 gcov *"
-    else:
-        cmd = "gcov-9 *"
+    cmd = "llvm-cov-9 gcov *" if coverage_tool == "llvm-cov-9" else "gcov-9 *"
 
-    proc = subprocess.run(
+    subprocess.run(
         cmd,
         shell=True,
         cwd=deps_dir,
@@ -351,7 +344,7 @@ def execute_for_coverage(
     for cmd in exec_cmds:
         try:
             print(f"    Running: {' '.join(cmd)}")
-            proc = subprocess.run(
+            subprocess.run(
                 cmd,
                 cwd=project_path,
                 capture_output=True,

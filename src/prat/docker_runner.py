@@ -9,7 +9,7 @@ import json
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Optional
 
 
 @dataclass
@@ -26,7 +26,7 @@ class ContainerResult:
 def check_docker_available() -> bool:
     """
     Check if Docker is available on the system.
-    
+
     Returns:
         True if Docker is available, False otherwise
     """
@@ -46,19 +46,19 @@ def build_docker_image(
     dockerfile_path: str,
     image_name: str,
     build_context: Optional[str] = None,
-    build_args: Optional[Dict[str, str]] = None,
+    build_args: Optional[dict[str, str]] = None,
     no_cache: bool = False
 ) -> bool:
     """
     Build Docker image from Dockerfile.
-    
+
     Args:
         dockerfile_path: Path to Dockerfile
         image_name: Name and tag for the image (e.g., "prat-demo:mosquitto-tls")
         build_context: Build context directory (default: directory containing Dockerfile)
         build_args: Build arguments to pass to Docker build
         no_cache: If True, build without using cache
-        
+
     Returns:
         True if build successful, False otherwise
     """
@@ -139,16 +139,16 @@ def build_docker_image(
 def run_docker_container(
     image_name: str,
     container_name: Optional[str] = None,
-    volumes: Optional[Dict[str, str]] = None,
-    environment: Optional[Dict[str, str]] = None,
-    command: Optional[List[str]] = None,
+    volumes: Optional[dict[str, str]] = None,
+    environment: Optional[dict[str, str]] = None,
+    command: Optional[list[str]] = None,
     remove: bool = True,
     detach: bool = False,
     timeout: Optional[int] = None
 ) -> ContainerResult:
     """
     Run Docker container and return results.
-    
+
     Args:
         image_name: Name of Docker image to run
         container_name: Optional name for the container
@@ -158,7 +158,7 @@ def run_docker_container(
         remove: If True, automatically remove container when it exits
         detach: If True, run container in background
         timeout: Maximum time to wait for container (seconds)
-        
+
     Returns:
         ContainerResult with output and exit code
     """
@@ -313,13 +313,13 @@ def run_docker_container(
         )
 
 
-def list_docker_images(filter_name: Optional[str] = None) -> List[Dict[str, str]]:
+def list_docker_images(filter_name: Optional[str] = None) -> list[dict[str, str]]:
     """
     List Docker images on the system.
-    
+
     Args:
         filter_name: Optional filter for image names
-        
+
     Returns:
         List of dictionaries with image information
     """
@@ -357,11 +357,11 @@ def list_docker_images(filter_name: Optional[str] = None) -> List[Dict[str, str]
 def remove_docker_image(image_name: str, force: bool = False) -> bool:
     """
     Remove a Docker image.
-    
+
     Args:
         image_name: Name of image to remove
         force: If True, force removal even if containers are using it
-        
+
     Returns:
         True if removal successful, False otherwise
     """

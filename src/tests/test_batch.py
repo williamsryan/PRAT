@@ -1,19 +1,15 @@
 """Tests for prat.batch module."""
 
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from prat.batch import (
-    run_batch_analysis,
-    _build_cross_feature_map,
     FeatureAnalysis,
-    BatchResult,
-    CrossFeatureMap,
+    _build_cross_feature_map,
+    run_batch_analysis,
 )
 from prat.discovery import Feature
-from prat.workflow import WorkflowResult, WorkflowCheckpoint
 from prat.extraction import ExtractionResult
-from prat.compilation import BuildSystem
+from prat.workflow import WorkflowCheckpoint, WorkflowResult
 
 
 def _make_feature(name, desc=None):

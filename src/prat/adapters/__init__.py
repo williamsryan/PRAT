@@ -37,7 +37,7 @@ def get_adapter(project_path: str) -> Optional[ProjectAdapter]:
     Returns:
         A ProjectAdapter instance, or None if no adapter matches.
     """
-    project_path_obj = Path(project_path)
+    Path(project_path)
 
     # Order matters: specific adapters first, generic ones last.
     adapter_classes = [

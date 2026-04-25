@@ -10,7 +10,7 @@ import time
 from dataclasses import asdict, dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from .adapters import ProjectAdapter, get_adapter
 from .compilation import BuildSystem, CompilationResult, compile_project, compile_with_adapter
@@ -59,7 +59,7 @@ class WorkflowResult:
     checkpoint: WorkflowCheckpoint
     error_message: Optional[str] = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         result = asdict(self)
         result['checkpoint'] = self.checkpoint.value
@@ -68,7 +68,7 @@ class WorkflowResult:
     def save_checkpoint(self, output_dir: str):
         """
         Save workflow state to checkpoint file.
-        
+
         Args:
             output_dir: Directory to save checkpoint
         """
@@ -94,7 +94,7 @@ def run_complete_workflow(
 ) -> WorkflowResult:
     """
     Execute complete PRAT analysis workflow.
-    
+
     Workflow steps:
     1. Verify environment dependencies
     2. Compile with feature enabled
@@ -104,7 +104,7 @@ def run_complete_workflow(
     6. Diff coverage files
     7. Extract features
     8. Generate reports
-    
+
     Args:
         project_path: Path to project root directory
         feature: Feature name to analyze
@@ -116,7 +116,7 @@ def run_complete_workflow(
         symbolic: If True, generate KLEE symbolic tests to amplify coverage.
                   Requires KLEE (local or Docker). Falls back gracefully if unavailable.
         klee_config: KLEE configuration (uses paper defaults if None).
-        
+
     Returns:
         WorkflowResult with all outputs and statistics
     """
@@ -403,17 +403,17 @@ def resume_workflow(
 ) -> WorkflowResult:
     """
     Resume workflow from a checkpoint after error.
-    
+
     Checkpoints: compile_enabled, coverage_enabled, compile_disabled,
                 coverage_disabled, diff, extract
-    
+
     Args:
         checkpoint_file: Path to checkpoint JSON file
         project_path: Path to project root directory
         feature: Feature name to analyze
         run_tests: Whether to run test suite
         output_dir: Directory for output files
-        
+
     Returns:
         WorkflowResult from resumed execution
     """

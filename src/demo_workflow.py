@@ -12,9 +12,8 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from prat.workflow import run_complete_workflow
-from prat.discovery import discover_features, print_features
 from prat.adapters import MosquittoAdapter
+from prat.discovery import discover_features, print_features
 
 
 def demo_feature_discovery():
@@ -22,7 +21,7 @@ def demo_feature_discovery():
     print("\n" + "="*70)
     print("DEMO: Feature Discovery")
     print("="*70)
-    
+
     project_path = "App/mosquitto"
     features = discover_features(project_path)
     print_features(features, "Mosquitto")
@@ -33,17 +32,17 @@ def demo_adapter_usage():
     print("\n" + "="*70)
     print("DEMO: Project Adapter")
     print("="*70)
-    
+
     adapter = MosquittoAdapter("App/mosquitto")
-    
-    print(f"\nProject: Mosquitto")
+
+    print("\nProject: Mosquitto")
     print(f"Build System: {adapter.build_system.value}")
     print(f"Coverage Tool: {adapter.coverage_tool}")
     print(f"Source Directories: {', '.join(adapter.source_directories)}")
-    print(f"\nFeature Flag Examples:")
+    print("\nFeature Flag Examples:")
     print(f"  TLS enabled:  {adapter.format_feature_flag('TLS', True)}")
     print(f"  TLS disabled: {adapter.format_feature_flag('TLS', False)}")
-    print(f"\nCompile Command (TLS enabled):")
+    print("\nCompile Command (TLS enabled):")
     print(f"  {' '.join(adapter.get_compile_command('TLS', True))}")
     print(f"\nValidation: {adapter.validate_project()}")
 
@@ -53,7 +52,7 @@ def demo_workflow_info():
     print("\n" + "="*70)
     print("DEMO: Workflow Orchestration")
     print("="*70)
-    
+
     print("\nThe workflow module provides:")
     print("  - run_complete_workflow(): Execute full analysis pipeline")
     print("  - resume_workflow(): Resume from checkpoint after error")
@@ -72,7 +71,7 @@ if __name__ == "__main__":
     demo_feature_discovery()
     demo_adapter_usage()
     demo_workflow_info()
-    
+
     print("\n" + "="*70)
     print("To run actual workflow:")
     print("  from prat.workflow import run_complete_workflow")

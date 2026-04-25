@@ -1,16 +1,16 @@
 """Tests for prat.removal module."""
 
-import pytest
 from pathlib import Path
 
+import pytest
+
+from prat.extraction import ExtractionResult
 from prat.removal import (
-    remove_feature_code,
-    restore_from_backup,
     _find_source_file,
     _remove_lines_from_file,
-    RemovalResult,
+    remove_feature_code,
+    restore_from_backup,
 )
-from prat.extraction import ExtractionResult
 
 
 @pytest.fixture

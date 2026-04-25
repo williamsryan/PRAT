@@ -2,10 +2,11 @@
 
 import json
 import os
+
 import pytest
 
 from prat.extraction import ExtractionResult
-from prat.reporting import generate_html_report, generate_dot_graph, generate_json_report
+from prat.reporting import generate_dot_graph, generate_html_report, generate_json_report
 
 
 @pytest.fixture

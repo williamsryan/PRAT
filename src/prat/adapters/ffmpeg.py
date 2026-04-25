@@ -4,7 +4,7 @@ FFmpeg project adapter for PRAT.
 Handles Autotools-based builds with --enable/--disable flags.
 """
 
-from typing import List, Optional
+from typing import Optional
 
 from ..compilation import BuildSystem
 from .base import ProjectAdapter
@@ -13,7 +13,7 @@ from .base import ProjectAdapter
 class FFmpegAdapter(ProjectAdapter):
     """
     Adapter for FFmpeg multimedia framework.
-    
+
     Build system: Autotools (configure)
     Feature format: --enable-feature / --disable-feature
     Coverage tool: gcov
@@ -30,7 +30,7 @@ class FFmpegAdapter(ProjectAdapter):
         return "gcov"
 
     @property
-    def source_directories(self) -> List[str]:
+    def source_directories(self) -> list[str]:
         """FFmpeg source directories."""
         return [
             "libavcodec",
@@ -46,7 +46,7 @@ class FFmpegAdapter(ProjectAdapter):
         feature: str,
         enabled: bool,
         with_coverage: bool = True
-    ) -> List[str]:
+    ) -> list[str]:
         """
         Get configure command for FFmpeg.
 
@@ -70,22 +70,22 @@ class FFmpegAdapter(ProjectAdapter):
 
         return cmd
 
-    def get_clean_command(self) -> List[str]:
+    def get_clean_command(self) -> list[str]:
         """Get Make clean command."""
         return ["make", "clean"]
 
-    def get_test_command(self) -> Optional[List[str]]:
+    def get_test_command(self) -> Optional[list[str]]:
         """Get FFmpeg test command (FATE test suite)."""
         return ["make", "fate", "-j3", "SAMPLES=fate-suite/"]
 
     def format_feature_flag(self, feature: str, enabled: bool) -> str:
         """
         Format feature flag as --enable-feature or --disable-feature.
-        
+
         Args:
             feature: Feature name (e.g., "decoder", "encoder", "protocol")
             enabled: True for --enable, False for --disable
-            
+
         Returns:
             Formatted flag like "--disable-decoder"
         """
@@ -108,7 +108,7 @@ class FFmpegAdapter(ProjectAdapter):
 
         return configure.exists() and libavcodec.exists()
 
-    def get_make_command(self) -> List[str]:
+    def get_make_command(self) -> list[str]:
         """Get make command to run after configure."""
         return ["make", "-j3"]
 

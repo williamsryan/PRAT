@@ -38,10 +38,10 @@ class CompilationResult:
 def detect_build_system(project_path: str) -> BuildSystem:
     """
     Detect project build system from project files.
-    
+
     Args:
         project_path: Path to project root directory
-        
+
     Returns:
         BuildSystem enum value indicating detected build system
     """
@@ -75,14 +75,14 @@ def compile_project(
 ) -> CompilationResult:
     """
     Compile project with specified feature flag.
-    
+
     Args:
         project_path: Path to project root
         feature: Feature name (e.g., "TLS", "BRIDGE")
         enabled: True for feature enabled, False for disabled
         run_tests: Whether to run test suite after compilation
         build_system: Build system to use (auto-detected if None)
-    
+
     Returns:
         CompilationResult with status, binary path, and error messages
     """
@@ -150,7 +150,7 @@ def _compile_make(
     target = f"WITH_{feature.upper()}={flag}"
 
     # Clean previous build
-    clean_proc = subprocess.run(
+    subprocess.run(
         ["make", "clean"],
         cwd=project_path,
         capture_output=True,
@@ -309,7 +309,7 @@ def _compile_autotools(
         )
 
     # Clean
-    clean_proc = subprocess.run(
+    subprocess.run(
         ["make", "clean"],
         cwd=project_path,
         capture_output=True,
@@ -369,7 +369,7 @@ def _compile_cargo(
     env["RUSTDOCFLAGS"] = "-Cpanic=abort"
 
     # Clean
-    clean_proc = subprocess.run(
+    subprocess.run(
         ["cargo", "clean"],
         cwd=project_path,
         capture_output=True,

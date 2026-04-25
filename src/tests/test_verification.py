@@ -1,15 +1,13 @@
 """Tests for prat.verification module."""
 
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from prat.verification import (
-    verify_correctness,
-    _parse_test_output,
-    _discover_test_commands,
-    _run_test_suite,
-    VerificationResult,
     SuiteResult,
+    _discover_test_commands,
+    _parse_test_output,
+    _run_test_suite,
+    verify_correctness,
 )
 
 

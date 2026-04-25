@@ -10,11 +10,8 @@ import json
 import os
 import shutil
 import subprocess
-from pathlib import Path
-from typing import Dict
 
 from .extraction import ExtractionResult
-
 
 _HTML_TEMPLATE = """\
 <!DOCTYPE html>
@@ -1052,7 +1049,7 @@ def generate_json_report(
     """
     print(f"[+] Generating JSON report: {output_path}")
 
-    report: Dict = {
+    report: dict = {
         "feature": feature,
         "total_removable_lines": extraction_result.total_removable_lines,
         "files_affected": len(extraction_result.file_line_counts),
@@ -1064,7 +1061,7 @@ def generate_json_report(
         key=lambda item: item[1],
         reverse=True,
     ):
-        entry: Dict = {
+        entry: dict = {
             "file": file_name,
             "removable_lines": count,
             "line_numbers": extraction_result.file_line_numbers.get(file_name, []),

@@ -1,9 +1,8 @@
 """Tests for prat.environment module."""
 
-import pytest
 from unittest.mock import patch
 
-from prat.environment import verify_dependencies, is_tool_available, EnvironmentResult
+from prat.environment import EnvironmentResult, is_tool_available, verify_dependencies
 
 
 class TestVerifyDependencies:

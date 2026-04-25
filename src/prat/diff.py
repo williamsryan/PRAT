@@ -8,7 +8,7 @@ feature-disabled builds to identify feature-specific code.
 import os
 import subprocess
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Optional
 
 
 @dataclass
@@ -16,20 +16,20 @@ class DiffResult:
     """Result of coverage diff operation."""
     success: bool
     diff_dir: str
-    diff_files: List[str]
-    feature_only_files: List[str]
+    diff_files: list[str]
+    feature_only_files: list[str]
     total_diffs: int
     error_message: Optional[str] = None
 
 
-def match_coverage_files(dir1: str, dir2: str) -> List[Tuple[str, str]]:
+def match_coverage_files(dir1: str, dir2: str) -> list[tuple[str, str]]:
     """
     Match coverage files by base name between two directories.
-    
+
     Args:
         dir1: First coverage directory
         dir2: Second coverage directory
-    
+
     Returns:
         List of (file1_path, file2_path) tuples for matching files
     """
@@ -62,13 +62,13 @@ def diff_coverage_files(enabled_dir: str, disabled_dir: str,
                        output_dir: Optional[str] = None) -> DiffResult:
     """
     Generate unified diffs between matching coverage files.
-    
+
     Args:
         enabled_dir: Directory with feature-enabled coverage
         disabled_dir: Directory with feature-disabled coverage
         feature: Feature name for output directory naming
         output_dir: Base directory for diff output (default: current directory)
-    
+
     Returns:
         DiffResult with paths to diff files and statistics
     """

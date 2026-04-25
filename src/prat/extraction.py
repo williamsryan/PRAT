@@ -8,17 +8,17 @@ lines of code that can be removed.
 import os
 import re
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Optional
 
 
 @dataclass
 class ExtractionResult:
     """Result of feature extraction operation."""
     success: bool
-    file_line_counts: Dict[str, int]  # filename -> removable line count
+    file_line_counts: dict[str, int]  # filename -> removable line count
     total_removable_lines: int
-    file_line_numbers: Dict[str, List[int]]  # filename -> list of line numbers
-    file_line_content: Dict[str, List[str]]  # filename -> list of line content
+    file_line_numbers: dict[str, list[int]]  # filename -> list of line numbers
+    file_line_content: dict[str, list[str]]  # filename -> list of line content
     html_report_path: Optional[str] = None
     dot_graph_path: Optional[str] = None
     error_message: Optional[str] = None
@@ -27,10 +27,10 @@ class ExtractionResult:
 def count_removable_lines(diff_file: str) -> int:
     """
     Count lines marked with ##### in a diff file.
-    
+
     Args:
         diff_file: Path to diff file
-    
+
     Returns:
         Count of never-executed lines (marked with #####)
     """
@@ -58,12 +58,12 @@ def extract_features(
     output_dir: Optional[str] = None) -> ExtractionResult:
     """
     Parse diff files and extract feature-specific code.
-    
+
     Args:
         diff_dir: Directory containing diff files
         feature: Feature name (used for report labeling)
         output_dir: Base directory for output reports (default: current directory)
-    
+
     Returns:
         ExtractionResult with line counts and file mappings
     """

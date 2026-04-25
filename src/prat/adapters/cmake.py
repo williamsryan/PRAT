@@ -5,7 +5,7 @@ Handles CMake-based builds with -DCONFIG_FEATURE=1/0 flags.
 """
 
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
 from ..compilation import BuildSystem
 from .base import ProjectAdapter
@@ -14,7 +14,7 @@ from .base import ProjectAdapter
 class CMakeAdapter(ProjectAdapter):
     """
     Adapter for CMake-based projects.
-    
+
     Build system: CMake
     Feature format: -DCONFIG_FEATURE=1/0
     Coverage tool: gcov or llvm-cov (auto-detected)
@@ -31,10 +31,10 @@ class CMakeAdapter(ProjectAdapter):
         return "gcov"
 
     @property
-    def source_directories(self) -> List[str]:
+    def source_directories(self) -> list[str]:
         """
         CMake source directories (project-specific).
-        
+
         Default to common patterns, but may need customization.
         """
         return ["src", "lib"]
@@ -44,10 +44,10 @@ class CMakeAdapter(ProjectAdapter):
         feature: str,
         enabled: bool,
         with_coverage: bool = True
-    ) -> List[str]:
+    ) -> list[str]:
         """
         Get CMake configuration command.
-        
+
         Note: This returns the cmake command. Make must be run separately.
         Example: cmake -DCONFIG_TLS=1 -DCMAKE_BUILD_TYPE=Debug ..
         """
@@ -70,24 +70,24 @@ class CMakeAdapter(ProjectAdapter):
 
         return cmd
 
-    def get_clean_command(self) -> List[str]:
+    def get_clean_command(self) -> list[str]:
         """Get clean command (remove build directory)."""
         # CMake clean is typically done by removing build directory
         # For now, return make clean which works in build directory
         return ["make", "clean"]
 
-    def get_test_command(self) -> Optional[List[str]]:
+    def get_test_command(self) -> Optional[list[str]]:
         """Get CMake test command (CTest)."""
         return ["ctest", "--output-on-failure"]
 
     def format_feature_flag(self, feature: str, enabled: bool) -> str:
         """
         Format feature flag as -DCONFIG_FEATURE=1/0.
-        
+
         Args:
             feature: Feature name (e.g., "TLS", "SSL")
             enabled: True for 1, False for 0
-            
+
         Returns:
             Formatted flag like "-DCONFIG_TLS=1"
         """
@@ -104,7 +104,7 @@ class CMakeAdapter(ProjectAdapter):
     def get_build_directory(self) -> Path:
         """
         Get or create build directory for CMake.
-        
+
         Returns:
             Path to build directory
         """
@@ -112,10 +112,10 @@ class CMakeAdapter(ProjectAdapter):
         build_dir.mkdir(exist_ok=True)
         return build_dir
 
-    def get_make_command(self) -> List[str]:
+    def get_make_command(self) -> list[str]:
         """
         Get make command to run after cmake.
-        
+
         Returns:
             Make command with parallel jobs
         """

@@ -1,14 +1,13 @@
 """Tests for prat.adapters module."""
 
-import pytest
-from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from prat.adapters import get_adapter
-from prat.adapters.base import ProjectAdapter
-from prat.adapters.mosquitto import MosquittoAdapter
-from prat.adapters.ffmpeg import FFmpegAdapter
 from prat.adapters.cmake import CMakeAdapter
+from prat.adapters.ffmpeg import FFmpegAdapter
+from prat.adapters.mosquitto import MosquittoAdapter
 from prat.adapters.rust import RustAdapter
 from prat.compilation import BuildSystem
 
