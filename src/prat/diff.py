@@ -138,8 +138,8 @@ def diff_coverage_files(enabled_dir: str, disabled_dir: str,
             continue
 
     # Remove empty diff files
-    for covFile in os.listdir(outdir):
-        real_file = os.path.join(outdir, covFile)
+    for cov_file in os.listdir(outdir):
+        real_file = os.path.join(outdir, cov_file)
         if os.path.getsize(real_file) == 0:
             os.remove(real_file)
         else:

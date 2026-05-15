@@ -175,7 +175,8 @@ def run_klee(
 
     Args:
         bytecode_path: Path to .bc file
-        config: KLEE configuration (uses paper defaults if None)
+        config: KLEE configuration. Defaults are inspired by the paper's
+            Table 2 and may need target-specific tuning.
         output_dir: Directory for KLEE output (auto-generated if None)
         use_docker: Run KLEE inside Docker container
         docker_image: Docker image to use for KLEE

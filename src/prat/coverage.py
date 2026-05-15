@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from .adapters import ProjectAdapter
 from .compilation import BuildSystem
 
 
@@ -309,7 +310,7 @@ def _generate_coverage_cargo(
 
 
 def execute_for_coverage(
-    adapter,
+    adapter: ProjectAdapter,
     feature: str,
     enabled: bool,
     timeout: int = 300,
@@ -364,7 +365,7 @@ def execute_for_coverage(
 
 
 def generate_coverage_with_adapter(
-    adapter,
+    adapter: ProjectAdapter,
     feature: str,
     enabled: bool,
     output_dir: Optional[str] = None,
@@ -403,8 +404,7 @@ def generate_coverage_with_adapter(
         # Step 2: Run coverage tool (gcov/llvm-cov) on .gcno + .gcda files.
         # CMake builds put .gcda files under build/; use the cmake path.
         # Make/Autotools builds put them alongside source files.
-        from .compilation import BuildSystem as _BS
-        if adapter.build_system == _BS.CMAKE:
+        if adapter.build_system == BuildSystem.CMAKE:
             coverage_files, missing_files = _generate_coverage_cmake(
                 str(project_path), coverage_tool
             )

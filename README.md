@@ -1,16 +1,19 @@
 # PRAT — Protocol Representation and Analysis Toolkit
 
-PRAT identifies and extracts feature-specific code from C/C++/Rust projects using **compile-time differential coverage analysis**. It compiles a project with and without a feature flag, generates coverage data, and identifies code that can be safely removed.
+PRAT identifies and extracts feature-specific code from C/C++/Rust projects using **differential dynamic coverage analysis**. It builds a coverage-instrumented feature-active variant and a feature-disabled variant, executes available workloads/tests, diffs coverage data, and reports lines that are observed only when the feature is active.
+
+This repository is a modernized, research-prototype implementation of the technique from Williams et al., *Guided Feature Identification and Removal for Resource-Constrained Firmware* (ACM TOSEM 2021). The core feature discovery, build/coverage diffing, reporting, batch analysis, and source-removal paths are implemented and tested. KLEE-based symbolic test generation and post-removal verification exist, but should be treated as experimental until validated in the target Docker/KLEE environment.
 
 ## How It Works
 
-1. **Compile with feature enabled** → instrument with coverage flags
-2. **Generate coverage** (enabled) → gcov/llvm-cov produces `.gcov` files
-3. **Compile with feature disabled** → same instrumentation
-4. **Generate coverage** (disabled) → second set of `.gcov` files
-5. **Diff coverage files** → identify lines unique to the feature-enabled build
-6. **Extract feature code** → lines marked `#####` (never executed when feature is off)
-7. **Generate reports** → HTML table + DOT graph of removable code
+1. **Discover features** from Make, CMake, Autotools, or Cargo build metadata
+2. **Compile feature-active build** with coverage flags
+3. **Execute available workloads/tests** so `.gcda` profile data is written
+4. **Compile feature-disabled build** with the same instrumentation
+5. **Execute the same workloads/tests** against the disabled build
+6. **Diff coverage files** to identify lines covered only in the feature-active build
+7. **Generate reports**: HTML, JSON, DOT, and optional feature graph
+8. **Optionally remove and verify** identified lines from the source tree
 
 ## Quick Start
 
@@ -128,7 +131,7 @@ src/prat/
 PRAT generates:
 - Coverage directories: `coverage_files_WITH_{FEATURE}_{yes|no}/`
 - Diff directory: `diff_{FEATURE}/`
-- HTML report showing removable lines per source file
+- HTML and JSON reports showing removable lines per source file
 - DOT graph showing file/feature relationships
 - JSON checkpoint file for workflow resume
 
@@ -149,10 +152,10 @@ See `docker/README.md` for detailed Docker instructions.
 ```bash
 source .venv/bin/activate   # activate venv first
 
-make test        # run full test suite (158 tests)
+make test        # run full test suite (167 tests)
 make test-fast   # stop on first failure
 make lint        # ruff check src/prat/
-mypy src/prat/   # type checking (49 pre-existing errors, cosmetic)
+mypy src/prat/   # type checking (currently advisory; see docs/RELEASE_AUDIT.md)
 
 # Run a single test file or test by name
 pytest src/tests/test_workflow.py

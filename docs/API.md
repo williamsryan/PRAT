@@ -34,8 +34,8 @@ def run_complete_workflow(
 - `output_dir`: Directory for output files (defaults to project_path)
 - `build_system`: Build system to use (auto-detected if None)
 - `adapter`: ProjectAdapter to use (auto-detected if None); overrides build_system
-- `symbolic`: Generate KLEE symbolic tests to amplify coverage (requires KLEE)
-- `klee_config`: KLEE configuration (uses paper defaults if None)
+- `symbolic`: Generate KLEE symbolic tests (experimental; requires KLEE)
+- `klee_config`: KLEE configuration
 
 **Returns:** `WorkflowResult` with all outputs and statistics
 

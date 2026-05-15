@@ -1,5 +1,9 @@
 # PRAT Revival Roadmap
 
+> Historical planning note: this file records the staged recovery plan for the
+> research prototype. For current release-readiness status, see
+> `docs/RELEASE_AUDIT.md`.
+
 **Goal**: Bring PRAT from its current ~40% paper-fidelity state to a fully functional, demonstrable, shareable tool that faithfully implements the claims of the ACM TOSEM 2021 paper.
 
 **Paper**: "Guided Feature Identification and Removal for Resource-constrained Firmware" — Williams et al., doi:10.1145/3487568

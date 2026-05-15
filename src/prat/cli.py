@@ -106,7 +106,9 @@ def list_features(project_path: str, verbose: bool = False) -> int:
         print(f"\n✓ Found {len(features)} features:\n")
         for i, feature in enumerate(features, 1):
             desc = f" — {feature.description}" if feature.description else ""
-            default = f" [default: {'on' if feature.default_enabled else 'off'}]" if feature.default_enabled is not None else ""
+            default = ""
+            if feature.default_enabled is not None:
+                default = f" [default: {'on' if feature.default_enabled else 'off'}]"
             print(f"  {i}. {feature.name}{desc}{default}")
 
         print("\n💡 To analyze a feature, run:")
@@ -328,19 +330,19 @@ def main():
         epilog="""
 Examples:
   # List available features
-  python3 prat_cli.py App/mosquitto --list
+  prat App/mosquitto --list
 
   # Analyze a feature
-  python3 prat_cli.py App/mosquitto TLS
+  prat App/mosquitto TLS
 
   # Analyze with test suite
-  python3 prat_cli.py App/mosquitto TLS --tests
+  prat App/mosquitto TLS --tests
 
   # Preview analysis without executing
-  python3 prat_cli.py App/mosquitto TLS --dry-run
+  prat App/mosquitto TLS --dry-run
 
   # Verbose output for debugging
-  python3 prat_cli.py App/mosquitto TLS --verbose
+  prat App/mosquitto TLS --verbose
 
 For more information, see docs/API.md
         """
@@ -407,7 +409,7 @@ For more information, see docs/API.md
     parser.add_argument(
         "--symbolic",
         action="store_true",
-        help="Generate KLEE symbolic tests for coverage amplification"
+        help="Generate experimental KLEE symbolic tests"
     )
 
     parser.add_argument(

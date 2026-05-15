@@ -113,9 +113,9 @@ def run_complete_workflow(
         build_system: Build system to use (auto-detected if None)
         adapter: ProjectAdapter to use (auto-detected if None).
                  When provided, overrides build_system and uses adapter paths.
-        symbolic: If True, generate KLEE symbolic tests to amplify coverage.
+        symbolic: If True, generate experimental KLEE symbolic tests.
                   Requires KLEE (local or Docker). Falls back gracefully if unavailable.
-        klee_config: KLEE configuration (uses paper defaults if None).
+        klee_config: KLEE configuration for experimental symbolic generation.
 
     Returns:
         WorkflowResult with all outputs and statistics

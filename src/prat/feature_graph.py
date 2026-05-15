@@ -12,9 +12,12 @@ and generates a self-contained interactive HTML visualization.
 import json
 import os
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .extraction import ExtractionResult
+
+if TYPE_CHECKING:
+    from .batch import BatchResult
 
 
 @dataclass

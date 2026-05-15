@@ -9,7 +9,7 @@ Mosquitto is an MQTT broker that uses Make for building. The TLS feature adds SS
 ### Using Workflow API
 
 ```python
-from src.prat.workflow import run_complete_workflow
+from prat.workflow import run_complete_workflow
 
 result = run_complete_workflow(
     project_path="App/mosquitto",
@@ -63,7 +63,7 @@ The Bridge feature enables MQTT broker bridging for connecting multiple brokers.
 ### Using Workflow API
 
 ```python
-from src.prat.workflow import run_complete_workflow
+from prat.workflow import run_complete_workflow
 
 result = run_complete_workflow(
     project_path="App/mosquitto",
@@ -104,8 +104,8 @@ FFmpeg uses Autotools (configure scripts) for building. The x264 feature adds H.
 ### Using Workflow API
 
 ```python
-from src.prat.workflow import run_complete_workflow
-from src.prat.compilation import BuildSystem
+from prat.workflow import run_complete_workflow
+from prat.compilation import BuildSystem
 
 result = run_complete_workflow(
     project_path="App/FFmpeg",
@@ -152,7 +152,7 @@ Before analyzing a project, discover available features:
 ### Make-based Projects
 
 ```python
-from src.prat.discovery import discover_features_make
+from prat.discovery import discover_features_make
 
 features = discover_features_make("App/mosquitto")
 print(f"Mosquitto features: {', '.join(features)}")
@@ -167,7 +167,7 @@ for feature in features:
 ### Autotools Projects
 
 ```python
-from src.prat.discovery import discover_features_autotools
+from prat.discovery import discover_features_autotools
 
 features = discover_features_autotools("App/FFmpeg")
 print(f"FFmpeg features: {', '.join(features[:10])}...")  # FFmpeg has many features
@@ -176,7 +176,7 @@ print(f"FFmpeg features: {', '.join(features[:10])}...")  # FFmpeg has many feat
 ### CMake Projects
 
 ```python
-from src.prat.discovery import discover_features_cmake
+from prat.discovery import discover_features_cmake
 
 features = discover_features_cmake("path/to/cmake-project")
 print(f"Available features: {', '.join(features)}")
@@ -187,7 +187,7 @@ print(f"Available features: {', '.join(features)}")
 PRAT saves checkpoints during execution. Use them to diagnose and resume:
 
 ```python
-from src.prat.workflow import run_complete_workflow, resume_workflow
+from prat.workflow import run_complete_workflow, resume_workflow
 
 # Run workflow
 result = run_complete_workflow("App/mosquitto", "TLS")
@@ -212,7 +212,7 @@ if not result.success:
 For projects with non-standard build processes:
 
 ```python
-from src.prat.compilation import compile_project, BuildSystem
+from prat.compilation import compile_project, BuildSystem
 
 # Specify build system explicitly
 result = compile_project(
@@ -228,8 +228,8 @@ result = compile_project(
 Analyze multiple features in one script:
 
 ```python
-from src.prat.workflow import run_complete_workflow
-from src.prat.discovery import discover_features_make
+from prat.workflow import run_complete_workflow
+from prat.discovery import discover_features_make
 
 project = "App/mosquitto"
 features = discover_features_make(project)
@@ -296,7 +296,7 @@ if result.key_files_missing:
 Use Docker API directly for custom workflows:
 
 ```python
-from src.prat.docker_runner import build_docker_image, run_docker_container
+from prat.docker_runner import build_docker_image, run_docker_container
 from pathlib import Path
 
 # Build custom image
