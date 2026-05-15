@@ -108,6 +108,19 @@ docker-demo-mosquitto-tls:  ## Docker: build + run Mosquitto TLS demo
 	$(PYTHON) src/demo-runner.py --build mosquitto-tls
 	$(PYTHON) src/demo-runner.py --run mosquitto-tls --output $(RESULTS)/docker
 
+.PHONY: demo-release
+demo-release:  ## Committee-safe Docker demo: Mosquitto TLS with manifest/logs
+	$(PYTHON) src/demo-runner.py --build mosquitto-tls
+	$(PYTHON) src/demo-runner.py --run mosquitto-tls --output $(RESULTS)/release-demo --report $(RESULTS)/release-demo/demo_report.txt
+	@echo ""
+	@echo "✓ Release demo artifacts in $(RESULTS)/release-demo/mosquitto-tls/"
+	@echo "  - report.html"
+	@echo "  - report.json"
+	@echo "  - workflow_checkpoint.json"
+	@echo "  - manifest.json"
+	@echo "  - demo_manifest.json"
+	@echo "  - container.log"
+
 .PHONY: docker-demo-ffmpeg
 docker-demo-ffmpeg:  ## Docker: build + run FFmpeg x264 demo
 	$(PYTHON) src/demo-runner.py --build ffmpeg-x264
@@ -134,6 +147,15 @@ clean: clean-results  ## Clean results (keep venv and App/)
 .PHONY: lint
 lint:  ## Run ruff linter
 	$(VENV)/bin/ruff check src/prat/
+
+.PHONY: package-check
+package-check:  ## Build source/wheel artifacts and validate metadata
+	$(VENV)/bin/python -m build
+	$(VENV)/bin/twine check dist/*
+
+.PHONY: doctor
+doctor:  ## Check local PRAT dependencies and optional Docker support
+	$(PRAT) doctor
 
 .PHONY: help
 help:  ## Show this help

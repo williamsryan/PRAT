@@ -54,7 +54,19 @@ Analyzes the x264 H.264 video encoder feature in FFmpeg.
 
 ## Quick Start
 
-### Option 1: Using Demo Runner (Recommended)
+### Option 1: Committee/review demo
+
+From the repository root:
+
+```bash
+make demo-release
+```
+
+This builds and runs the Mosquitto TLS demo and writes artifacts to
+`results/release-demo/mosquitto-tls/`, including `report.html`,
+`manifest.json`, `demo_manifest.json`, and `container.log`.
+
+### Option 2: Using Demo Runner
 
 The demo runner script automates building, running, and validating demos.
 
@@ -73,7 +85,7 @@ python3 src/demo-runner.py --run-all --output demo_results
 cat demo_report.txt
 ```
 
-### Option 2: Manual Docker Commands
+### Option 3: Manual Docker Commands
 
 **Build a specific demo:**
 ```bash

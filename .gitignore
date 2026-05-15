@@ -11,12 +11,17 @@ build/
 coverage_files_*/
 diff_*/
 reports/
+results/
+demo_output/
+demo_report.txt
 *.gcov
 *.gcno
 *.gcda
 workflow_checkpoint.json
 FDG.dot
 report.html
+report.json
+manifest.json
 
 # Vendored target projects — use scripts/fetch-targets.sh to download
 App/

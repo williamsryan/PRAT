@@ -9,7 +9,8 @@ validates results against expected values, and generates comparison reports.
 import argparse
 import json
 import sys
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -172,8 +173,15 @@ def run_demo(demo_name: str, output_dir: str) -> DemoResult:
         timeout=1800  # 30 minute timeout
     )
 
+    log_file = demo_output / "container.log"
+    log_file.write_text(
+        container_result.stdout
+        + ("\n--- STDERR ---\n" + container_result.stderr if container_result.stderr else ""),
+        encoding="utf-8",
+    )
+
     if not container_result.success:
-        return DemoResult(
+        result = DemoResult(
             demo_name=demo_name,
             success=False,
             removable_lines=None,
@@ -182,14 +190,16 @@ def run_demo(demo_name: str, output_dir: str) -> DemoResult:
             key_files_missing=[],
             within_expected_range=False,
             execution_time=None,
-            error_message=container_result.error_message
+            error_message=f"{container_result.error_message}; see {log_file}"
         )
+        _write_demo_manifest(demo_output, config, expected, result, log_file)
+        return result
 
     # Parse results from checkpoint file
     checkpoint_file = demo_output / "workflow_checkpoint.json"
 
     if not checkpoint_file.exists():
-        return DemoResult(
+        result = DemoResult(
             demo_name=demo_name,
             success=False,
             removable_lines=None,
@@ -200,6 +210,8 @@ def run_demo(demo_name: str, output_dir: str) -> DemoResult:
             execution_time=None,
             error_message="Checkpoint file not found"
         )
+        _write_demo_manifest(demo_output, config, expected, result, log_file)
+        return result
 
     try:
         with open(checkpoint_file) as f:
@@ -240,6 +252,14 @@ def run_demo(demo_name: str, output_dir: str) -> DemoResult:
             execution_time=execution_time
         )
 
+        _write_demo_manifest(
+            demo_output=demo_output,
+            config=config,
+            expected=expected,
+            result=result,
+            container_log=log_file,
+        )
+
         # Print summary
         print(f"\n{'='*70}")
         print(f"Demo Results: {demo_name}")
@@ -253,11 +273,12 @@ def run_demo(demo_name: str, output_dir: str) -> DemoResult:
         if key_files_missing:
             print(f"Key files missing: {', '.join(key_files_missing)}")
         print(f"Execution time: {execution_time:.2f}s")
+        print(f"Artifacts: {demo_output}")
 
         return result
 
     except Exception as e:
-        return DemoResult(
+        result = DemoResult(
             demo_name=demo_name,
             success=False,
             removable_lines=None,
@@ -268,6 +289,38 @@ def run_demo(demo_name: str, output_dir: str) -> DemoResult:
             execution_time=None,
             error_message=f"Failed to parse results: {e}"
         )
+        _write_demo_manifest(demo_output, config, expected, result, log_file)
+        return result
+
+
+def _write_demo_manifest(
+    demo_output: Path,
+    config: dict[str, str],
+    expected: ExpectedResult,
+    result: DemoResult,
+    container_log: Path,
+) -> None:
+    """Write a small manifest for committee/demo review."""
+    artifacts = {
+        path.name: str(path)
+        for path in sorted(demo_output.iterdir())
+        if path.is_file() or path.is_dir()
+    }
+    artifacts["container.log"] = str(container_log)
+
+    manifest = {
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "demo": result.demo_name,
+        "image": config["image_name"],
+        "project": config["project"],
+        "feature": config["feature"],
+        "expected": asdict(expected),
+        "result": asdict(result),
+        "artifacts": artifacts,
+    }
+
+    path = demo_output / "demo_manifest.json"
+    path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
 
 def generate_comparison_report(results: list[DemoResult], output_file: str):

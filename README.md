@@ -86,6 +86,7 @@ print(f"Removable lines: {result.extraction_result.total_removable_lines}")
 Self-contained demos that clone and build the target projects inside the image:
 
 ```bash
+make demo-release # stable Mosquitto TLS demo for review
 make docker-build   # build all three demo images
 make docker-run     # run all demos → results/docker/ + demo_report.txt
 ```
@@ -165,10 +166,10 @@ pytest -k "test_name"
 ## Documentation
 
 - [API Reference](docs/API.md)
+- [Docker Quickstart](docs/QUICKSTART_DOCKER.md)
+- [Standalone Quickstart](docs/QUICKSTART_STANDALONE.md)
+- [Paper Alignment](docs/PAPER_ALIGNMENT.md)
+- [Release Audit](docs/RELEASE_AUDIT.md)
 - [Usage Examples](docs/EXAMPLES.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Docker Demos](docker/README.md)
-
-## License
-
-MIT License. See `pyproject.toml` for details.

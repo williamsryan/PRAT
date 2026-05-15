@@ -8,7 +8,6 @@ version = "0.2.0"
 description = "Protocol Representation and Analysis Toolkit — identify and extract feature-specific code from C/C++/Rust projects using compile-time coverage analysis"
 readme = "README.md"
 requires-python = ">=3.9"
-license = { text = "MIT" }
 authors = [
     { name = "Ryan Williams", email = "ryanpwil@amazon.com" }
 ]
@@ -21,10 +20,12 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    "build>=1.0",
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "mypy>=1.0",
     "ruff>=0.1.0",
+    "twine>=4.0",
 ]
 
 [project.scripts]

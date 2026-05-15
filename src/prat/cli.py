@@ -10,10 +10,13 @@ Features:
 """
 
 import argparse
+import platform
+import shutil
 import sys
 from pathlib import Path
 from typing import Optional
 
+from .adapters import get_adapter
 from .batch import run_batch_analysis
 from .compilation import BuildSystem, detect_build_system
 from .discovery import (
@@ -22,10 +25,15 @@ from .discovery import (
     discover_features_cmake,
     discover_features_make,
 )
+from .docker_runner import check_docker_available
 from .environment import verify_dependencies
 from .removal import remove_feature_code
 from .verification import verify_correctness
 from .workflow import WorkflowCheckpoint, run_complete_workflow
+
+
+def _tool_path(tool: str) -> str:
+    return shutil.which(tool) or "missing"
 
 
 class ProgressIndicator:
@@ -170,6 +178,60 @@ def dry_run_analysis(
     print("\n💡 To execute, remove --dry-run flag")
 
     return 0
+
+
+def run_doctor(project_path: Optional[str] = None) -> int:
+    """
+    Print local environment readiness for PRAT demos and standalone use.
+
+    Returns:
+        Exit code (0 if required dependencies are present)
+    """
+    print("\n" + "=" * 70)
+    print("PRAT Doctor")
+    print("=" * 70)
+    print(f"Python:   {platform.python_version()}")
+    print(f"Platform: {platform.platform()}")
+
+    deps = verify_dependencies()
+
+    print("\nRequired/coverage tools:")
+    for tool in ["gcc", "make", "python3", "perl", "gcov", "llvm-cov-9"]:
+        print(f"  {tool:12s} {_tool_path(tool)}")
+
+    print("\nOptional tools:")
+    for tool in ["clang", "cmake", "pygmentize", "xdot", "docker"]:
+        if tool == "docker":
+            status = "available" if check_docker_available() else "missing"
+        else:
+            status = _tool_path(tool)
+        print(f"  {tool:12s} {status}")
+
+    if project_path:
+        project = Path(project_path)
+        print("\nProject:")
+        print(f"  path         {project}")
+        print(f"  exists       {project.exists()}")
+        if project.exists():
+            try:
+                build_system = detect_build_system(str(project))
+                print(f"  build system {build_system.value}")
+            except Exception as exc:
+                print(f"  build system error: {exc}")
+
+            adapter = get_adapter(str(project))
+            print(f"  adapter      {type(adapter).__name__ if adapter else 'none'}")
+            if adapter:
+                print(f"  coverage     {adapter.coverage_tool}")
+                print(f"  source dirs  {', '.join(adapter.source_directories)}")
+
+    print("\nResult:")
+    if deps.success:
+        print("  required dependencies are available")
+        return 0
+
+    print(f"  missing required dependencies: {', '.join(deps.missing_tools)}")
+    return 1
 
 
 def run_analysis(
@@ -324,11 +386,18 @@ def run_analysis(
 
 def main():
     """Main CLI entry point."""
+    if len(sys.argv) > 1 and sys.argv[1] == "doctor":
+        sys.argv[1] = "--doctor"
+
     parser = argparse.ArgumentParser(
         description="PRAT - Protocol Representation and Analysis Toolkit",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
+  # Check local readiness
+  prat doctor
+  prat doctor App/mosquitto
+
   # List available features
   prat App/mosquitto --list
 
@@ -350,19 +419,26 @@ For more information, see docs/API.md
 
     parser.add_argument(
         "project",
+        nargs="?",
         help="Path to project directory"
     )
 
     parser.add_argument(
         "feature",
         nargs="?",
-        help="Feature to analyze (required unless --list is used)"
+        help="Feature to analyze (required unless --list, --batch, or doctor is used)"
     )
 
     parser.add_argument(
         "--list",
         action="store_true",
         help="List available features for the project"
+    )
+
+    parser.add_argument(
+        "--doctor",
+        action="store_true",
+        help="Check local dependencies and optional project adapter detection"
     )
 
     parser.add_argument(
@@ -420,9 +496,15 @@ For more information, see docs/API.md
 
     args = parser.parse_args()
 
+    if args.doctor:
+        return run_doctor(args.project)
+
     # Validate arguments
     if not args.list and not args.batch and not args.feature:
-        parser.error("feature is required unless --list is used")
+        parser.error("feature is required unless --list, --batch, or doctor is used")
+
+    if not args.project:
+        parser.error("project is required")
 
     # Check project exists
     project_path = Path(args.project)
