@@ -138,7 +138,7 @@ PRAT generates:
 
 ## Docker Demos
 
-Three reproducible demos with pinned dependencies:
+Three reproducible demos with pinned target-project versions and stable package sets:
 
 | Demo | Project | Feature | Expected Lines | Time |
 |---|---|---|---|---|
@@ -156,7 +156,7 @@ source .venv/bin/activate   # activate venv first
 make test        # run full test suite (167 tests)
 make test-fast   # stop on first failure
 make lint        # ruff check src/prat/
-mypy src/prat/   # type checking (currently advisory; see docs/RELEASE_AUDIT.md)
+mypy src/prat/   # type checking; currently advisory for release review
 
 # Run a single test file or test by name
 pytest src/tests/test_workflow.py

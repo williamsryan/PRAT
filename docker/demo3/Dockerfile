@@ -1,7 +1,7 @@
 # Dockerfile for PRAT Demo 3: FFmpeg Feature Analysis
 # This demo analyzes configurable features in the FFmpeg multimedia framework
 
-FROM ubuntu:20.04
+FROM python:3.11-slim-bookworm
 
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
@@ -17,8 +17,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     automake \
     libtool \
     pkg-config \
-    python3 \
-    python3-pip \
     perl \
     git \
     yasm \
@@ -49,7 +47,6 @@ RUN git clone --depth 1 --branch n5.1.4 \
 # Set environment variables
 ENV PROJECT_PATH=/prat/App/FFmpeg
 ENV FEATURE=x264
-ENV GCOV=/usr/bin/gcov-9
 ENV PATH="/usr/bin:${PATH}"
 
 # Create output directory
