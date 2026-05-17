@@ -10,7 +10,9 @@ PRAT provides three Docker demos that showcase feature analysis on real projects
 2. **Demo 2**: Mosquitto Bridge feature  
 3. **Demo 3**: FFmpeg x264 encoder feature
 
-Each demo runs in an isolated container with pinned dependencies for reproducibility.
+Each demo runs in an isolated container. Target project versions are pinned;
+Ubuntu package names are fixed but exact apt revisions are not pinned because
+archive revisions differ by architecture and date.
 
 ## Prerequisites
 
@@ -325,13 +327,14 @@ wait
 
 ## Reproducibility Guarantees
 
-PRAT Docker demos ensure reproducibility through:
+PRAT Docker demos improve reproducibility through:
 
-1. **Pinned base image**: `ubuntu:20.04`
-2. **Pinned package versions**: All apt packages specify exact versions
-3. **Pinned Python packages**: requirements.txt with version constraints
+1. **Pinned language line**: Python 3.11 slim Debian image
+2. **Stable package set**: Dockerfiles install a fixed set of Ubuntu packages
+3. **Minimal Python dependency set**: Docker demos install only the Python
+   packages needed by the source-run demo path
 4. **Isolated environment**: No host dependencies
-5. **Deterministic builds**: Same inputs always produce same outputs
+5. **Pinned target projects**: Mosquitto and FFmpeg versions are fixed
 
 ## Expected Results Reference
 

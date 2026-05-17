@@ -81,7 +81,7 @@ class TestMosquittoAdapter:
 
     def test_coverage_tool_linux(self, adapter):
         with patch("prat.adapters.mosquitto._is_macos", return_value=False):
-            assert adapter.coverage_tool == "llvm-cov-9"
+            assert adapter.coverage_tool == "gcov"
 
     def test_feature_flag_enabled_linux(self, adapter):
         with patch("prat.adapters.mosquitto._is_macos", return_value=False):

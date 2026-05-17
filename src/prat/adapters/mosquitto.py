@@ -21,7 +21,7 @@ class MosquittoAdapter(ProjectAdapter):
     """
     Adapter for Mosquitto MQTT broker.
 
-    Linux: Make + WITH_FEATURE=yes/no + llvm-cov-9
+    Linux: Make + WITH_FEATURE=yes/no + gcov
     macOS: CMake + -DWITH_FEATURE=ON/OFF + gcov
     """
 
@@ -31,7 +31,7 @@ class MosquittoAdapter(ProjectAdapter):
 
     @property
     def coverage_tool(self) -> str:
-        return "gcov" if _is_macos() else "llvm-cov-9"
+        return "gcov"
 
     @property
     def source_directories(self) -> list[str]:

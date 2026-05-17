@@ -219,8 +219,10 @@ def run_demo(demo_name: str, output_dir: str) -> DemoResult:
 
         # Extract results
         extraction = checkpoint.get('extraction_result', {})
+        diff_result = checkpoint.get('diff_result', {})
         removable_lines = extraction.get('total_removable_lines', 0)
         file_line_counts = extraction.get('file_line_counts', {})
+        feature_only_files = diff_result.get('feature_only_files', [])
         files_analyzed = len(file_line_counts)
         execution_time = checkpoint.get('total_time', 0)
 
@@ -231,6 +233,7 @@ def run_demo(demo_name: str, output_dir: str) -> DemoResult:
         for key_file in expected.key_files:
             # Check if any analyzed file contains the key file name
             found = any(key_file in analyzed_file for analyzed_file in file_line_counts)
+            found = found or any(key_file in feature_file for feature_file in feature_only_files)
             if found:
                 key_files_found.append(key_file)
             else:

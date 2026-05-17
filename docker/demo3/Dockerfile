@@ -6,37 +6,35 @@ FROM ubuntu:20.04
 # Prevent interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Pin package versions for reproducibility
-RUN apt-get update && apt-get install -y \
-    gcc=4:9.3.0-1ubuntu2 \
-    g++=4:9.3.0-1ubuntu2 \
-    make=4.2.1-1.2 \
-    autoconf=2.69-11.1 \
-    automake=1:1.16.1-4ubuntu6 \
-    libtool=2.4.6-14 \
-    pkg-config=0.29.1-0ubuntu4 \
-    gcov=4:9.3.0-1ubuntu2 \
-    python3=3.8.2-0ubuntu2 \
-    python3-pip=20.0.2-5ubuntu1.10 \
-    perl=5.30.0-9ubuntu0.5 \
-    git=1:2.25.1-1ubuntu3.11 \
-    yasm=1.3.0-2build1 \
-    nasm=2.14.02-1 \
-    libx264-dev=2:0.155.2917+git0a84d98-2 \
-    libx265-dev=3.2.1-1build1 \
-    libvpx-dev=1.8.2-1build1 \
-    libfdk-aac-dev=2.0.1-1 \
-    libmp3lame-dev=3.100-3 \
-    libopus-dev=1.3.1-0ubuntu1 \
-    libvorbis-dev=1.3.6-2ubuntu1 \
-    libtheora-dev=1.1.1+dfsg.1-15ubuntu2 \
+# Keep package names stable but avoid exact apt revisions: Ubuntu archive
+# revisions differ by architecture and date, which made the demo unbuildable.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    gcc \
+    g++ \
+    make \
+    autoconf \
+    automake \
+    libtool \
+    pkg-config \
+    python3 \
+    python3-pip \
+    perl \
+    git \
+    yasm \
+    nasm \
+    libx264-dev \
+    libx265-dev \
+    libvpx-dev \
+    libmp3lame-dev \
+    libopus-dev \
+    libvorbis-dev \
+    libtheora-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies with pinned versions
+# Install Python dependencies needed by the source-run demo
 RUN pip3 install --no-cache-dir \
-    toml==0.10.2 \
-    pandas==1.3.5 \
-    numpy==1.21.6
+    toml==0.10.2
 
 # Create working directory
 WORKDIR /prat
@@ -61,5 +59,5 @@ RUN mkdir -p /prat/output
 # Note: Feature can be overridden via environment variable
 CMD ["python3", "/prat/src/demo_workflow.py", \
      "--project", "/prat/App/FFmpeg", \
-     "--feature", "${FEATURE}", \
+     "--feature", "x264", \
      "--output", "/prat/output"]
