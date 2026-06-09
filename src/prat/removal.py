@@ -11,7 +11,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Optional
 
 from .extraction import ExtractionResult
 
@@ -26,17 +26,17 @@ class RemovalResult:
     backup_dir: Optional[str] = None
     rebuild_success: Optional[bool] = None
     error_message: Optional[str] = None
-    per_file_stats: Dict[str, int] = field(default_factory=dict)
+    per_file_stats: dict[str, int] = field(default_factory=dict)
 
 
 def remove_feature_code(
     extraction_result: ExtractionResult,
     project_path: str,
     feature: str,
-    feature_only_files: Optional[List[str]] = None,
+    feature_only_files: Optional[list[str]] = None,
     backup: bool = True,
     rebuild: bool = True,
-    build_command: Optional[List[str]] = None,
+    build_command: Optional[list[str]] = None,
 ) -> RemovalResult:
     """
     Remove feature-specific code from source tree.
@@ -64,7 +64,7 @@ def remove_feature_code(
     total_removed = 0
     files_modified = 0
     files_deleted = 0
-    per_file_stats: Dict[str, int] = {}
+    per_file_stats: dict[str, int] = {}
     backup_dir = None
 
     print(f"\n[+] Removing {feature} feature code from {project_path}")
@@ -120,10 +120,11 @@ def remove_feature_code(
                     backup_path.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(source_file, backup_path)
 
-                # Delete
-                os.remove(source_file)
+                # Replace with empty stub so build systems (e.g. CMake) that
+                # unconditionally list the file as a source can still find it.
+                source_file.write_text(f"/* {file_name}: removed by PRAT (feature-only file) */\n")
                 files_deleted += 1
-                print(f"    {file_name}: deleted (feature-only file)")
+                print(f"    {file_name}: stubbed (feature-only file)")
 
         print(f"\n    Summary: {total_removed} lines removed, "
               f"{files_modified} files modified, {files_deleted} files deleted")
@@ -131,12 +132,12 @@ def remove_feature_code(
         # --- Rebuild verification ---
         rebuild_success = None
         if rebuild:
-            print(f"\n[+] Rebuilding to verify removal...")
+            print("\n[+] Rebuilding to verify removal...")
             rebuild_success = _rebuild_project(project_path, build_command)
             if rebuild_success:
-                print(f"    [+] Rebuild successful — removal is safe")
+                print("    [+] Rebuild successful — removal is safe")
             else:
-                print(f"    [!] Rebuild FAILED — removal may have broken compilation")
+                print("    [!] Rebuild FAILED — removal may have broken compilation")
 
         return RemovalResult(
             success=True,
@@ -224,7 +225,7 @@ def _find_source_file(project: Path, file_name: str) -> Optional[Path]:
     return None
 
 
-def _remove_lines_from_file(file_path: Path, line_numbers: Set[int]) -> int:
+def _remove_lines_from_file(file_path: Path, line_numbers: set[int]) -> int:
     """
     Remove specific lines from a source file.
 
@@ -239,11 +240,11 @@ def _remove_lines_from_file(file_path: Path, line_numbers: Set[int]) -> int:
         Number of lines actually removed
     """
     try:
-        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+        with open(file_path, encoding="utf-8", errors="ignore") as f:
             lines = f.readlines()
 
         removed = 0
-        for i, line in enumerate(lines):
+        for i, _line in enumerate(lines):
             line_num = i + 1  # 1-indexed
             if line_num in line_numbers:
                 # Replace with empty line to preserve numbering
@@ -262,7 +263,7 @@ def _remove_lines_from_file(file_path: Path, line_numbers: Set[int]) -> int:
 
 def _rebuild_project(
     project_path: str,
-    build_command: Optional[List[str]] = None,
+    build_command: Optional[list[str]] = None,
 ) -> bool:
     """
     Attempt to rebuild the project after code removal.
@@ -280,7 +281,7 @@ def _rebuild_project(
         if (project / "Cargo.toml").exists():
             build_command = ["cargo", "build"]
         elif (project / "CMakeLists.txt").exists():
-            build_command = ["make", "-j3"]
+            build_command = ["make", "-C", "build", "-j"]
         elif (project / "Makefile").exists():
             build_command = ["make", "-j"]
         else:

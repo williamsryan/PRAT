@@ -113,7 +113,7 @@ from .myproject import MyProjectAdapter
 
 ```bash
 pytest -v                   # all tests
-pytest tests/test_diff.py   # single file
+pytest src/tests/test_diff.py   # single file
 pytest -k "test_batch"      # by pattern
 ```
 

@@ -1,15 +1,13 @@
 """Tests for prat.compilation module."""
 
-import pytest
-from unittest.mock import patch, MagicMock
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 from prat.compilation import (
-    detect_build_system,
+    BuildSystem,
     compile_project,
     compile_with_adapter,
-    BuildSystem,
-    CompilationResult,
+    detect_build_system,
 )
 
 
@@ -90,7 +88,7 @@ class TestCompileWithAdapter:
         adapter.project_path = Path("/fake/project")
         adapter.build_system = BuildSystem.MAKE
         adapter.get_clean_command.return_value = ["make", "clean"]
-        adapter.get_compile_command.return_value = ["make", "binary", "WITH_TLS=yes"]
+        adapter.get_build_commands.return_value = [["make", "binary", "WITH_TLS=yes"]]
         adapter.get_test_command.return_value = None
         adapter.get_binary_path.return_value = "/fake/project/src/mosquitto"
         adapter.get_coverage_environment.return_value = {}
@@ -101,7 +99,7 @@ class TestCompileWithAdapter:
         assert result.binary_path == "/fake/project/src/mosquitto"
         assert result.build_system == BuildSystem.MAKE
         adapter.get_clean_command.assert_called_once()
-        adapter.get_compile_command.assert_called_once_with("TLS", True, with_coverage=True)
+        adapter.get_build_commands.assert_called_once_with("TLS", True, with_coverage=True)
 
     @patch("prat.compilation.subprocess.run")
     def test_compile_failure(self, mock_run):
@@ -114,7 +112,7 @@ class TestCompileWithAdapter:
         adapter.project_path = Path("/fake/project")
         adapter.build_system = BuildSystem.MAKE
         adapter.get_clean_command.return_value = ["make", "clean"]
-        adapter.get_compile_command.return_value = ["make", "binary"]
+        adapter.get_build_commands.return_value = [["make", "binary"]]
         adapter.get_coverage_environment.return_value = {}
 
         result = compile_with_adapter(adapter, "TLS", True)
@@ -130,7 +128,7 @@ class TestCompileWithAdapter:
         adapter.project_path = Path("/fake/project")
         adapter.build_system = BuildSystem.MAKE
         adapter.get_clean_command.return_value = ["make", "clean"]
-        adapter.get_compile_command.return_value = ["make", "binary"]
+        adapter.get_build_commands.return_value = [["make", "binary"]]
         adapter.get_test_command.return_value = ["make", "test"]
         adapter.get_binary_path.return_value = None
         adapter.get_coverage_environment.return_value = {}
@@ -138,5 +136,5 @@ class TestCompileWithAdapter:
         result = compile_with_adapter(adapter, "TLS", True, run_tests=True)
 
         assert result.success is True
-        # clean + compile + test = 3 calls
+        # clean + compile + test = 3 subprocess.run calls
         assert mock_run.call_count == 3

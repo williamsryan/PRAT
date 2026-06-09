@@ -44,6 +44,7 @@ RUN git clone --depth 1 --branch n5.1.4 \
 
 ENV PROJECT_PATH=/prat/App/FFmpeg
 ENV FEATURE=x264
+ENV PATH="/usr/bin:${PATH}"
 
 RUN mkdir -p /prat/output
 

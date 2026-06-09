@@ -4,130 +4,147 @@ Base project adapter for PRAT.
 Defines the common interface that all project adapters must implement.
 """
 
-from abc import ABC, abstractmethod, abstractproperty
-from typing import List, Optional, Dict
+from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import Optional
 
-from ..compilation import BuildSystem, CompilationResult
+from ..compilation import BuildSystem
 
 
 class ProjectAdapter(ABC):
     """
     Abstract base class for project-specific adapters.
-    
+
     Each adapter encapsulates project-specific details like build commands,
     feature flag formats, source directories, and coverage tool preferences.
     """
-    
+
     def __init__(self, project_path: str):
         """
         Initialize adapter with project path.
-        
+
         Args:
             project_path: Path to project root directory
         """
         self.project_path = Path(project_path)
-    
+
     @property
     @abstractmethod
     def build_system(self) -> BuildSystem:
         """Return the build system used by this project."""
         pass
-    
+
     @property
     @abstractmethod
     def coverage_tool(self) -> str:
         """Return the preferred coverage tool (gcov, llvm-cov, etc.)."""
         pass
-    
+
     @property
     @abstractmethod
-    def source_directories(self) -> List[str]:
+    def source_directories(self) -> list[str]:
         """Return list of source directories to analyze."""
         pass
-    
+
     @abstractmethod
     def get_compile_command(
         self,
         feature: str,
         enabled: bool,
         with_coverage: bool = True
-    ) -> List[str]:
+    ) -> list[str]:
         """
         Get compilation command for this project.
-        
+
         Args:
             feature: Feature name to enable/disable
             enabled: True to enable feature, False to disable
             with_coverage: Whether to enable coverage instrumentation
-            
+
         Returns:
             List of command arguments to execute
         """
         pass
-    
+
     @abstractmethod
-    def get_clean_command(self) -> List[str]:
+    def get_clean_command(self) -> list[str]:
         """
         Get clean command to remove build artifacts.
-        
+
         Returns:
             List of command arguments to execute
         """
         pass
-    
+
     @abstractmethod
-    def get_test_command(self) -> Optional[List[str]]:
+    def get_test_command(self) -> Optional[list[str]]:
         """
         Get test command to run test suite.
-        
+
         Returns:
             List of command arguments, or None if no tests available
         """
         pass
-    
+
     @abstractmethod
     def format_feature_flag(self, feature: str, enabled: bool) -> str:
         """
         Format feature flag in project-specific format.
-        
+
         Args:
             feature: Feature name
             enabled: True to enable, False to disable
-            
+
         Returns:
             Formatted feature flag string
         """
         pass
-    
+
     def get_binary_path(self) -> Optional[str]:
         """
         Get path to compiled binary.
-        
+
         Returns:
             Path to binary, or None if not applicable
         """
         return None
-    
-    def get_coverage_environment(self) -> Dict[str, str]:
+
+    def get_coverage_environment(self) -> dict[str, str]:
         """
         Get environment variables needed for coverage.
-        
+
         Returns:
             Dictionary of environment variables
         """
         return {}
-    
+
     def validate_project(self) -> bool:
         """
         Validate that this adapter is appropriate for the project.
-        
+
         Returns:
         True if project structure matches adapter expectations
         """
         return self.project_path.exists()
 
-    def get_execution_commands(self, feature: str, enabled: bool) -> List[List[str]]:
+    def get_build_commands(
+        self,
+        feature: str,
+        enabled: bool,
+        with_coverage: bool = True,
+    ) -> list[list[str]]:
+        """
+        Return the full ordered sequence of commands to build the project.
+
+        Default: a single-element list containing get_compile_command().
+        Override for multi-step builds (e.g., FFmpeg: [configure, make]).
+
+        Returns:
+            Ordered list of commands; each command is a list of strings.
+        """
+        return [self.get_compile_command(feature, enabled, with_coverage)]
+
+    def get_execution_commands(self, feature: str, enabled: bool) -> list[list[str]]:
         """
         Get commands to execute the binary for dynamic coverage.
 

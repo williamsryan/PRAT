@@ -1,10 +1,9 @@
 """Tests for prat.diff module."""
 
 import os
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
-from prat.diff import match_coverage_files, diff_coverage_files, DiffResult
+from prat.diff import diff_coverage_files, match_coverage_files
 
 
 class TestMatchCoverageFiles:

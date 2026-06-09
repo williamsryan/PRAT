@@ -9,12 +9,13 @@ dependency map and aggregate report.
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Optional
 
-from .discovery import discover_features, Feature
-from .workflow import run_complete_workflow, WorkflowResult
+from .adapters import ProjectAdapter, get_adapter
 from .compilation import BuildSystem
-from .adapters import get_adapter, ProjectAdapter
+from .discovery import Feature, discover_features
+from .feature_graph import build_feature_graph, generate_feature_graph_html
+from .workflow import WorkflowResult, run_complete_workflow
 
 
 @dataclass
@@ -23,18 +24,18 @@ class FeatureAnalysis:
     feature: Feature
     workflow_result: Optional[WorkflowResult] = None
     removable_lines: int = 0
-    affected_files: List[str] = field(default_factory=list)
+    affected_files: list[str] = field(default_factory=list)
 
 
 @dataclass
 class CrossFeatureMap:
     """Map of which files are shared across features."""
     # file_name -> set of feature names that affect it
-    file_to_features: Dict[str, Set[str]] = field(default_factory=dict)
+    file_to_features: dict[str, set[str]] = field(default_factory=dict)
     # feature_name -> set of file names it affects
-    feature_to_files: Dict[str, Set[str]] = field(default_factory=dict)
+    feature_to_files: dict[str, set[str]] = field(default_factory=dict)
     # Pairs of features that share files
-    shared_files: Dict[str, List[str]] = field(default_factory=dict)
+    shared_files: dict[str, list[str]] = field(default_factory=dict)
 
 
 @dataclass
@@ -46,8 +47,9 @@ class BatchResult:
     features_analyzed: int
     features_failed: int
     total_removable_lines: int
-    feature_results: Dict[str, FeatureAnalysis] = field(default_factory=dict)
+    feature_results: dict[str, FeatureAnalysis] = field(default_factory=dict)
     cross_feature_map: Optional[CrossFeatureMap] = None
+    feature_graph_path: Optional[str] = None
     total_time: float = 0.0
     error_message: Optional[str] = None
 
@@ -58,7 +60,7 @@ def run_batch_analysis(
     run_tests: bool = False,
     build_system: Optional[BuildSystem] = None,
     adapter: Optional[ProjectAdapter] = None,
-    skip_features: Optional[List[str]] = None,
+    skip_features: Optional[list[str]] = None,
 ) -> BatchResult:
     """
     Run PRAT analysis for ALL discovered features in a project.
@@ -122,7 +124,7 @@ def run_batch_analysis(
     print(f"\n[2] Running per-feature analysis ({len(active_features)} features)...\n")
 
     # Step 2: Analyze each feature
-    feature_results: Dict[str, FeatureAnalysis] = {}
+    feature_results: dict[str, FeatureAnalysis] = {}
     analyzed = 0
     failed = 0
     total_lines = 0
@@ -167,27 +169,49 @@ def run_batch_analysis(
             print(f"    [!] Exception: {e}")
 
     # Step 3: Build cross-feature dependency map
-    print(f"\n[3] Building cross-feature dependency map...")
+    print("\n[3] Building cross-feature dependency map...")
     cross_map = _build_cross_feature_map(feature_results)
+
+    graph_path = None
+    if analyzed:
+        try:
+            graph = build_feature_graph(
+                BatchResult(
+                    success=True,
+                    project=project_name,
+                    features_discovered=len(features),
+                    features_analyzed=analyzed,
+                    features_failed=failed,
+                    total_removable_lines=total_lines,
+                    feature_results=feature_results,
+                    cross_feature_map=cross_map,
+                )
+            )
+            graph_path = str(Path(output_dir) / "feature_graph.html")
+            generate_feature_graph_html(graph, graph_path)
+        except Exception as e:
+            print(f"    [!] Failed to generate feature graph: {e}")
 
     # Print summary
     elapsed = time.time() - start_time
 
     print(f"\n{'='*70}")
-    print(f"BATCH ANALYSIS COMPLETE")
+    print("BATCH ANALYSIS COMPLETE")
     print(f"{'='*70}")
     print(f"  Features discovered: {len(features)}")
     print(f"  Features analyzed:   {analyzed}")
     print(f"  Features failed:     {failed}")
     print(f"  Total removable LoC: {total_lines}")
     print(f"  Total time:          {elapsed:.1f}s")
+    if graph_path:
+        print(f"  Feature graph:       {graph_path}")
 
     if cross_map.shared_files:
-        print(f"\n  Cross-feature file sharing:")
+        print("\n  Cross-feature file sharing:")
         for pair, files in sorted(cross_map.shared_files.items()):
             print(f"    {pair}: {len(files)} shared files")
 
-    print(f"\n  Per-feature breakdown:")
+    print("\n  Per-feature breakdown:")
     for name, fa in sorted(
         feature_results.items(),
         key=lambda x: x[1].removable_lines,
@@ -206,12 +230,13 @@ def run_batch_analysis(
         total_removable_lines=total_lines,
         feature_results=feature_results,
         cross_feature_map=cross_map,
+        feature_graph_path=graph_path,
         total_time=elapsed,
     )
 
 
 def _build_cross_feature_map(
-    feature_results: Dict[str, FeatureAnalysis],
+    feature_results: dict[str, FeatureAnalysis],
 ) -> CrossFeatureMap:
     """
     Build a map of cross-feature file dependencies.

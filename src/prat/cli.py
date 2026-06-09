@@ -10,52 +10,59 @@ Features:
 """
 
 import argparse
+import platform
+import shutil
 import sys
 from pathlib import Path
 from typing import Optional
 
-from .workflow import run_complete_workflow, WorkflowCheckpoint
-from .discovery import (
-    discover_features_make,
-    discover_features_cmake,
-    discover_features_autotools,
-    discover_features_cargo
-)
-from .compilation import BuildSystem, detect_build_system
-from .environment import verify_dependencies
+from .adapters import get_adapter
 from .batch import run_batch_analysis
+from .compilation import BuildSystem, detect_build_system
+from .discovery import (
+    discover_features_autotools,
+    discover_features_cargo,
+    discover_features_cmake,
+    discover_features_make,
+)
+from .docker_runner import check_docker_available
+from .environment import verify_dependencies
 from .removal import remove_feature_code
 from .verification import verify_correctness
-from .symbolic import KleeConfig
+from .workflow import WorkflowCheckpoint, run_complete_workflow
+
+
+def _tool_path(tool: str) -> str:
+    return shutil.which(tool) or "missing"
 
 
 class ProgressIndicator:
     """Simple progress indicator for CLI."""
-    
+
     def __init__(self, verbose: bool = False):
         self.verbose = verbose
         self.current_step = 0
         self.total_steps = 7
-    
+
     def step(self, message: str):
         """Print progress step."""
         self.current_step += 1
         prefix = f"[{self.current_step}/{self.total_steps}]"
         print(f"\n{prefix} {message}")
-    
+
     def info(self, message: str):
         """Print info message."""
         if self.verbose:
             print(f"    ℹ {message}")
-    
+
     def success(self, message: str):
         """Print success message."""
         print(f"    ✓ {message}")
-    
+
     def error(self, message: str):
         """Print error message."""
         print(f"    ✗ {message}")
-    
+
     def warning(self, message: str):
         """Print warning message."""
         print(f"    ⚠ {message}")
@@ -64,16 +71,16 @@ class ProgressIndicator:
 def list_features(project_path: str, verbose: bool = False) -> int:
     """
     List available features for a project.
-    
+
     Returns:
         Exit code (0 for success)
     """
     progress = ProgressIndicator(verbose)
-    
+
     print(f"\n{'='*70}")
     print(f"Discovering Features: {project_path}")
     print(f"{'='*70}")
-    
+
     # Detect build system
     try:
         build_system = detect_build_system(project_path)
@@ -83,7 +90,7 @@ def list_features(project_path: str, verbose: bool = False) -> int:
         print("\n💡 Suggestion: Ensure the project directory contains build files")
         print("   (Makefile, CMakeLists.txt, configure, or Cargo.toml)")
         return 1
-    
+
     # Discover features based on build system
     try:
         if build_system == BuildSystem.MAKE:
@@ -97,22 +104,26 @@ def list_features(project_path: str, verbose: bool = False) -> int:
         else:
             progress.error(f"Unsupported build system: {build_system.value}")
             return 1
-        
+
         if not features:
             progress.warning("No features found")
             print("\n💡 Suggestion: This project may not have configurable features")
             print("   or the build system is not fully supported")
             return 0
-        
+
         print(f"\n✓ Found {len(features)} features:\n")
         for i, feature in enumerate(features, 1):
-            print(f"  {i}. {feature}")
-        
-        print(f"\n💡 To analyze a feature, run:")
-        print(f"   python3 src/prat_cli.py {project_path} {features[0]}")
-        
+            desc = f" — {feature.description}" if feature.description else ""
+            default = ""
+            if feature.default_enabled is not None:
+                default = f" [default: {'on' if feature.default_enabled else 'off'}]"
+            print(f"  {i}. {feature.name}{desc}{default}")
+
+        print("\n💡 To analyze a feature, run:")
+        print(f"   prat {project_path} {features[0].name}")
+
         return 0
-        
+
     except Exception as e:
         progress.error(f"Feature discovery failed: {e}")
         print("\n💡 Suggestion: Check that the project has a valid build configuration")
@@ -127,16 +138,16 @@ def dry_run_analysis(
 ) -> int:
     """
     Preview what the analysis will do without executing.
-    
+
     Returns:
         Exit code (0 for success)
     """
     progress = ProgressIndicator(verbose)
-    
+
     print(f"\n{'='*70}")
     print(f"Dry Run: {project_path} - Feature: {feature}")
     print(f"{'='*70}")
-    
+
     # Detect build system
     try:
         build_system = detect_build_system(project_path)
@@ -144,29 +155,83 @@ def dry_run_analysis(
     except Exception as e:
         progress.error(f"Cannot detect build system: {e}")
         return 1
-    
+
     # Show what will be executed
-    print(f"\nWorkflow steps:")
-    print(f"  1. Verify dependencies (gcc, make, gcov, etc.)")
+    print("\nWorkflow steps:")
+    print("  1. Verify dependencies (gcc, make, gcov, etc.)")
     print(f"  2. Compile with {feature} ENABLED")
-    print(f"  3. Generate coverage files (enabled)")
+    print("  3. Generate coverage files (enabled)")
     print(f"  4. Compile with {feature} DISABLED")
-    print(f"  5. Generate coverage files (disabled)")
-    print(f"  6. Diff coverage files")
-    print(f"  7. Extract feature-specific code")
-    
+    print("  5. Generate coverage files (disabled)")
+    print("  6. Diff coverage files")
+    print("  7. Extract feature-specific code")
+
     if run_tests:
-        print(f"\n✓ Test suite will be executed for better coverage")
-    
-    print(f"\nOutput directories:")
+        print("\n✓ Test suite will be executed for better coverage")
+
+    print("\nOutput directories:")
     print(f"  - coverage_files_WITH_{feature}_yes/")
     print(f"  - coverage_files_WITH_{feature}_no/")
     print(f"  - diff_{feature}/")
-    print(f"  - HTML report and DOT graph")
-    
-    print(f"\n💡 To execute, remove --dry-run flag")
-    
+    print("  - HTML report and DOT graph")
+
+    print("\n💡 To execute, remove --dry-run flag")
+
     return 0
+
+
+def run_doctor(project_path: Optional[str] = None) -> int:
+    """
+    Print local environment readiness for PRAT demos and standalone use.
+
+    Returns:
+        Exit code (0 if required dependencies are present)
+    """
+    print("\n" + "=" * 70)
+    print("PRAT Doctor")
+    print("=" * 70)
+    print(f"Python:   {platform.python_version()}")
+    print(f"Platform: {platform.platform()}")
+
+    deps = verify_dependencies()
+
+    print("\nRequired/coverage tools:")
+    for tool in ["gcc", "make", "python3", "perl", "gcov", "llvm-cov-9"]:
+        print(f"  {tool:12s} {_tool_path(tool)}")
+
+    print("\nOptional tools:")
+    for tool in ["clang", "cmake", "pygmentize", "xdot", "docker"]:
+        if tool == "docker":
+            status = "available" if check_docker_available() else "missing"
+        else:
+            status = _tool_path(tool)
+        print(f"  {tool:12s} {status}")
+
+    if project_path:
+        project = Path(project_path)
+        print("\nProject:")
+        print(f"  path         {project}")
+        print(f"  exists       {project.exists()}")
+        if project.exists():
+            try:
+                build_system = detect_build_system(str(project))
+                print(f"  build system {build_system.value}")
+            except Exception as exc:
+                print(f"  build system error: {exc}")
+
+            adapter = get_adapter(str(project))
+            print(f"  adapter      {type(adapter).__name__ if adapter else 'none'}")
+            if adapter:
+                print(f"  coverage     {adapter.coverage_tool}")
+                print(f"  source dirs  {', '.join(adapter.source_directories)}")
+
+    print("\nResult:")
+    if deps.success:
+        print("  required dependencies are available")
+        return 0
+
+    print(f"  missing required dependencies: {', '.join(deps.missing_tools)}")
+    return 1
 
 
 def run_analysis(
@@ -182,43 +247,47 @@ def run_analysis(
 ) -> int:
     """
     Run PRAT analysis workflow.
-    
+
     Returns:
         Exit code (0 for success)
     """
     progress = ProgressIndicator(verbose)
-    
+
     print(f"\n{'='*70}")
     print(f"PRAT Analysis: {project_path} - Feature: {feature}")
     print(f"{'='*70}")
-    
+
     # Verify dependencies first
     progress.step("Verifying dependencies...")
     deps = verify_dependencies()
-    missing = [tool for tool, available in deps.items() if not available]
-    
+    missing = deps.missing_tools
+
     if missing:
         progress.error(f"Missing dependencies: {', '.join(missing)}")
         print("\n💡 Suggestion: Install missing dependencies:")
         print(f"   sudo apt-get install {' '.join(missing)}")
         return 1
-    
+
     progress.success("All dependencies available")
-    
+
     # Run workflow
     try:
+        from .adapters import get_adapter
+        adapter = get_adapter(project_path)
+
         result = run_complete_workflow(
             project_path=project_path,
             feature=feature,
             run_tests=run_tests,
             output_dir=output_dir,
             symbolic=symbolic,
+            adapter=adapter,
         )
-        
+
         if not result.success:
             progress.error(f"Workflow failed at {result.checkpoint.value}")
             print(f"\n💡 Error: {result.error_message}")
-            
+
             # Provide specific suggestions based on checkpoint
             if result.checkpoint == WorkflowCheckpoint.COMPILE_ENABLED:
                 print("\n💡 Suggestion: Check that the project compiles normally:")
@@ -230,28 +299,31 @@ def run_analysis(
                 print("\n💡 Suggestion: Check coverage directories exist:")
                 print(f"   ls coverage_files_WITH_{feature}_yes/")
                 print(f"   ls coverage_files_WITH_{feature}_no/")
-            
+
             print(f"\n💡 Checkpoint saved to: {project_path}/workflow_checkpoint.json")
             print("   You can inspect this file for detailed error information")
-            
+
             return 1
-        
+
         # Success!
         extraction = result.extraction_result
-        
+        if extraction is None:
+            progress.error("Workflow succeeded but extraction result is missing")
+            return 1
+
         print(f"\n{'='*70}")
         print("✓ Analysis Complete")
         print(f"{'='*70}")
         print(f"Removable lines: {extraction.total_removable_lines}")
         print(f"Files analyzed: {len(extraction.file_line_counts)}")
         print(f"Execution time: {result.total_time:.2f}s")
-        
+
         if extraction.html_report_path:
             print(f"\n📄 HTML report: {extraction.html_report_path}")
-        
+
         if extraction.dot_graph_path:
             print(f"📊 DOT graph: {extraction.dot_graph_path}")
-        
+
         # Show top files
         if extraction.file_line_counts:
             sorted_files = sorted(
@@ -259,11 +331,11 @@ def run_analysis(
                 key=lambda x: x[1],
                 reverse=True
             )
-            
-            print(f"\nTop files with removable code:")
+
+            print("\nTop files with removable code:")
             for filename, lines in sorted_files[:5]:
                 print(f"  {filename}: {lines} lines")
-        
+
         # Optional: Remove feature code
         if remove and result.extraction_result:
             print(f"\n{'='*70}")
@@ -281,150 +353,170 @@ def run_analysis(
                 print(f"✓ Removed {removal_result.lines_removed} lines")
             else:
                 print(f"✗ Removal failed: {removal_result.error_message}")
-        
+
         # Optional: Post-removal verification
         if verify:
-            ver_result = verify_correctness(project_path)
+            ver_result = verify_correctness(project_path, adapter=adapter)
             if not ver_result.success:
                 print(f"⚠ Verification: {ver_result.total_tests_failed} test(s) failed")
                 return 1
-        
+
         if not remove:
-            print(f"\n💡 Next steps:")
-            print(f"   - Review HTML report for detailed analysis")
-            print(f"   - Run with --remove to strip feature code")
-            print(f"   - Run with --verify to test after removal")
-        
+            print("\n💡 Next steps:")
+            print("   - Review HTML report for detailed analysis")
+            print("   - Run with --remove to strip feature code")
+            print("   - Run with --verify to test after removal")
+
         return 0
-        
+
     except KeyboardInterrupt:
         print("\n\n⚠ Analysis interrupted by user")
         return 130
     except Exception as e:
         progress.error(f"Unexpected error: {e}")
-        
+
         if verbose:
             import traceback
             print("\nFull traceback:")
             traceback.print_exc()
-        
+
         print("\n💡 Suggestion: Run with --verbose for detailed error information")
         return 1
 
 
 def main():
     """Main CLI entry point."""
+    if len(sys.argv) > 1 and sys.argv[1] == "doctor":
+        sys.argv[1] = "--doctor"
+
     parser = argparse.ArgumentParser(
         description="PRAT - Protocol Representation and Analysis Toolkit",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
+  # Check local readiness
+  prat doctor
+  prat doctor App/mosquitto
+
   # List available features
-  python3 prat_cli.py App/mosquitto --list
+  prat App/mosquitto --list
 
   # Analyze a feature
-  python3 prat_cli.py App/mosquitto TLS
+  prat App/mosquitto TLS
 
   # Analyze with test suite
-  python3 prat_cli.py App/mosquitto TLS --tests
+  prat App/mosquitto TLS --tests
 
   # Preview analysis without executing
-  python3 prat_cli.py App/mosquitto TLS --dry-run
+  prat App/mosquitto TLS --dry-run
 
   # Verbose output for debugging
-  python3 prat_cli.py App/mosquitto TLS --verbose
+  prat App/mosquitto TLS --verbose
 
 For more information, see docs/API.md
         """
     )
-    
+
     parser.add_argument(
         "project",
+        nargs="?",
         help="Path to project directory"
     )
-    
+
     parser.add_argument(
         "feature",
         nargs="?",
-        help="Feature to analyze (required unless --list is used)"
+        help="Feature to analyze (required unless --list, --batch, or doctor is used)"
     )
-    
+
     parser.add_argument(
         "--list",
         action="store_true",
         help="List available features for the project"
     )
-    
+
+    parser.add_argument(
+        "--doctor",
+        action="store_true",
+        help="Check local dependencies and optional project adapter detection"
+    )
+
     parser.add_argument(
         "--extract",
         action="store_true",
         help="Generate HTML report and DOT graph (enabled by default)"
     )
-    
+
     parser.add_argument(
         "--tests",
         action="store_true",
         help="Run test suite during compilation for better coverage"
     )
-    
+
     parser.add_argument(
         "--verbose", "-v",
         action="store_true",
         help="Enable verbose output for debugging"
     )
-    
+
     parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Preview operations without executing"
     )
-    
+
     parser.add_argument(
         "--output", "-o",
         help="Output directory for results (default: project directory)"
     )
-    
+
     parser.add_argument(
         "--batch",
         action="store_true",
         help="Analyze ALL discovered features (batch mode)"
     )
-    
+
     parser.add_argument(
         "--remove",
         action="store_true",
         help="Remove identified feature code from source (creates backup)"
     )
-    
+
     parser.add_argument(
         "--symbolic",
         action="store_true",
-        help="Generate KLEE symbolic tests for coverage amplification"
+        help="Generate experimental KLEE symbolic tests"
     )
-    
+
     parser.add_argument(
         "--verify",
         action="store_true",
         help="Run post-removal verification (rebuild + test replay)"
     )
-    
+
     args = parser.parse_args()
-    
+
+    if args.doctor:
+        return run_doctor(args.project)
+
     # Validate arguments
     if not args.list and not args.batch and not args.feature:
-        parser.error("feature is required unless --list is used")
-    
+        parser.error("feature is required unless --list, --batch, or doctor is used")
+
+    if not args.project:
+        parser.error("project is required")
+
     # Check project exists
     project_path = Path(args.project)
     if not project_path.exists():
         print(f"✗ Error: Project directory not found: {args.project}")
         print("\n💡 Suggestion: Check the path and try again")
         return 1
-    
+
     # List features mode
     if args.list:
         return list_features(str(project_path), args.verbose)
-    
+
     # Batch mode
     if args.batch:
         batch_result = run_batch_analysis(
@@ -434,9 +526,11 @@ For more information, see docs/API.md
         )
         if batch_result.success:
             print(f"\n✓ Batch analysis complete: {batch_result.features_analyzed} features analyzed")
+            if batch_result.feature_graph_path:
+                print(f"📈 Feature graph: {batch_result.feature_graph_path}")
             return 0
         return 1
-    
+
     # Dry run mode
     if args.dry_run:
         return dry_run_analysis(
@@ -445,7 +539,7 @@ For more information, see docs/API.md
             args.tests,
             args.verbose
         )
-    
+
     # Run analysis
     return run_analysis(
         project_path=str(project_path),

@@ -12,18 +12,17 @@ This module runs:
 No fuzzing — just deterministic test replay.
 """
 
-import os
 import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Optional
 
 from .symbolic import SymbolicResult, replay_tests
 
 
 @dataclass
-class TestSuiteResult:
+class SuiteResult:
     """Result of running a single test suite."""
     name: str
     success: bool
@@ -40,11 +39,11 @@ class VerificationResult:
     """Result of complete post-removal verification."""
     success: bool
     compiles: bool
-    test_suites: List[TestSuiteResult] = field(default_factory=list)
+    test_suites: list[SuiteResult] = field(default_factory=list)
     total_tests_run: int = 0
     total_tests_passed: int = 0
     total_tests_failed: int = 0
-    klee_replay_results: Optional[Dict[str, bool]] = None
+    klee_replay_results: Optional[dict[str, bool]] = None
     total_time: float = 0.0
     error_message: Optional[str] = None
 
@@ -58,8 +57,8 @@ class VerificationResult:
 def verify_correctness(
     project_path: str,
     adapter=None,
-    build_command: Optional[List[str]] = None,
-    test_commands: Optional[List[List[str]]] = None,
+    build_command: Optional[list[str]] = None,
+    test_commands: Optional[list[list[str]]] = None,
     symbolic_result: Optional[SymbolicResult] = None,
     binary_path: Optional[str] = None,
     timeout: int = 600,
@@ -85,10 +84,10 @@ def verify_correctness(
         VerificationResult with pass/fail details
     """
     start_time = time.time()
-    project = Path(project_path)
+    Path(project_path)
 
     print(f"\n{'='*50}")
-    print(f"PRAT Post-Removal Verification")
+    print("PRAT Post-Removal Verification")
     print(f"{'='*50}\n")
 
     result = VerificationResult(success=False, compiles=False)
@@ -101,10 +100,10 @@ def verify_correctness(
     if not compiles:
         result.error_message = "Debloated project failed to compile"
         result.total_time = time.time() - start_time
-        print(f"    [✗] Compilation FAILED — verification aborted\n")
+        print("    [✗] Compilation FAILED — verification aborted\n")
         return result
 
-    print(f"    [✓] Compilation successful\n")
+    print("    [✓] Compilation successful\n")
 
     # --- Step 2: Run project test suites ---
     print("[2] Running project test suites...")
@@ -143,7 +142,7 @@ def verify_correctness(
         status = "✓" if failed == 0 else "✗"
         print(f"    [{status}] KLEE replay: {passed}/{len(replay_results)} passed")
     else:
-        print(f"\n[3] No KLEE tests to replay — skipping")
+        print("\n[3] No KLEE tests to replay — skipping")
 
     # --- Summary ---
     result.total_time = time.time() - start_time
@@ -165,34 +164,37 @@ def verify_correctness(
 
 def _rebuild(
     project_path: str,
-    build_command: Optional[List[str]],
+    build_command: Optional[list[str]],
     adapter=None,
 ) -> bool:
     """Rebuild the project to verify it still compiles."""
-    if build_command is None:
-        if adapter:
-            build_command = adapter.get_compile_command("", True, with_coverage=False)
+    if build_command is not None:
+        commands = [build_command]
+    elif adapter:
+        commands = adapter.get_build_commands("", True, with_coverage=False)
+    else:
+        project = Path(project_path)
+        if (project / "Cargo.toml").exists():
+            commands = [["cargo", "build"]]
+        elif (project / "CMakeLists.txt").exists():
+            commands = [["make", "-C", "build", "-j"]]
+        elif (project / "Makefile").exists():
+            commands = [["make", "-j"]]
         else:
-            # Auto-detect
-            project = Path(project_path)
-            if (project / "Cargo.toml").exists():
-                build_command = ["cargo", "build"]
-            elif (project / "CMakeLists.txt").exists():
-                build_command = ["make", "-j3"]
-            elif (project / "Makefile").exists():
-                build_command = ["make", "-j"]
-            else:
-                return False
+            return False
 
     try:
-        proc = subprocess.run(
-            build_command,
-            cwd=project_path,
-            capture_output=True,
-            text=True,
-            timeout=600,
-        )
-        return proc.returncode == 0
+        for cmd in commands:
+            proc = subprocess.run(
+                cmd,
+                cwd=project_path,
+                capture_output=True,
+                text=True,
+                timeout=600,
+            )
+            if proc.returncode != 0:
+                return False
+        return True
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return False
 
@@ -200,8 +202,8 @@ def _rebuild(
 def _discover_test_commands(
     project_path: str,
     adapter=None,
-    override: Optional[List[List[str]]] = None,
-) -> List[tuple]:
+    override: Optional[list[list[str]]] = None,
+) -> list[tuple]:
     """Discover available test commands. Returns list of (name, command)."""
     if override:
         return [(f"custom-{i}", cmd) for i, cmd in enumerate(override)]
@@ -259,10 +261,10 @@ def _discover_test_commands(
 
 def _run_test_suite(
     name: str,
-    command: List[str],
+    command: list[str],
     project_path: str,
     timeout: int,
-) -> TestSuiteResult:
+) -> SuiteResult:
     """Run a single test suite and parse results."""
     start = time.time()
 
@@ -281,7 +283,7 @@ def _run_test_suite(
         # Try to parse test counts from output
         tests_run, tests_passed, tests_failed = _parse_test_output(output, proc.returncode)
 
-        return TestSuiteResult(
+        return SuiteResult(
             name=name,
             success=(proc.returncode == 0),
             tests_run=tests_run,
@@ -292,7 +294,7 @@ def _run_test_suite(
         )
 
     except subprocess.TimeoutExpired:
-        return TestSuiteResult(
+        return SuiteResult(
             name=name,
             success=False,
             tests_run=0, tests_passed=0, tests_failed=0,
@@ -300,7 +302,7 @@ def _run_test_suite(
             error_message=f"Timed out after {timeout}s",
         )
     except Exception as e:
-        return TestSuiteResult(
+        return SuiteResult(
             name=name,
             success=False,
             tests_run=0, tests_passed=0, tests_failed=0,

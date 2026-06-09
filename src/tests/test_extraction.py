@@ -1,8 +1,7 @@
 """Tests for prat.extraction module."""
 
-import pytest
 
-from prat.extraction import count_removable_lines, extract_features, ExtractionResult
+from prat.extraction import ExtractionResult, count_removable_lines, extract_features
 
 
 class TestCountRemovableLines:

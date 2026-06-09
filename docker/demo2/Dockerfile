@@ -38,6 +38,7 @@ RUN git clone --depth 1 --branch v2.0.15 \
 
 ENV PROJECT_PATH=/prat/App/mosquitto
 ENV FEATURE=BRIDGE
+ENV PATH="/usr/bin:${PATH}"
 
 RUN mkdir -p /prat/output
 

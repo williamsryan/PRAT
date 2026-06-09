@@ -1,13 +1,13 @@
 """Tests for prat.adapters module."""
 
+from unittest.mock import patch
+
 import pytest
-from pathlib import Path
 
 from prat.adapters import get_adapter
-from prat.adapters.base import ProjectAdapter
-from prat.adapters.mosquitto import MosquittoAdapter
-from prat.adapters.ffmpeg import FFmpegAdapter
 from prat.adapters.cmake import CMakeAdapter
+from prat.adapters.ffmpeg import FFmpegAdapter
+from prat.adapters.mosquitto import MosquittoAdapter
 from prat.adapters.rust import RustAdapter
 from prat.compilation import BuildSystem
 
@@ -66,36 +66,80 @@ class TestMosquittoAdapter:
         (tmp_path / "src").mkdir()
         return MosquittoAdapter(str(tmp_path))
 
-    def test_build_system(self, adapter):
-        assert adapter.build_system == BuildSystem.MAKE
-
-    def test_coverage_tool(self, adapter):
-        assert adapter.coverage_tool == "llvm-cov-9"
-
     def test_source_directories(self, adapter):
         assert "src" in adapter.source_directories
         assert "lib" in adapter.source_directories
 
-    def test_feature_flag_enabled(self, adapter):
-        flag = adapter.format_feature_flag("TLS", True)
-        assert flag == "WITH_TLS=yes"
-
-    def test_feature_flag_disabled(self, adapter):
-        flag = adapter.format_feature_flag("TLS", False)
-        assert flag == "WITH_TLS=no"
-
-    def test_compile_command(self, adapter):
-        cmd = adapter.get_compile_command("TLS", True)
-        assert "make" in cmd
-        assert "WITH_COVERAGE=yes" in cmd
-        assert "WITH_TLS=yes" in cmd
-
-    def test_clean_command(self, adapter):
-        cmd = adapter.get_clean_command()
-        assert cmd == ["make", "clean"]
-
     def test_validate_project(self, adapter):
         assert adapter.validate_project() is True
+
+    # --- Linux (Make) path ---
+
+    def test_build_system_linux(self, adapter):
+        with patch("prat.adapters.mosquitto._is_macos", return_value=False):
+            assert adapter.build_system == BuildSystem.MAKE
+
+    def test_coverage_tool_linux(self, adapter):
+        with patch("prat.adapters.mosquitto._is_macos", return_value=False):
+            assert adapter.coverage_tool == "gcov"
+
+    def test_feature_flag_enabled_linux(self, adapter):
+        with patch("prat.adapters.mosquitto._is_macos", return_value=False):
+            assert adapter.format_feature_flag("TLS", True) == "WITH_TLS=yes"
+
+    def test_feature_flag_disabled_linux(self, adapter):
+        with patch("prat.adapters.mosquitto._is_macos", return_value=False):
+            assert adapter.format_feature_flag("TLS", False) == "WITH_TLS=no"
+
+    def test_compile_command_linux(self, adapter):
+        with patch("prat.adapters.mosquitto._is_macos", return_value=False):
+            cmd = adapter.get_compile_command("TLS", True)
+            assert "make" in cmd
+            assert "WITH_COVERAGE=yes" in cmd
+            assert "WITH_TLS=yes" in cmd
+
+    def test_clean_command_linux(self, adapter):
+        with patch("prat.adapters.mosquitto._is_macos", return_value=False):
+            assert adapter.get_clean_command() == ["make", "clean"]
+
+    # --- macOS (CMake) path ---
+
+    def test_build_system_macos(self, adapter):
+        with patch("prat.adapters.mosquitto._is_macos", return_value=True):
+            assert adapter.build_system == BuildSystem.CMAKE
+
+    def test_coverage_tool_macos(self, adapter):
+        with patch("prat.adapters.mosquitto._is_macos", return_value=True):
+            assert adapter.coverage_tool == "gcov"
+
+    def test_feature_flag_enabled_macos(self, adapter):
+        with patch("prat.adapters.mosquitto._is_macos", return_value=True):
+            assert adapter.format_feature_flag("TLS", True) == "-DWITH_TLS=ON"
+
+    def test_feature_flag_disabled_macos(self, adapter):
+        with patch("prat.adapters.mosquitto._is_macos", return_value=True):
+            assert adapter.format_feature_flag("TLS", False) == "-DWITH_TLS=OFF"
+
+    def test_compile_command_macos(self, adapter):
+        with patch("prat.adapters.mosquitto._is_macos", return_value=True):
+            cmd = adapter.get_compile_command("TLS", True)
+            assert cmd[:4] == ["cmake", "-B", "build", "-S"]
+            assert "-DWITH_TLS=ON" in cmd
+            assert "-DCMAKE_C_FLAGS=--coverage" in cmd
+
+    def test_build_commands_macos(self, adapter):
+        with patch("prat.adapters.mosquitto._is_macos", return_value=True):
+            cmds = adapter.get_build_commands("TLS", True)
+            assert len(cmds) == 2
+            assert cmds[0][0] == "cmake"
+            assert cmds[1] == ["make", "-C", "build", "-j"]
+
+    def test_clean_command_macos(self, adapter):
+        with patch("prat.adapters.mosquitto._is_macos", return_value=True):
+            cmd = adapter.get_clean_command()
+            assert cmd[0] == "bash"
+            assert "--target clean" in cmd[2]
+            assert "*.gcda" in cmd[2]
 
 
 class TestFFmpegAdapter:

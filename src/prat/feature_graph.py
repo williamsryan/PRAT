@@ -12,42 +12,46 @@ and generates a self-contained interactive HTML visualization.
 import json
 import os
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Dict, List, Optional, Set, Any
+from typing import TYPE_CHECKING, Any
 
 from .extraction import ExtractionResult
-from .batch import BatchResult, FeatureAnalysis, CrossFeatureMap
+
+if TYPE_CHECKING:
+    from .batch import BatchResult
 
 
 @dataclass
 class GraphNode:
     """A node in the feature graph."""
+
     id: str
     label: str
     node_type: str  # "feature" | "file" | "snippet"
     size: float = 1.0
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class GraphEdge:
     """An edge in the feature graph."""
+
     source: str
     target: str
     weight: float = 1.0
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class FeatureGraph:
     """Complete feature graph for a project."""
+
     project: str
-    nodes: List[GraphNode] = field(default_factory=list)
-    edges: List[GraphEdge] = field(default_factory=list)
-    features: List[str] = field(default_factory=list)
+    nodes: list[GraphNode] = field(default_factory=list)
+    edges: list[GraphEdge] = field(default_factory=list)
+    features: list[str] = field(default_factory=list)
     total_removable_lines: int = 0
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Serialize to dictionary for JSON/HTML embedding."""
         return {
             "project": self.project,
@@ -82,86 +86,123 @@ class FeatureGraph:
         return output_path
 
 
-def build_feature_graph(batch_result: BatchResult) -> FeatureGraph:
+def _build_file_detail(
+    extraction_result: ExtractionResult,
+    file_name: str,
+    feature_name: str,
+) -> dict[str, Any]:
+    """Build UI-friendly detail payload for a file-feature pair."""
+    line_numbers = extraction_result.file_line_numbers.get(file_name, [])
+    line_content = extraction_result.file_line_content.get(file_name, [])
+
+    snippet_lines = []
+    for idx, content in enumerate(line_content):
+        line_number = line_numbers[idx] if idx < len(line_numbers) else None
+        snippet_lines.append({
+            "line_number": line_number,
+            "content": content,
+        })
+
+    line_preview = f"{line_numbers[0]}-{line_numbers[-1]}" if line_numbers else "n/a"
+
+    return {
+        "feature": feature_name,
+        "line_count": extraction_result.file_line_counts.get(file_name, 0),
+        "line_numbers": line_numbers,
+        "line_number_preview": line_preview,
+        "snippet_lines": snippet_lines,
+    }
+
+
+def build_feature_graph(batch_result: "BatchResult") -> FeatureGraph:
     """
     Build a feature graph from batch analysis results.
 
     Creates nodes for each feature and each affected source file,
     with edges connecting features to the files they affect.
     Shared files (affected by multiple features) are highlighted.
-
-    Args:
-        batch_result: Results from run_batch_analysis()
-
-    Returns:
-        FeatureGraph ready for visualization
     """
     graph = FeatureGraph(
         project=batch_result.project,
         total_removable_lines=batch_result.total_removable_lines,
     )
 
-    # Track all files and their feature associations
-    file_features: Dict[str, Set[str]] = {}  # file -> set of features
-    file_lines: Dict[str, Dict[str, int]] = {}  # file -> {feature: lines}
+    file_features: dict[str, set[str]] = {}
+    file_lines: dict[str, dict[str, int]] = {}
+    file_details: dict[str, list[dict[str, Any]]] = {}
 
-    for feat_name, fa in batch_result.feature_results.items():
-        if not fa.workflow_result or not fa.workflow_result.success:
+    for feat_name, feature_analysis in batch_result.feature_results.items():
+        if (
+            not feature_analysis.workflow_result
+            or not feature_analysis.workflow_result.success
+            or not feature_analysis.workflow_result.extraction_result
+        ):
             continue
 
+        extraction_result = feature_analysis.workflow_result.extraction_result
         graph.features.append(feat_name)
-        ext = fa.workflow_result.extraction_result
 
-        # Feature node
-        graph.nodes.append(GraphNode(
-            id=f"feat_{feat_name}",
-            label=feat_name,
-            node_type="feature",
-            size=max(1.0, fa.removable_lines / 50),
-            metadata={
-                "removable_lines": fa.removable_lines,
-                "file_count": len(fa.affected_files),
-                "description": fa.feature.description or "",
-            },
-        ))
+        graph.nodes.append(
+            GraphNode(
+                id=f"feat_{feat_name}",
+                label=feat_name,
+                node_type="feature",
+                size=max(1.0, feature_analysis.removable_lines / 50),
+                metadata={
+                    "removable_lines": feature_analysis.removable_lines,
+                    "file_count": len(feature_analysis.affected_files),
+                    "description": feature_analysis.feature.description or "",
+                },
+            )
+        )
 
-        # Track file associations
-        if ext:
-            for file_name, count in ext.file_line_counts.items():
-                if file_name not in file_features:
-                    file_features[file_name] = set()
-                    file_lines[file_name] = {}
-                file_features[file_name].add(feat_name)
-                file_lines[file_name][feat_name] = count
+        for file_name, count in extraction_result.file_line_counts.items():
+            if file_name not in file_features:
+                file_features[file_name] = set()
+                file_lines[file_name] = {}
+                file_details[file_name] = []
 
-    # File nodes
+            file_features[file_name].add(feat_name)
+            file_lines[file_name][feat_name] = count
+            file_details[file_name].append(
+                _build_file_detail(extraction_result, file_name, feat_name)
+            )
+
     for file_name, features in file_features.items():
         total_lines = sum(file_lines[file_name].values())
         shared = len(features) > 1
 
-        graph.nodes.append(GraphNode(
-            id=f"file_{file_name}",
-            label=file_name,
-            node_type="file",
-            size=max(0.5, total_lines / 30),
-            metadata={
-                "total_lines": total_lines,
-                "shared": shared,
-                "feature_count": len(features),
-                "features": sorted(features),
-                "per_feature_lines": file_lines[file_name],
-            },
-        ))
+        graph.nodes.append(
+            GraphNode(
+                id=f"file_{file_name}",
+                label=file_name,
+                node_type="file",
+                size=max(0.5, total_lines / 30),
+                metadata={
+                    "total_lines": total_lines,
+                    "shared": shared,
+                    "feature_count": len(features),
+                    "features": sorted(features),
+                    "per_feature_lines": file_lines[file_name],
+                    "per_feature_details": sorted(
+                        file_details[file_name],
+                        key=lambda item: item["line_count"],
+                        reverse=True,
+                    ),
+                },
+            )
+        )
 
-        # Edges from each feature to this file
-        for feat_name in features:
+        for feat_name in sorted(features):
             lines = file_lines[file_name].get(feat_name, 0)
-            graph.edges.append(GraphEdge(
-                source=f"feat_{feat_name}",
-                target=f"file_{file_name}",
-                weight=lines,
-                metadata={"lines": lines},
-            ))
+            graph.edges.append(
+                GraphEdge(
+                    source=f"feat_{feat_name}",
+                    target=f"file_{file_name}",
+                    weight=lines,
+                    metadata={"lines": lines},
+                )
+            )
 
     return graph
 
@@ -171,60 +212,57 @@ def build_feature_graph_from_single(
     feature: str,
     project: str = "project",
 ) -> FeatureGraph:
-    """
-    Build a feature graph from a single-feature analysis.
-
-    Simpler version for when batch mode wasn't used.
-
-    Args:
-        extraction_result: Results from extract_features()
-        feature: Feature name
-        project: Project name for labeling
-
-    Returns:
-        FeatureGraph for the single feature
-    """
+    """Build a feature graph from a single-feature analysis."""
     graph = FeatureGraph(
         project=project,
         total_removable_lines=extraction_result.total_removable_lines,
         features=[feature],
     )
 
-    # Feature node
-    graph.nodes.append(GraphNode(
-        id=f"feat_{feature}",
-        label=feature,
-        node_type="feature",
-        size=max(1.0, extraction_result.total_removable_lines / 50),
-        metadata={
-            "removable_lines": extraction_result.total_removable_lines,
-            "file_count": len(extraction_result.file_line_counts),
-        },
-    ))
+    graph.nodes.append(
+        GraphNode(
+            id=f"feat_{feature}",
+            label=feature,
+            node_type="feature",
+            size=max(1.0, extraction_result.total_removable_lines / 50),
+            metadata={
+                "removable_lines": extraction_result.total_removable_lines,
+                "file_count": len(extraction_result.file_line_counts),
+                "description": "",
+            },
+        )
+    )
 
-    # File nodes + edges
     for file_name, count in extraction_result.file_line_counts.items():
-        graph.nodes.append(GraphNode(
-            id=f"file_{file_name}",
-            label=file_name,
-            node_type="file",
-            size=max(0.5, count / 30),
-            metadata={"total_lines": count, "shared": False},
-        ))
-
-        graph.edges.append(GraphEdge(
-            source=f"feat_{feature}",
-            target=f"file_{file_name}",
-            weight=count,
-            metadata={"lines": count},
-        ))
+        graph.nodes.append(
+            GraphNode(
+                id=f"file_{file_name}",
+                label=file_name,
+                node_type="file",
+                size=max(0.5, count / 30),
+                metadata={
+                    "total_lines": count,
+                    "shared": False,
+                    "feature_count": 1,
+                    "features": [feature],
+                    "per_feature_lines": {feature: count},
+                    "per_feature_details": [
+                        _build_file_detail(extraction_result, file_name, feature)
+                    ],
+                },
+            )
+        )
+        graph.edges.append(
+            GraphEdge(
+                source=f"feat_{feature}",
+                target=f"file_{file_name}",
+                weight=count,
+                metadata={"lines": count},
+            )
+        )
 
     return graph
 
-
-# ---------------------------------------------------------------------------
-# Interactive HTML visualization
-# ---------------------------------------------------------------------------
 
 _GRAPH_HTML_TEMPLATE = """\
 <!DOCTYPE html>
@@ -235,101 +273,530 @@ _GRAPH_HTML_TEMPLATE = """\
 <title>PRAT Feature Graph — {project}</title>
 <style>
   :root {{
-    --bg: #0f1117; --surface: #1a1d27; --surface-hover: #22262f;
-    --border: #2a2e3a; --text: #e2e4e9; --text-secondary: #9ca0ab;
-    --text-muted: #6b7080; --primary: #6c8cff; --accent: #40c9a2;
-    --warning: #ffb347; --danger: #ff6b6b;
-    --mono: 'SF Mono','Fira Code','Consolas',monospace;
-    --sans: -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
-  }}
-  @media (prefers-color-scheme: light) {{
-    :root {{
-      --bg: #f5f6f8; --surface: #fff; --surface-hover: #f0f1f4;
-      --border: #e0e2e8; --text: #1a1d27; --text-secondary: #555b6e;
-      --text-muted: #8b90a0; --primary: #4a6cf7; --accent: #2da882;
-      --warning: #e6a030; --danger: #e05555;
-    }}
+    --bg: #f4efe6;
+    --surface: #fffdf8;
+    --surface-alt: #f6efe4;
+    --surface-hover: #efe4d2;
+    --border: #dccfb8;
+    --text: #1f2633;
+    --text-secondary: #5b6678;
+    --text-muted: #8b94a5;
+    --primary: #2f67d8;
+    --accent: #157a6e;
+    --warning: #d08a12;
+    --danger: #c84c3c;
+    --shadow: 0 18px 48px rgba(41, 51, 70, 0.12);
+    --mono: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   }}
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-  body {{ font-family: var(--sans); background: var(--bg); color: var(--text); display: flex; height: 100vh; overflow: hidden; }}
-
-  /* Sidebar */
+  body {{
+    font-family: var(--sans);
+    background:
+      radial-gradient(circle at top left, rgba(47,103,216,.08), transparent 28%),
+      radial-gradient(circle at top right, rgba(21,122,110,.08), transparent 24%),
+      linear-gradient(180deg, #faf5ec 0%, var(--bg) 100%);
+    color: var(--text);
+    min-height: 100vh;
+  }}
+  .app {{
+    display: grid;
+    grid-template-columns: 300px minmax(0, 1fr) 420px;
+    gap: 16px;
+    height: 100vh;
+    padding: 18px;
+  }}
+  .panel {{
+    background: rgba(255,253,248,.92);
+    border: 1px solid var(--border);
+    border-radius: 22px;
+    box-shadow: var(--shadow);
+    backdrop-filter: blur(12px);
+    min-width: 0;
+  }}
   .sidebar {{
-    width: 280px; min-width: 280px; background: var(--surface);
-    border-right: 1px solid var(--border); display: flex; flex-direction: column;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }}
+  .sidebar-scroll {{
     overflow-y: auto;
+    height: 100%;
   }}
-  .sidebar h1 {{ font-size: 15px; padding: 16px 16px 4px; font-weight: 600; }}
-  .sidebar .subtitle {{ font-size: 11px; color: var(--text-muted); padding: 0 16px 12px; }}
-  .sidebar .search {{
-    margin: 0 12px 8px; padding: 8px 10px; border-radius: 6px;
-    border: 1px solid var(--border); background: var(--bg);
-    color: var(--text); font-size: 12px; outline: none;
+  .sidebar h1 {{
+    font-size: 22px;
+    font-weight: 700;
+    padding: 20px 20px 6px;
   }}
-  .sidebar .search:focus {{ border-color: var(--primary); }}
-
-  .feature-list {{ list-style: none; padding: 0 8px; flex: 1; }}
+  .sidebar .subtitle {{
+    padding: 0 20px 14px;
+    color: var(--text-secondary);
+    font-size: 12px;
+  }}
+  .overview-cards {{
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    padding: 0 20px 14px;
+  }}
+  .overview-card {{
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: linear-gradient(180deg, #fffdfa 0%, var(--surface-alt) 100%);
+  }}
+  .overview-label {{
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+  }}
+  .overview-value {{
+    font-size: 24px;
+    font-weight: 700;
+  }}
+  .overview-note {{
+    font-size: 11px;
+    color: var(--text-secondary);
+    margin-top: 4px;
+  }}
+  .search {{
+    width: calc(100% - 40px);
+    margin: 0 20px 12px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: var(--surface-alt);
+    color: var(--text);
+    font-size: 13px;
+    outline: none;
+  }}
+  .search:focus {{
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(47,103,216,.14);
+  }}
+  .section-title {{
+    padding: 2px 20px 8px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--text-muted);
+  }}
+  .feature-list {{
+    list-style: none;
+    padding: 0 14px 14px;
+  }}
   .feature-item {{
-    display: flex; align-items: center; gap: 8px;
-    padding: 8px 10px; border-radius: 6px; cursor: pointer;
-    font-size: 12px; margin-bottom: 2px; transition: background .12s;
+    display: grid;
+    grid-template-columns: 10px minmax(0, 1fr) auto;
+    gap: 10px;
+    padding: 10px 12px;
+    border-radius: 14px;
+    margin-bottom: 6px;
+    border: 1px solid transparent;
+    cursor: pointer;
+    transition: background .12s, transform .12s, border-color .12s;
   }}
-  .feature-item:hover {{ background: var(--surface-hover); }}
-  .feature-item.active {{ background: var(--primary); color: #fff; }}
-  .feature-item .dot {{ width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }}
-  .feature-item .name {{ flex: 1; font-weight: 500; }}
-  .feature-item .count {{ font-family: var(--mono); font-size: 11px; color: var(--text-muted); }}
-  .feature-item.active .count {{ color: rgba(255,255,255,.7); }}
-
+  .feature-item:hover {{
+    background: var(--surface-hover);
+    transform: translateX(2px);
+  }}
+  .feature-item.active {{
+    background: rgba(47,103,216,.1);
+    border-color: rgba(47,103,216,.22);
+  }}
+  .feature-item .dot {{
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-top: 5px;
+    box-shadow: 0 0 0 3px rgba(255,255,255,.75);
+  }}
+  .feature-item .name {{
+    font-size: 13px;
+    font-weight: 600;
+  }}
+  .feature-item .meta {{
+    display: block;
+    margin-top: 3px;
+    font-size: 11px;
+    color: var(--text-secondary);
+  }}
+  .feature-item .count {{
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-secondary);
+    align-self: start;
+  }}
   .clear-btn {{
-    display: none; margin: 8px 12px; padding: 6px; border-radius: 6px;
-    border: 1px solid var(--border); background: var(--surface);
-    color: var(--text-secondary); font-size: 11px; cursor: pointer;
+    display: none;
+    margin: 0 20px 16px;
+    padding: 10px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: var(--surface-alt);
+    color: var(--text-secondary);
+    font-size: 12px;
+    cursor: pointer;
     text-align: center;
   }}
   .clear-btn.visible {{ display: block; }}
   .clear-btn:hover {{ background: var(--surface-hover); }}
-
-  .stats {{ padding: 12px 16px; border-top: 1px solid var(--border); font-size: 11px; color: var(--text-muted); }}
-  .stats .stat-row {{ display: flex; justify-content: space-between; margin-bottom: 4px; }}
-  .stats .stat-val {{ font-family: var(--mono); color: var(--text-secondary); }}
-
-  /* Graph area */
-  .graph-area {{ flex: 1; position: relative; overflow: hidden; }}
-  svg {{ width: 100%; height: 100%; }}
-  .node circle {{ stroke: var(--border); stroke-width: 1.5; cursor: pointer; transition: opacity .2s; }}
-  .node text {{ font-size: 10px; fill: var(--text); pointer-events: none; }}
-  .link {{ stroke-opacity: 0.4; transition: opacity .2s, stroke-opacity .2s; }}
-  .dimmed {{ opacity: 0.08; }}
-  .link.dimmed {{ stroke-opacity: 0.03; }}
-
-  /* Tooltip */
+  .stats {{
+    border-top: 1px solid var(--border);
+    padding: 16px 20px 20px;
+    font-size: 12px;
+    color: var(--text-secondary);
+  }}
+  .stats .stat-row {{
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }}
+  .stats .stat-val {{
+    font-family: var(--mono);
+  }}
+  .graph-shell {{
+    position: relative;
+    overflow: hidden;
+    background:
+      radial-gradient(circle at center, rgba(47,103,216,.05), transparent 45%),
+      linear-gradient(180deg, #fffdfa 0%, #f8f1e5 100%);
+  }}
+  .graph-toolbar {{
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    right: 16px;
+    z-index: 3;
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    pointer-events: none;
+  }}
+  .toolbar-card {{
+    pointer-events: auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+    border-radius: 14px;
+    border: 1px solid var(--border);
+    background: rgba(255,253,248,.88);
+    box-shadow: 0 8px 28px rgba(32,38,49,.08);
+  }}
+  .toolbar-card strong {{
+    display: block;
+    font-size: 13px;
+  }}
+  .toolbar-card span {{
+    font-size: 11px;
+    color: var(--text-secondary);
+  }}
+  .legend-swatch {{
+    width: 12px;
+    height: 12px;
+    border-radius: 4px;
+    flex-shrink: 0;
+  }}
+  .graph-area {{
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+  }}
+  svg {{
+    width: 100%;
+    height: 100%;
+  }}
+  .node circle {{
+    stroke: rgba(255,255,255,.92);
+    stroke-width: 2.4;
+    cursor: pointer;
+    transition: opacity .2s, stroke-width .2s;
+  }}
+  .node.selected circle {{
+    stroke-width: 4px;
+  }}
+  .node text {{
+    font-size: 11px;
+    fill: var(--text);
+    pointer-events: none;
+    paint-order: stroke;
+    stroke: rgba(255,253,248,.9);
+    stroke-width: 4px;
+  }}
+  .link {{
+    stroke-opacity: .48;
+    transition: opacity .2s, stroke-opacity .2s;
+  }}
+  .dimmed {{
+    opacity: .12;
+  }}
+  .link.dimmed {{
+    stroke-opacity: .06;
+  }}
   .tooltip {{
-    position: absolute; background: var(--surface); border: 1px solid var(--border);
-    border-radius: 8px; padding: 10px 14px; font-size: 12px;
-    pointer-events: none; opacity: 0; transition: opacity .15s;
-    max-width: 260px; box-shadow: 0 4px 16px rgba(0,0,0,.3);
+    position: absolute;
+    max-width: 320px;
+    padding: 10px 14px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    box-shadow: 0 12px 36px rgba(0,0,0,.14);
+    font-size: 12px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity .15s;
   }}
   .tooltip.visible {{ opacity: 1; }}
-  .tooltip .tt-title {{ font-weight: 600; margin-bottom: 4px; }}
-  .tooltip .tt-row {{ display: flex; justify-content: space-between; gap: 12px; color: var(--text-secondary); }}
-  .tooltip .tt-val {{ font-family: var(--mono); color: var(--text); }}
+  .tooltip .tt-title {{
+    font-weight: 700;
+    margin-bottom: 6px;
+  }}
+  .tooltip .tt-row {{
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    color: var(--text-secondary);
+  }}
+  .tooltip .tt-val {{
+    font-family: var(--mono);
+    color: var(--text);
+  }}
+  .details {{
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }}
+  .details-header {{
+    padding: 20px 20px 16px;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, rgba(47,103,216,.08), transparent);
+  }}
+  .eyebrow {{
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+  }}
+  .details h2 {{
+    font-size: 22px;
+    margin-bottom: 6px;
+  }}
+  .details-subtitle {{
+    font-size: 13px;
+    color: var(--text-secondary);
+  }}
+  .details-body {{
+    overflow-y: auto;
+    padding: 18px 20px 20px;
+  }}
+  .detail-grid {{
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin-bottom: 18px;
+  }}
+  .detail-card {{
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 12px;
+    background: var(--surface-alt);
+  }}
+  .detail-card-label {{
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--text-muted);
+    margin-bottom: 5px;
+  }}
+  .detail-card-value {{
+    font-size: 20px;
+    font-weight: 700;
+  }}
+  .detail-section {{
+    margin-bottom: 18px;
+  }}
+  .detail-section h3 {{
+    font-size: 14px;
+    margin-bottom: 10px;
+  }}
+  .list-card {{
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--surface);
+    overflow: hidden;
+    margin-bottom: 10px;
+  }}
+  .list-card-header {{
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 12px 14px;
+    background: var(--surface-alt);
+    border-bottom: 1px solid var(--border);
+  }}
+  .list-card-title {{
+    font-size: 13px;
+    font-weight: 600;
+  }}
+  .list-card-subtitle {{
+    margin-top: 3px;
+    font-size: 11px;
+    color: var(--text-secondary);
+  }}
+  .pill {{
+    align-self: start;
+    padding: 5px 8px;
+    border-radius: 999px;
+    background: rgba(47,103,216,.1);
+    color: var(--primary);
+    font-size: 11px;
+    font-family: var(--mono);
+  }}
+  .feature-chip-row {{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }}
+  .feature-chip {{
+    padding: 7px 10px;
+    border-radius: 999px;
+    color: #fff;
+    font-size: 12px;
+    font-weight: 600;
+  }}
+  details.code-block {{
+    border-top: 1px solid var(--border);
+    background: #fffefb;
+  }}
+  details.code-block summary {{
+    list-style: none;
+    cursor: pointer;
+    padding: 11px 14px;
+    font-size: 12px;
+    color: var(--text-secondary);
+  }}
+  details.code-block summary::-webkit-details-marker {{ display: none; }}
+  details.code-block summary::before {{
+    content: '▸';
+    display: inline-block;
+    margin-right: 8px;
+    transition: transform .12s;
+  }}
+  details.code-block[open] summary::before {{
+    transform: rotate(90deg);
+  }}
+  .code-meta {{
+    margin-left: 24px;
+    font-size: 11px;
+    color: var(--text-muted);
+  }}
+  .code-view {{
+    max-height: 280px;
+    overflow: auto;
+    border-top: 1px solid var(--border);
+    background: #fffdf8;
+    padding: 10px 0;
+  }}
+  .code-line {{
+    display: grid;
+    grid-template-columns: 68px minmax(0, 1fr);
+    gap: 12px;
+    padding: 2px 14px;
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.6;
+  }}
+  .code-line:hover {{
+    background: rgba(47,103,216,.05);
+  }}
+  .line-number {{
+    color: var(--text-muted);
+    text-align: right;
+    user-select: none;
+  }}
+  .line-content {{
+    white-space: pre-wrap;
+    word-break: break-word;
+  }}
+  .empty-state {{
+    border: 1px dashed var(--border);
+    border-radius: 16px;
+    padding: 18px;
+    background: rgba(255,255,255,.5);
+    color: var(--text-secondary);
+  }}
+  @media (max-width: 1200px) {{
+    .app {{ grid-template-columns: 280px minmax(0, 1fr); }}
+    .details {{ grid-column: 1 / -1; min-height: 320px; }}
+  }}
+  @media (max-width: 840px) {{
+    .app {{
+      grid-template-columns: 1fr;
+      grid-template-rows: auto minmax(420px, 55vh) auto;
+      height: auto;
+      min-height: 100vh;
+    }}
+    .graph-shell {{ min-height: 58vh; }}
+  }}
 </style>
 </head>
 <body>
+<div class="app">
+  <aside class="panel sidebar">
+    <div class="sidebar-scroll">
+      <h1>Feature Graph</h1>
+      <p class="subtitle">{project} · light-mode analysis workspace</p>
+      <div class="overview-cards">
+        <div class="overview-card">
+          <div class="overview-label">Features</div>
+          <div class="overview-value">{feature_count}</div>
+          <div class="overview-note">Toggle one to isolate its subgraph</div>
+        </div>
+        <div class="overview-card">
+          <div class="overview-label">Removable LoC</div>
+          <div class="overview-value">{total_lines}</div>
+          <div class="overview-note">Across the current project snapshot</div>
+        </div>
+      </div>
+      <input class="search" type="text" placeholder="Search features or files…" id="search">
+      <div class="section-title">Feature Explorer</div>
+      <ul class="feature-list" id="featureList"></ul>
+      <div class="clear-btn" id="clearBtn">Clear selection</div>
+      <div class="stats" id="statsPanel"></div>
+    </div>
+  </aside>
 
-<div class="sidebar">
-  <h1>Feature Graph</h1>
-  <p class="subtitle">{project} — {feature_count} features · {total_lines} removable lines</p>
-  <input class="search" type="text" placeholder="Search features or files…" id="search">
-  <ul class="feature-list" id="featureList"></ul>
-  <div class="clear-btn" id="clearBtn">✕ Clear Selection</div>
-  <div class="stats" id="statsPanel"></div>
-</div>
+  <section class="panel graph-shell">
+    <div class="graph-toolbar">
+      <div class="toolbar-card">
+        <div class="legend-swatch" style="background: var(--primary)"></div>
+        <div><strong>Feature nodes</strong><span>High-level removal candidates</span></div>
+      </div>
+      <div class="toolbar-card">
+        <div class="legend-swatch" style="background: var(--warning)"></div>
+        <div><strong>Shared files</strong><span>Files touched by multiple features</span></div>
+      </div>
+    </div>
+    <div class="graph-area" id="graphArea">
+      <svg id="graphSvg"></svg>
+      <div class="tooltip" id="tooltip"></div>
+    </div>
+  </section>
 
-<div class="graph-area" id="graphArea">
-  <svg id="graphSvg"></svg>
-  <div class="tooltip" id="tooltip"></div>
+  <aside class="panel details">
+    <div class="details-header">
+      <div class="eyebrow" id="detailsEyebrow">Overview</div>
+      <h2 id="detailsTitle">Interactive removal map</h2>
+      <p class="details-subtitle" id="detailsSubtitle">
+        Select a feature or file node to inspect line counts, sharing risk, and expandable source snippets inline.
+      </p>
+    </div>
+    <div class="details-body" id="detailsBody"></div>
+  </aside>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
@@ -344,221 +811,514 @@ const GRAPH_DATA = {graph_json};
   const clearBtn = document.getElementById('clearBtn');
   const searchInput = document.getElementById('search');
   const statsPanel = document.getElementById('statsPanel');
+  const detailsEyebrow = document.getElementById('detailsEyebrow');
+  const detailsTitle = document.getElementById('detailsTitle');
+  const detailsSubtitle = document.getElementById('detailsSubtitle');
+  const detailsBody = document.getElementById('detailsBody');
 
-  const W = container.clientWidth;
-  const H = container.clientHeight;
-
-  // Color palette for features
-  const COLORS = ['#6c8cff','#40c9a2','#ffb347','#ff6b6b','#c084fc',
-                  '#38bdf8','#fb923c','#a3e635','#f472b6','#67e8f9',
-                  '#fbbf24','#818cf8','#34d399','#f87171','#a78bfa'];
+  const bounds = container.getBoundingClientRect();
+  const W = bounds.width || container.clientWidth || 900;
+  const H = bounds.height || container.clientHeight || 700;
+  const COLORS = ['#2f67d8', '#157a6e', '#d08a12', '#c84c3c', '#8159d6',
+                  '#3191d0', '#dd6b3e', '#5b9c4d', '#d1528d', '#0e9baa'];
 
   const featureColors = {{}};
-  GRAPH_DATA.features.forEach((f, i) => {{ featureColors[f] = COLORS[i % COLORS.length]; }});
+  GRAPH_DATA.features.forEach((feature, index) => {{
+    featureColors[feature] = COLORS[index % COLORS.length];
+  }});
 
-  // Build node/edge maps
   const nodeMap = {{}};
-  GRAPH_DATA.nodes.forEach(n => {{ nodeMap[n.id] = n; }});
+  GRAPH_DATA.nodes.forEach(node => {{
+    nodeMap[node.id] = node;
+  }});
 
-  // D3 force simulation
   const g = svg.append('g');
+  svg.call(
+    d3.zoom()
+      .scaleExtent([0.25, 4])
+      .on('zoom', event => g.attr('transform', event.transform))
+  );
 
-  // Zoom
-  svg.call(d3.zoom().scaleExtent([0.2, 5]).on('zoom', (e) => g.attr('transform', e.transform)));
-
-  // Helper functions (declared before use)
-  function nodeRadius(d) {{
-    if (d.type === 'feature') return 18 + Math.min(d.size * 2, 20);
-    return 6 + Math.min(d.size * 1.5, 14);
+  function escapeHtml(value) {{
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   }}
 
-  function nodeColor(d) {{
-    if (d.type === 'feature') return featureColors[d.label] || '#6c8cff';
-    if (d.shared) return 'var(--warning)';
-    if (d.features && d.features.length > 0) return featureColors[d.features[0]] || 'var(--text-muted)';
-    return 'var(--text-muted)';
+  function nodeRadius(node) {{
+    if (node.type === 'feature') return 22 + Math.min(node.size * 2.2, 26);
+    return 10 + Math.min(node.size * 1.6, 18);
   }}
 
-  function dragStart(event, d) {{ if (!event.active) sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; }}
-  function dragging(event, d) {{ d.fx = event.x; d.fy = event.y; }}
-  function dragEnd(event, d) {{ if (!event.active) sim.alphaTarget(0); d.fx = null; d.fy = null; }}
+  function nodeColor(node) {{
+    if (node.type === 'feature') return featureColors[node.label] || '#2f67d8';
+    if (node.shared) return 'var(--warning)';
+    if (node.features && node.features.length > 0) {{
+      return featureColors[node.features[0]] || 'var(--accent)';
+    }}
+    return 'var(--accent)';
+  }}
 
-  const sim = d3.forceSimulation(GRAPH_DATA.nodes)
-    .force('link', d3.forceLink(GRAPH_DATA.edges).id(d => d.id).distance(d => 80 + 100 / (d.weight + 1)))
-    .force('charge', d3.forceManyBody().strength(d => d.type === 'feature' ? -500 : -80))
+  const linkForce = d3.forceLink(GRAPH_DATA.edges)
+    .id(node => node.id)
+    .distance(edge => {{
+      const sourceId = typeof edge.source === 'object' ? edge.source.id : edge.source;
+      return sourceId.startsWith('feat_') ? 155 : 100;
+    }});
+
+  const simulation = d3.forceSimulation(GRAPH_DATA.nodes)
+    .force('link', linkForce)
+    .force('charge', d3.forceManyBody().strength(node => node.type === 'feature' ? -980 : -230))
     .force('center', d3.forceCenter(W / 2, H / 2))
-    .force('collision', d3.forceCollide().radius(d => nodeRadius(d) + 6))
-    .force('x', d3.forceX(W / 2).strength(0.03))
-    .force('y', d3.forceY(H / 2).strength(0.03));
+    .force('collision', d3.forceCollide().radius(node => nodeRadius(node) + 10))
+    .force('x', d3.forceX(node => node.type === 'feature' ? W * 0.38 : W * 0.58).strength(0.08))
+    .force('y', d3.forceY(H / 2).strength(0.045));
 
-  // Links
   const link = g.selectAll('.link')
-    .data(GRAPH_DATA.edges).enter()
-    .append('line').attr('class', 'link')
-    .attr('stroke', d => {{
-      const src = typeof d.source === 'object' ? d.source : nodeMap[d.source];
-      return src && src.type === 'feature' ? (featureColors[src.label] || '#6c8cff') : '#555';
+    .data(GRAPH_DATA.edges)
+    .enter()
+    .append('line')
+    .attr('class', 'link')
+    .attr('stroke', edge => {{
+      const source = typeof edge.source === 'object' ? edge.source : nodeMap[edge.source];
+      return source && source.type === 'feature' ? (featureColors[source.label] || '#2f67d8') : '#9aa4b6';
     }})
-    .attr('stroke-width', d => Math.max(1, Math.min(d.weight / 20, 5)));
+    .attr('stroke-width', edge => Math.max(1.5, Math.min(edge.weight / 16, 7)));
 
-  // Nodes
   const node = g.selectAll('.node')
-    .data(GRAPH_DATA.nodes).enter()
-    .append('g').attr('class', 'node')
-    .call(d3.drag().on('start', dragStart).on('drag', dragging).on('end', dragEnd));
+    .data(GRAPH_DATA.nodes)
+    .enter()
+    .append('g')
+    .attr('class', 'node');
 
   node.append('circle')
     .attr('r', nodeRadius)
     .attr('fill', nodeColor)
-    .attr('opacity', d => d.type === 'feature' ? 1 : 0.85);
+    .attr('opacity', item => item.type === 'feature' ? 1 : 0.88);
 
   node.append('text')
-    .text(d => d.label)
-    .attr('dx', d => nodeRadius(d) + 4)
+    .text(item => item.label)
+    .attr('dx', item => nodeRadius(item) + 6)
     .attr('dy', 3)
-    .style('font-weight', d => d.type === 'feature' ? '600' : '400')
-    .style('font-size', d => d.type === 'feature' ? '12px' : '10px');
+    .style('font-weight', item => item.type === 'feature' ? '700' : '500')
+    .style('font-size', item => item.type === 'feature' ? '13px' : '11px');
 
-  sim.on('tick', () => {{
-    link.attr('x1', d => d.source.x).attr('y1', d => d.source.y)
-        .attr('x2', d => d.target.x).attr('y2', d => d.target.y);
-    node.attr('transform', d => `translate(${{d.x}},${{d.y}})`);
+  function dragStarted(event, dragged) {{
+    if (!event.active) simulation.alphaTarget(0.3).restart();
+    dragged.fx = dragged.x;
+    dragged.fy = dragged.y;
+  }}
+
+  function dragged(event, dragged) {{
+    dragged.fx = event.x;
+    dragged.fy = event.y;
+  }}
+
+  function dragEnded(event, dragged) {{
+    if (!event.active) simulation.alphaTarget(0);
+    dragged.fx = null;
+    dragged.fy = null;
+  }}
+
+  node.call(d3.drag().on('start', dragStarted).on('drag', dragged).on('end', dragEnded));
+
+  simulation.on('tick', () => {{
+    link
+      .attr('x1', edge => edge.source.x)
+      .attr('y1', edge => edge.source.y)
+      .attr('x2', edge => edge.target.x)
+      .attr('y2', edge => edge.target.y);
+    node.attr('transform', item => `translate(${{item.x}},${{item.y}})`);
   }});
 
-  // --- Interaction ---
   let activeFeature = null;
+  let activeNodeId = null;
 
-  function selectFeature(featName) {{
-    if (activeFeature === featName) {{ clearSelection(); return; }}
-    activeFeature = featName;
+  function formatFeatureChip(feature) {{
+    return `<span class="feature-chip" style="background:${{featureColors[feature] || 'var(--primary)'}}">${{escapeHtml(feature)}}</span>`;
+  }}
 
-    // Highlight sidebar
-    featureList.querySelectorAll('.feature-item').forEach(el => {{
-      el.classList.toggle('active', el.dataset.feature === featName);
+  function renderOverview() {{
+    const fileNodes = GRAPH_DATA.nodes.filter(item => item.type === 'file');
+    const sharedFiles = fileNodes
+      .filter(item => item.shared)
+      .sort((a, b) => b.total_lines - a.total_lines)
+      .slice(0, 6);
+    const busiestFeatures = GRAPH_DATA.nodes
+      .filter(item => item.type === 'feature')
+      .sort((a, b) => b.removable_lines - a.removable_lines)
+      .slice(0, 4);
+
+    detailsEyebrow.textContent = 'Overview';
+    detailsTitle.textContent = 'Interactive removal map';
+    detailsSubtitle.textContent = 'Select a feature or file node to inspect line counts, sharing risk, and expandable source snippets inline.';
+    detailsBody.innerHTML = `
+      <div class="detail-grid">
+        <div class="detail-card">
+          <div class="detail-card-label">Total files</div>
+          <div class="detail-card-value">${{fileNodes.length}}</div>
+        </div>
+        <div class="detail-card">
+          <div class="detail-card-label">Shared files</div>
+          <div class="detail-card-value">${{fileNodes.filter(item => item.shared).length}}</div>
+        </div>
+      </div>
+      <div class="detail-section">
+        <h3>Highest-impact features</h3>
+        ${{
+          busiestFeatures.map(item => `
+            <div class="list-card">
+              <div class="list-card-header">
+                <div>
+                  <div class="list-card-title">${{escapeHtml(item.label)}}</div>
+                  <div class="list-card-subtitle">${{escapeHtml(item.description || 'No feature description available')}}</div>
+                </div>
+                <div class="pill">${{item.removable_lines}} LoC</div>
+              </div>
+            </div>
+          `).join('') || '<div class="empty-state">No successful feature analyses available yet.</div>'
+        }}
+      </div>
+      <div class="detail-section">
+        <h3>Shared files worth reviewing first</h3>
+        ${{
+          sharedFiles.map(item => `
+            <div class="list-card">
+              <div class="list-card-header">
+                <div>
+                  <div class="list-card-title">${{escapeHtml(item.label)}}</div>
+                  <div class="list-card-subtitle">${{item.feature_count}} features share this file</div>
+                </div>
+                <div class="pill">${{item.total_lines}} LoC</div>
+              </div>
+            </div>
+          `).join('') || '<div class="empty-state">No shared files detected. Each file currently maps to a single feature.</div>'
+        }}
+      </div>`;
+  }}
+
+  function renderFeatureDetails(featureName) {{
+    const featureNode = GRAPH_DATA.nodes.find(item => item.id === `feat_${{featureName}}`);
+    if (!featureNode) return;
+
+    const connectedFiles = GRAPH_DATA.nodes
+      .filter(item => item.type === 'file' && (item.features || []).includes(featureName))
+      .sort((a, b) => (b.per_feature_lines?.[featureName] || 0) - (a.per_feature_lines?.[featureName] || 0));
+
+    detailsEyebrow.textContent = 'Feature';
+    detailsTitle.textContent = featureNode.label;
+    detailsSubtitle.textContent = featureNode.description || 'Feature-level removal candidate summary';
+    detailsBody.innerHTML = `
+      <div class="detail-grid">
+        <div class="detail-card">
+          <div class="detail-card-label">Removable LoC</div>
+          <div class="detail-card-value">${{featureNode.removable_lines || 0}}</div>
+        </div>
+        <div class="detail-card">
+          <div class="detail-card-label">Files affected</div>
+          <div class="detail-card-value">${{featureNode.file_count || connectedFiles.length}}</div>
+        </div>
+      </div>
+      <div class="detail-section">
+        <h3>Files in this subgraph</h3>
+        ${{
+          connectedFiles.map(fileNode => {{
+            const detail = (fileNode.per_feature_details || []).find(item => item.feature === featureName);
+            const snippetLines = detail ? detail.snippet_lines || [] : [];
+            return `
+              <div class="list-card">
+                <div class="list-card-header">
+                  <div>
+                    <div class="list-card-title">${{escapeHtml(fileNode.label)}}</div>
+                    <div class="list-card-subtitle">
+                      ${{fileNode.shared ? 'Shared with ' + (fileNode.feature_count - 1) + ' other features' : 'Feature-specific file'}}
+                      · lines ${{escapeHtml(detail ? detail.line_number_preview : 'n/a')}}
+                    </div>
+                  </div>
+                  <div class="pill">${{fileNode.per_feature_lines?.[featureName] || 0}} LoC</div>
+                </div>
+                ${{
+                  snippetLines.length ? `
+                    <details class="code-block">
+                      <summary>Source LoC</summary>
+                      <div class="code-meta">Expandable inline view for removable lines in ${{escapeHtml(fileNode.label)}}</div>
+                      <div class="code-view">
+                        ${{
+                          snippetLines.map(line => `
+                            <div class="code-line">
+                              <span class="line-number">${{line.line_number ?? ''}}</span>
+                              <span class="line-content">${{escapeHtml(line.content)}}</span>
+                            </div>
+                          `).join('')
+                        }}
+                      </div>
+                    </details>` : ''
+                }}
+              </div>`;
+          }}).join('') || '<div class="empty-state">No file details are available for this feature.</div>'
+        }}
+      </div>`;
+  }}
+
+  function renderFileDetails(fileNode) {{
+    const details = (fileNode.per_feature_details || [])
+      .slice()
+      .sort((a, b) => b.line_count - a.line_count);
+
+    detailsEyebrow.textContent = fileNode.shared ? 'Shared file' : 'File';
+    detailsTitle.textContent = fileNode.label;
+    detailsSubtitle.textContent = fileNode.shared
+      ? `This file is touched by ${{fileNode.feature_count}} features.`
+      : 'This file maps cleanly to a single feature.';
+    detailsBody.innerHTML = `
+      <div class="detail-grid">
+        <div class="detail-card">
+          <div class="detail-card-label">Total removable LoC</div>
+          <div class="detail-card-value">${{fileNode.total_lines || 0}}</div>
+        </div>
+        <div class="detail-card">
+          <div class="detail-card-label">Feature count</div>
+          <div class="detail-card-value">${{fileNode.feature_count || 0}}</div>
+        </div>
+      </div>
+      <div class="detail-section">
+        <h3>Feature ownership</h3>
+        <div class="feature-chip-row">
+          ${{
+            (fileNode.features || []).map(formatFeatureChip).join('') ||
+            '<div class="empty-state">No feature associations recorded.</div>'
+          }}
+        </div>
+      </div>
+      <div class="detail-section">
+        <h3>Expandable source LoC</h3>
+        ${{
+          details.map(detail => `
+            <div class="list-card">
+              <div class="list-card-header">
+                <div>
+                  <div class="list-card-title">${{escapeHtml(detail.feature)}}</div>
+                  <div class="list-card-subtitle">Removable lines ${{escapeHtml(detail.line_number_preview || 'n/a')}}</div>
+                </div>
+                <div class="pill">${{detail.line_count}} LoC</div>
+              </div>
+              <details class="code-block">
+                <summary>Source LoC</summary>
+                <div class="code-meta">Inline source snippet for ${{escapeHtml(detail.feature)}}</div>
+                <div class="code-view">
+                  ${{
+                    (detail.snippet_lines || []).map(line => `
+                      <div class="code-line">
+                        <span class="line-number">${{line.line_number ?? ''}}</span>
+                        <span class="line-content">${{escapeHtml(line.content)}}</span>
+                      </div>
+                    `).join('')
+                  }}
+                </div>
+              </details>
+            </div>
+          `).join('') || '<div class="empty-state">No source snippet details are available for this file.</div>'
+        }}
+      </div>`;
+  }}
+
+  function setActiveNode(nodeId) {{
+    activeNodeId = nodeId;
+    node.classed('selected', item => item.id === nodeId);
+    const selected = nodeMap[nodeId];
+    if (!selected) {{
+      renderOverview();
+      return;
+    }}
+    if (selected.type === 'feature') renderFeatureDetails(selected.label);
+    else renderFileDetails(selected);
+  }}
+
+  function applyFeatureFocus(featureName) {{
+    const featureId = `feat_${{featureName}}`;
+    const connectedIds = new Set([featureId]);
+    GRAPH_DATA.edges.forEach(edge => {{
+      const sourceId = typeof edge.source === 'object' ? edge.source.id : edge.source;
+      const targetId = typeof edge.target === 'object' ? edge.target.id : edge.target;
+      if (sourceId === featureId) connectedIds.add(targetId);
+      if (targetId === featureId) connectedIds.add(sourceId);
+    }});
+
+    node.classed('dimmed', item => !connectedIds.has(item.id));
+    link.classed('dimmed', edge => {{
+      const sourceId = typeof edge.source === 'object' ? edge.source.id : edge.source;
+      return sourceId !== featureId;
+    }});
+  }}
+
+  function selectFeature(featureName) {{
+    if (activeFeature === featureName) {{
+      clearSelection();
+      return;
+    }}
+
+    activeFeature = featureName;
+    featureList.querySelectorAll('.feature-item').forEach(item => {{
+      item.classList.toggle('active', item.dataset.feature === featureName);
     }});
     clearBtn.classList.add('visible');
+    applyFeatureFocus(featureName);
+    updateStats(featureName);
+    setActiveNode(`feat_${{featureName}}`);
+  }}
 
-    // Find connected nodes
-    const featId = `feat_${{featName}}`;
-    const connectedIds = new Set([featId]);
-    GRAPH_DATA.edges.forEach(e => {{
-      const srcId = typeof e.source === 'object' ? e.source.id : e.source;
-      const tgtId = typeof e.target === 'object' ? e.target.id : e.target;
-      if (srcId === featId) connectedIds.add(tgtId);
-      if (tgtId === featId) connectedIds.add(srcId);
+  function selectFile(fileNode) {{
+    activeFeature = null;
+    featureList.querySelectorAll('.feature-item').forEach(item => item.classList.remove('active'));
+    clearBtn.classList.add('visible');
+
+    const connectedFeatureIds = new Set((fileNode.features || []).map(feature => `feat_${{feature}}`));
+    connectedFeatureIds.add(fileNode.id);
+
+    node.classed('dimmed', item => !connectedFeatureIds.has(item.id));
+    link.classed('dimmed', edge => {{
+      const sourceId = typeof edge.source === 'object' ? edge.source.id : edge.source;
+      const targetId = typeof edge.target === 'object' ? edge.target.id : edge.target;
+      return sourceId !== fileNode.id && targetId !== fileNode.id;
     }});
 
-    // Dim everything else
-    node.classed('dimmed', d => !connectedIds.has(d.id));
-    link.classed('dimmed', d => {{
-      const srcId = typeof d.source === 'object' ? d.source.id : d.source;
-      return srcId !== featId;
-    }});
-
-    updateStats(featName);
+    updateStats(null);
+    setActiveNode(fileNode.id);
   }}
 
   function clearSelection() {{
     activeFeature = null;
-    featureList.querySelectorAll('.feature-item').forEach(el => el.classList.remove('active'));
+    activeNodeId = null;
+    featureList.querySelectorAll('.feature-item').forEach(item => item.classList.remove('active'));
     clearBtn.classList.remove('visible');
-    node.classed('dimmed', false);
+    node.classed('dimmed', false).classed('selected', false);
     link.classed('dimmed', false);
     updateStats(null);
+    renderOverview();
   }}
 
-  // Sidebar feature list
-  GRAPH_DATA.features.forEach(f => {{
-    const fa = GRAPH_DATA.nodes.find(n => n.id === `feat_${{f}}`);
+  GRAPH_DATA.features.forEach(feature => {{
+    const featureNode = GRAPH_DATA.nodes.find(item => item.id === `feat_${{feature}}`);
     const li = document.createElement('li');
     li.className = 'feature-item';
-    li.dataset.feature = f;
-    li.innerHTML = `<span class="dot" style="background:${{featureColors[f]}}"></span>`
-      + `<span class="name">${{f}}</span>`
-      + `<span class="count">${{fa ? fa.removable_lines : 0}} lines</span>`;
-    li.onclick = () => selectFeature(f);
+    li.dataset.feature = feature;
+    li.innerHTML = `
+      <span class="dot" style="background:${{featureColors[feature]}}"></span>
+      <span>
+        <span class="name">${{escapeHtml(feature)}}</span>
+        <span class="meta">${{featureNode ? featureNode.file_count + ' files' : '0 files'}}</span>
+      </span>
+      <span class="count">${{featureNode ? featureNode.removable_lines : 0}} lines</span>`;
+    li.onclick = () => selectFeature(feature);
     featureList.appendChild(li);
   }});
 
   clearBtn.onclick = clearSelection;
 
-  // Search
-  let searchTimeout;
-  searchInput.addEventListener('input', () => {{
-    clearTimeout(searchTimeout);
-    searchTimeout = setTimeout(() => {{
-      const q = searchInput.value.toLowerCase();
-      featureList.querySelectorAll('.feature-item').forEach(el => {{
-        el.style.display = el.textContent.toLowerCase().includes(q) ? '' : 'none';
-      }});
-      // Also search file nodes
-      if (q.length > 1) {{
-        node.classed('dimmed', d => {{
-          if (!q) return false;
-          return !d.label.toLowerCase().includes(q) && !(d.features || []).some(f => f.toLowerCase().includes(q));
-        }});
-      }} else if (!activeFeature) {{
-        node.classed('dimmed', false);
-        link.classed('dimmed', false);
-      }}
-    }}, 300);
-  }});
-
-  // Tooltip
-  node.on('mouseover', (event, d) => {{
-    let html = `<div class="tt-title">${{d.label}}</div>`;
-    if (d.type === 'feature') {{
-      html += `<div class="tt-row"><span>Removable lines</span><span class="tt-val">${{d.removable_lines}}</span></div>`;
-      html += `<div class="tt-row"><span>Files affected</span><span class="tt-val">${{d.file_count}}</span></div>`;
-      if (d.description) html += `<div style="margin-top:6px;color:var(--text-muted);font-size:11px">${{d.description}}</div>`;
-    }} else {{
-      html += `<div class="tt-row"><span>Total lines</span><span class="tt-val">${{d.total_lines}}</span></div>`;
-      html += `<div class="tt-row"><span>Shared</span><span class="tt-val">${{d.shared ? 'Yes (' + d.feature_count + ' features)' : 'No'}}</span></div>`;
-      if (d.per_feature_lines) {{
-        Object.entries(d.per_feature_lines).forEach(([f, n]) => {{
-          html += `<div class="tt-row"><span style="color:${{featureColors[f]}}">${{f}}</span><span class="tt-val">${{n}}</span></div>`;
-        }});
-      }}
-    }}
-    tooltip.innerHTML = html;
-    tooltip.classList.add('visible');
-    tooltip.style.left = (event.clientX - container.getBoundingClientRect().left + 12) + 'px';
-    tooltip.style.top = (event.clientY - container.getBoundingClientRect().top - 10) + 'px';
-  }})
-  .on('mousemove', (event) => {{
-    tooltip.style.left = (event.clientX - container.getBoundingClientRect().left + 12) + 'px';
-    tooltip.style.top = (event.clientY - container.getBoundingClientRect().top - 10) + 'px';
-  }})
-  .on('mouseout', () => {{ tooltip.classList.remove('visible'); }});
-
-  // Click node to select feature
-  node.on('click', (event, d) => {{
-    if (d.type === 'feature') selectFeature(d.label);
-    else if (d.features && d.features.length === 1) selectFeature(d.features[0]);
-  }});
-
-  // Stats panel
-  function updateStats(featName) {{
-    if (!featName) {{
-      const totalFiles = GRAPH_DATA.nodes.filter(n => n.type === 'file').length;
-      const sharedFiles = GRAPH_DATA.nodes.filter(n => n.type === 'file' && n.shared).length;
+  function updateStats(featureName) {{
+    if (!featureName) {{
+      const totalFiles = GRAPH_DATA.nodes.filter(item => item.type === 'file').length;
+      const sharedFiles = GRAPH_DATA.nodes.filter(item => item.type === 'file' && item.shared).length;
       statsPanel.innerHTML = `
         <div class="stat-row"><span>Total features</span><span class="stat-val">${{GRAPH_DATA.features.length}}</span></div>
         <div class="stat-row"><span>Total files</span><span class="stat-val">${{totalFiles}}</span></div>
         <div class="stat-row"><span>Shared files</span><span class="stat-val">${{sharedFiles}}</span></div>
         <div class="stat-row"><span>Removable lines</span><span class="stat-val">${{GRAPH_DATA.total_removable_lines}}</span></div>`;
-    }} else {{
-      const fa = GRAPH_DATA.nodes.find(n => n.id === `feat_${{featName}}`);
-      if (!fa) return;
-      statsPanel.innerHTML = `
-        <div class="stat-row"><span>Feature</span><span class="stat-val" style="color:${{featureColors[featName]}}">${{featName}}</span></div>
-        <div class="stat-row"><span>Removable lines</span><span class="stat-val">${{fa.removable_lines}}</span></div>
-        <div class="stat-row"><span>Files affected</span><span class="stat-val">${{fa.file_count}}</span></div>`;
+      return;
     }}
-  }}
-  updateStats(null);
 
-  // Drag handlers defined above (before sim)
+    const featureNode = GRAPH_DATA.nodes.find(item => item.id === `feat_${{featureName}}`);
+    if (!featureNode) return;
+    statsPanel.innerHTML = `
+      <div class="stat-row"><span>Feature</span><span class="stat-val" style="color:${{featureColors[featureName]}}">${{escapeHtml(featureName)}}</span></div>
+      <div class="stat-row"><span>Removable lines</span><span class="stat-val">${{featureNode.removable_lines}}</span></div>
+      <div class="stat-row"><span>Files affected</span><span class="stat-val">${{featureNode.file_count}}</span></div>`;
+  }}
+
+  let searchTimeout;
+  searchInput.addEventListener('input', () => {{
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(() => {{
+      const query = searchInput.value.toLowerCase();
+
+      featureList.querySelectorAll('.feature-item').forEach(item => {{
+        item.style.display = item.textContent.toLowerCase().includes(query) ? '' : 'none';
+      }});
+
+      if (query.length > 1) {{
+        node.classed('dimmed', item => {{
+          if (!query) return false;
+          const featureMatch = (item.features || []).some(feature => feature.toLowerCase().includes(query));
+          return !item.label.toLowerCase().includes(query) && !featureMatch;
+        }});
+        link.classed('dimmed', edge => {{
+          const source = typeof edge.source === 'object' ? edge.source : nodeMap[edge.source];
+          const target = typeof edge.target === 'object' ? edge.target : nodeMap[edge.target];
+          const sourceMatch = source && source.label.toLowerCase().includes(query);
+          const targetMatch = target && (
+            target.label.toLowerCase().includes(query)
+            || (target.features || []).some(feature => feature.toLowerCase().includes(query))
+          );
+          return !(sourceMatch || targetMatch);
+        }});
+      }} else if (activeFeature) {{
+        applyFeatureFocus(activeFeature);
+      }} else if (activeNodeId && nodeMap[activeNodeId] && nodeMap[activeNodeId].type === 'file') {{
+        selectFile(nodeMap[activeNodeId]);
+      }} else {{
+        node.classed('dimmed', false);
+        link.classed('dimmed', false);
+      }}
+    }}, 250);
+  }});
+
+  node.on('mouseover', (event, item) => {{
+    let html = `<div class="tt-title">${{escapeHtml(item.label)}}</div>`;
+    if (item.type === 'feature') {{
+      html += `<div class="tt-row"><span>Removable lines</span><span class="tt-val">${{item.removable_lines}}</span></div>`;
+      html += `<div class="tt-row"><span>Files affected</span><span class="tt-val">${{item.file_count}}</span></div>`;
+      if (item.description) {{
+        html += `<div style="margin-top:6px;color:var(--text-muted);font-size:11px">${{escapeHtml(item.description)}}</div>`;
+      }}
+    }} else {{
+      html += `<div class="tt-row"><span>Total lines</span><span class="tt-val">${{item.total_lines}}</span></div>`;
+      html += `<div class="tt-row"><span>Shared</span><span class="tt-val">${{item.shared ? 'Yes (' + item.feature_count + ' features)' : 'No'}}</span></div>`;
+      const primaryDetail = (item.per_feature_details || [])[0];
+      if (primaryDetail && primaryDetail.line_number_preview) {{
+        html += `<div class="tt-row"><span>Line range</span><span class="tt-val">${{escapeHtml(primaryDetail.line_number_preview)}}</span></div>`;
+      }}
+      Object.entries(item.per_feature_lines || {{}}).forEach(([feature, count]) => {{
+        html += `<div class="tt-row"><span style="color:${{featureColors[feature] || 'var(--primary)'}}">${{escapeHtml(feature)}}</span><span class="tt-val">${{count}}</span></div>`;
+      }});
+    }}
+
+    tooltip.innerHTML = html;
+    tooltip.classList.add('visible');
+    const rect = container.getBoundingClientRect();
+    tooltip.style.left = (event.clientX - rect.left + 12) + 'px';
+    tooltip.style.top = (event.clientY - rect.top - 10) + 'px';
+  }});
+
+  node.on('mousemove', event => {{
+    const rect = container.getBoundingClientRect();
+    tooltip.style.left = (event.clientX - rect.left + 12) + 'px';
+    tooltip.style.top = (event.clientY - rect.top - 10) + 'px';
+  }});
+
+  node.on('mouseout', () => {{
+    tooltip.classList.remove('visible');
+  }});
+
+  node.on('click', (event, item) => {{
+    if (item.type === 'feature') selectFeature(item.label);
+    else selectFile(item);
+  }});
+
+  updateStats(null);
+  renderOverview();
 }})();
 </script>
 </body>
@@ -573,27 +1333,11 @@ def generate_feature_graph_html(
     """
     Generate an interactive HTML feature graph visualization.
 
-    The visualization is self-contained (only requires D3.js from CDN).
-    Features are shown as large colored nodes, source files as smaller nodes,
-    with edges weighted by removable line count. Shared files are highlighted.
-
-    Interaction:
-    - Click feature in sidebar or graph → isolate its subgraph
-    - Search bar filters features and files
-    - Hover for detailed tooltips
-    - Drag nodes to rearrange
-    - Zoom/pan the canvas
-
-    Args:
-        graph: FeatureGraph data structure
-        output_path: Path to output HTML file
-
-    Returns:
-        Path to generated HTML file
+    The visualization is self-contained aside from D3.js from a CDN.
     """
     print(f"[+] Generating interactive feature graph: {output_path}")
 
-    graph_json = json.dumps(graph.to_dict())
+    graph_json = json.dumps(graph.to_dict()).replace("</", "<\\/")
 
     html = _GRAPH_HTML_TEMPLATE.format(
         project=graph.project,

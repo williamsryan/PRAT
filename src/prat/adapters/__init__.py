@@ -9,10 +9,10 @@ from pathlib import Path
 from typing import Optional
 
 from .base import ProjectAdapter
-from .mosquitto import MosquittoAdapter
-from .ffmpeg import FFmpegAdapter
-from .rust import RustAdapter
 from .cmake import CMakeAdapter
+from .ffmpeg import FFmpegAdapter
+from .mosquitto import MosquittoAdapter
+from .rust import RustAdapter
 from .uamqp import UamqpAdapter
 from .opendds import OpenDDSAdapter
 from .aom import AomAdapter
@@ -44,7 +44,7 @@ def get_adapter(project_path: str) -> Optional[ProjectAdapter]:
     Returns:
         A ProjectAdapter instance, or None if no adapter matches.
     """
-    project_path_obj = Path(project_path)
+    Path(project_path)
 
     # Order matters: specific adapters first, generic ones last.
     adapter_classes = [

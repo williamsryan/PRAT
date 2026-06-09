@@ -95,10 +95,23 @@ demo-ffmpeg-x264: $(RESULTS)  ## Analyze FFmpeg x264 feature (local)
 .PHONY: demo-all
 demo-all: demo-mosquitto-tls demo-mosquitto-bridge demo-ffmpeg-x264  ## Run all three analyses
 
+# ── Batch / Graphs ──────────────────────────────────────────────────────────
+
 .PHONY: batch-mosquitto
 batch-mosquitto: $(RESULTS)  ## Batch-analyze ALL Mosquitto features
 	@test -d $(APP)/mosquitto || (echo "✗ App/mosquitto not found — run: make fetch-mosquitto" && exit 1)
 	$(PRAT) $(APP)/mosquitto --batch --output $(RESULTS)/mosquitto-batch
+
+.PHONY: graph
+graph: $(RESULTS)  ## Open feature graph HTML (requires prior analysis run)
+	@GRAPH=$$(find $(RESULTS) -name "feature_graph.html" | head -1); \
+	if [ -z "$$GRAPH" ]; then \
+	  GRAPH=$$(find $(RESULTS) -name "*.html" | head -1); \
+	fi; \
+	if [ -z "$$GRAPH" ]; then \
+	  echo "✗ No HTML reports found in $(RESULTS)/ — run an analysis first"; exit 1; \
+	fi; \
+	open "$$GRAPH" 2>/dev/null || xdg-open "$$GRAPH" 2>/dev/null || echo "✓ Open manually: $$GRAPH"
 
 # ── Docker Demos (self-contained — no local App/ needed) ────────────────────
 
@@ -119,6 +132,19 @@ docker-demo-mosquitto-tls:  ## Docker: build + run Mosquitto TLS demo
 docker-demo-mosquitto-bridge:  ## Docker: build + run Mosquitto Bridge demo
 	$(PYTHON) src/demo-runner.py --build mosquitto-bridge
 	$(PYTHON) src/demo-runner.py --run mosquitto-bridge --output $(RESULTS)/docker
+
+.PHONY: demo-release
+demo-release:  ## Committee-safe Docker demo: Mosquitto TLS with manifest/logs
+	$(PYTHON) src/demo-runner.py --build mosquitto-tls
+	$(PYTHON) src/demo-runner.py --run mosquitto-tls --output $(RESULTS)/release-demo --report $(RESULTS)/release-demo/demo_report.txt
+	@echo ""
+	@echo "✓ Release demo artifacts in $(RESULTS)/release-demo/mosquitto-tls/"
+	@echo "  - report.html"
+	@echo "  - report.json"
+	@echo "  - workflow_checkpoint.json"
+	@echo "  - manifest.json"
+	@echo "  - demo_manifest.json"
+	@echo "  - container.log"
 
 .PHONY: docker-demo-ffmpeg
 docker-demo-ffmpeg:  ## Docker: build + run FFmpeg x264 demo
@@ -180,6 +206,15 @@ lint:  ## Run ruff linter
 .PHONY: typecheck
 typecheck:  ## Run mypy (advisory)
 	$(VENV)/bin/mypy src/prat/
+
+.PHONY: package-check
+package-check:  ## Build source/wheel artifacts and validate metadata
+	$(VENV)/bin/python -m build
+	$(VENV)/bin/twine check dist/*
+
+.PHONY: doctor
+doctor:  ## Check local PRAT dependencies and optional Docker support
+	$(PRAT) doctor
 
 .PHONY: help
 help:  ## Show this help

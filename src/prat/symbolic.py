@@ -16,14 +16,13 @@ KLEE requires a specific environment (LLVM 9/11, uclibc, etc.).
 This module supports both local KLEE and Docker-based execution.
 """
 
-import json
 import os
 import shutil
 import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Optional
 
 
 @dataclass
@@ -41,10 +40,10 @@ class KleeConfig:
     solver_backend: str = "z3"
     emit_all_errors: bool = True
     only_output_states_covering_new: bool = True
-    extra_flags: List[str] = field(default_factory=list)
-    link_libraries: List[str] = field(default_factory=list)
+    extra_flags: list[str] = field(default_factory=list)
+    link_libraries: list[str] = field(default_factory=list)
 
-    def to_klee_args(self) -> List[str]:
+    def to_klee_args(self) -> list[str]:
         """Convert config to KLEE command-line arguments."""
         args = []
         if self.emit_all_errors:
@@ -63,7 +62,7 @@ class KleeConfig:
         args.extend(self.extra_flags)
         return args
 
-    def to_replay_sym_args(self) -> List[str]:
+    def to_replay_sym_args(self) -> list[str]:
         """Get --sym-args and --sym-files as replay-compatible args."""
         parts = self.sym_args.split()
         args = ["--sym-args"] + parts
@@ -76,12 +75,12 @@ class KleeConfig:
 class SymbolicResult:
     """Result of symbolic test generation."""
     success: bool
-    test_cases: List[str]           # paths to .ktest files
+    test_cases: list[str]           # paths to .ktest files
     test_count: int
     bytecode_path: Optional[str] = None
     klee_output_dir: Optional[str] = None
     generation_time: float = 0.0
-    replay_results: Optional[Dict[str, bool]] = None
+    replay_results: Optional[dict[str, bool]] = None
     error_message: Optional[str] = None
 
 
@@ -101,11 +100,11 @@ def check_klee_available(use_docker: bool = False) -> bool:
 
 
 def compile_to_bytecode(
-    source_files: List[str],
+    source_files: list[str],
     output_path: str,
-    include_dirs: Optional[List[str]] = None,
+    include_dirs: Optional[list[str]] = None,
     clang_binary: str = "clang",
-    extra_flags: Optional[List[str]] = None,
+    extra_flags: Optional[list[str]] = None,
 ) -> Optional[str]:
     """
     Compile C/C++ source files to LLVM bytecode (.bc).
@@ -176,7 +175,8 @@ def run_klee(
 
     Args:
         bytecode_path: Path to .bc file
-        config: KLEE configuration (uses paper defaults if None)
+        config: KLEE configuration. Defaults are inspired by the paper's
+            Table 2 and may need target-specific tuning.
         output_dir: Directory for KLEE output (auto-generated if None)
         use_docker: Run KLEE inside Docker container
         docker_image: Docker image to use for KLEE
@@ -296,10 +296,10 @@ def _collect_klee_results(
 
 def replay_tests(
     binary_path: str,
-    test_cases: List[str],
+    test_cases: list[str],
     timeout_per_test: int = 10,
     klee_replay_binary: str = "klee-replay",
-) -> Dict[str, bool]:
+) -> dict[str, bool]:
     """
     Replay KLEE-generated test cases against the actual binary.
 
@@ -350,7 +350,7 @@ def replay_tests(
 
 def generate_symbolic_tests(
     project_path: str,
-    source_files: Optional[List[str]] = None,
+    source_files: Optional[list[str]] = None,
     binary_path: Optional[str] = None,
     config: Optional[KleeConfig] = None,
     output_dir: Optional[str] = None,
@@ -384,7 +384,7 @@ def generate_symbolic_tests(
         config = KleeConfig()
 
     print(f"\n{'='*50}")
-    print(f"PRAT Symbolic Test Generation")
+    print("PRAT Symbolic Test Generation")
     print(f"{'='*50}\n")
 
     # Step 1: Find source files if not specified

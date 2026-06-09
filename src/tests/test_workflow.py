@@ -1,19 +1,17 @@
 """Tests for prat.workflow module — integration-level with mocked externals."""
 
-import pytest
-from unittest.mock import patch, MagicMock
-from pathlib import Path
+from unittest.mock import MagicMock, patch
 
-from prat.workflow import (
-    run_complete_workflow,
-    WorkflowResult,
-    WorkflowCheckpoint,
-)
 from prat.compilation import BuildSystem, CompilationResult
 from prat.coverage import CoverageResult
 from prat.diff import DiffResult
-from prat.extraction import ExtractionResult
 from prat.environment import EnvironmentResult
+from prat.extraction import ExtractionResult
+from prat.workflow import (
+    WorkflowCheckpoint,
+    WorkflowResult,
+    run_complete_workflow,
+)
 
 
 def _make_env_result(success=True, missing=None):

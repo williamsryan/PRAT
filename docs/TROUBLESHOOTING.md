@@ -108,7 +108,7 @@ find App/mosquitto -name "*.gcno"
 find App/mosquitto -name "*.gcda"
 
 # If .gcda missing, run tests to execute code
-python3 src/PRAT.py App/mosquitto TLS --tests
+prat App/mosquitto TLS --tests
 ```
 
 ### Wrong Coverage Tool
@@ -138,7 +138,7 @@ result = generate_coverage(
 chmod -R u+w App/mosquitto
 
 # Or run with sudo (not recommended)
-sudo python3 src/PRAT.py ...
+sudo prat ...
 ```
 
 ## Diff Analysis Issues
@@ -153,7 +153,7 @@ Feature may not affect code execution paths
 **Solution:**
 1. Run with test suite to execute more code:
 ```bash
-python3 src/PRAT.py App/mosquitto TLS --tests
+prat App/mosquitto TLS --tests
 ```
 
 2. Verify feature flag actually changes compilation:
@@ -347,7 +347,7 @@ For most issues, this diagnostic workflow helps:
 
 1. **Verify dependencies:**
 ```python
-from src.prat.environment import verify_dependencies
+from prat.environment import verify_dependencies
 print(verify_dependencies())
 ```
 

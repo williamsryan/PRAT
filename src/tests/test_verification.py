@@ -1,15 +1,13 @@
 """Tests for prat.verification module."""
 
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 from prat.verification import (
-    verify_correctness,
-    _parse_test_output,
+    SuiteResult,
     _discover_test_commands,
+    _parse_test_output,
     _run_test_suite,
-    VerificationResult,
-    TestSuiteResult,
+    verify_correctness,
 )
 
 
@@ -118,7 +116,7 @@ class TestVerifyCorrectness:
     def test_all_passing(self, mock_rebuild, mock_discover, mock_suite):
         mock_rebuild.return_value = True
         mock_discover.return_value = [("unit", ["make", "test"])]
-        mock_suite.return_value = TestSuiteResult(
+        mock_suite.return_value = SuiteResult(
             name="unit", success=True,
             tests_run=10, tests_passed=10, tests_failed=0,
             execution_time=1.0,
@@ -147,7 +145,7 @@ class TestVerifyCorrectness:
     def test_test_failures(self, mock_rebuild, mock_discover, mock_suite):
         mock_rebuild.return_value = True
         mock_discover.return_value = [("unit", ["make", "test"])]
-        mock_suite.return_value = TestSuiteResult(
+        mock_suite.return_value = SuiteResult(
             name="unit", success=False,
             tests_run=10, tests_passed=8, tests_failed=2,
             execution_time=1.0,

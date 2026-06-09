@@ -1,3 +1,7 @@
-`PRAT.py` is the newer standalone tool and shouldn't require any additional setup.
+# PRAT source package
 
-For seeing end-to-end demos, build and runthe individual containers under the `docker` directory.
+The maintained entry points are the installed `prat` console script and
+`python -m prat` from the repository root with `PYTHONPATH=src`.
+
+For end-to-end demos, use the top-level `Makefile` targets or the individual
+containers under the `docker` directory.
