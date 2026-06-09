@@ -1,0 +1,106 @@
+{
+  "_description": "Ground-truth expected results from the PRAT TOSEM 2021 paper (doi:10.1145/3487568). Each entry specifies the exact paper-reported numbers and an acceptable tolerance range for CI validation.",
+  "_paper": "Williams et al., Guided Feature Identification and Removal for Resource-constrained Firmware, ACM TOSEM 2021",
+  "_note": "paper_lines is the value reported in Table 4. tolerance_pct allows for variation due to coverage tool version, test execution, platform, and absence of KLEE.",
+
+  "targets": {
+    "mosquitto-tls": {
+      "project": "Mosquitto",
+      "version": "v2.0.15",
+      "feature": "TLS",
+      "build_system": "make",
+      "paper_lines_removed": 1247,
+      "paper_table": "Table 4",
+      "tolerance_pct": 40,
+      "min_acceptable": 500,
+      "max_acceptable": 1800,
+      "key_files": ["net.c", "tls_mosq.c", "net_mosq.c"],
+      "docker_demo": "demo1",
+      "notes": "Paper used KLEE-enhanced coverage; without KLEE, expect lower end of range"
+    },
+    "mosquitto-bridge": {
+      "project": "Mosquitto",
+      "version": "v2.0.15",
+      "feature": "BRIDGE",
+      "build_system": "make",
+      "paper_lines_removed": 623,
+      "paper_table": "Table 4",
+      "tolerance_pct": 40,
+      "min_acceptable": 300,
+      "max_acceptable": 900,
+      "key_files": ["bridge.c", "handle_connect.c"],
+      "docker_demo": "demo2",
+      "notes": ""
+    },
+    "ffmpeg-x264": {
+      "project": "FFmpeg",
+      "version": "n5.1.4",
+      "feature": "x264",
+      "build_system": "autotools",
+      "paper_lines_removed": 3241,
+      "paper_table": "Table 4",
+      "tolerance_pct": 50,
+      "min_acceptable": 1000,
+      "max_acceptable": 5000,
+      "key_files": ["libavcodec/libx264.c"],
+      "docker_demo": "demo3",
+      "notes": "FFmpeg version in paper may differ slightly; x264 wrapper code is version-sensitive"
+    },
+    "uamqp-websockets": {
+      "project": "azure-uamqp-c",
+      "version": "2024-01-22",
+      "feature": "USE_WEBSOCKETS",
+      "build_system": "cmake",
+      "paper_lines_removed": 890,
+      "paper_table": "Table 4",
+      "tolerance_pct": 50,
+      "min_acceptable": 200,
+      "max_acceptable": 2000,
+      "key_files": ["wsio.c", "uws_client.c"],
+      "docker_demo": "demo4",
+      "notes": "azure-uamqp-c has been archived; version pinned to last stable"
+    },
+    "opendds-security": {
+      "project": "OpenDDS",
+      "version": "DDS-3.25",
+      "feature": "SECURITY",
+      "build_system": "cmake",
+      "paper_lines_removed": 2800,
+      "paper_table": "Table 4",
+      "tolerance_pct": 50,
+      "min_acceptable": 500,
+      "max_acceptable": 5000,
+      "key_files": ["dds/DCPS/security", "Security"],
+      "docker_demo": "demo5",
+      "notes": "OpenDDS Security is a large subsystem; version drift may affect counts"
+    },
+    "quiche-ffdhe": {
+      "project": "Quiche",
+      "version": "0.20.1",
+      "feature": "ffdhe",
+      "build_system": "cargo",
+      "paper_lines_removed": 450,
+      "paper_table": "Table 4",
+      "tolerance_pct": 60,
+      "min_acceptable": 100,
+      "max_acceptable": 1500,
+      "key_files": ["src/"],
+      "docker_demo": "demo6",
+      "notes": "Rust cargo features; gcov-based coverage may differ from kcov"
+    },
+    "aom-encoder": {
+      "project": "AOM (libaom)",
+      "version": "v3.7.1",
+      "feature": "CONFIG_AV1_ENCODER",
+      "build_system": "cmake",
+      "paper_lines_removed": 28000,
+      "paper_table": "Table 4",
+      "tolerance_pct": 50,
+      "min_acceptable": 5000,
+      "max_acceptable": 50000,
+      "key_files": ["av1/encoder", "aom_dsp"],
+      "docker_demo": "demo7",
+      "notes": "AOM encoder is very large; exact count depends heavily on test coverage"
+    }
+  }
+}

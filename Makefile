@@ -36,6 +36,26 @@ fetch-mosquitto:  ## Clone only Mosquitto
 fetch-ffmpeg:  ## Clone only FFmpeg
 	bash scripts/fetch-targets.sh ffmpeg
 
+.PHONY: fetch-uamqp
+fetch-uamqp:  ## Clone only azure-uamqp-c
+	bash scripts/fetch-targets.sh uamqp
+
+.PHONY: fetch-opendds
+fetch-opendds:  ## Clone only OpenDDS
+	bash scripts/fetch-targets.sh opendds
+
+.PHONY: fetch-quiche
+fetch-quiche:  ## Clone only Quiche
+	bash scripts/fetch-targets.sh quiche
+
+.PHONY: fetch-rav1e
+fetch-rav1e:  ## Clone only rav1e
+	bash scripts/fetch-targets.sh rav1e
+
+.PHONY: fetch-aom
+fetch-aom:  ## Clone only AOM (libaom)
+	bash scripts/fetch-targets.sh aom
+
 # ── Tests ───────────────────────────────────────────────────────────────────
 
 .PHONY: test
@@ -104,6 +124,36 @@ docker-demo-mosquitto-bridge:  ## Docker: build + run Mosquitto Bridge demo
 docker-demo-ffmpeg:  ## Docker: build + run FFmpeg x264 demo
 	$(PYTHON) src/demo-runner.py --build ffmpeg-x264
 	$(PYTHON) src/demo-runner.py --run ffmpeg-x264 --output $(RESULTS)/docker
+
+.PHONY: docker-demo-uamqp
+docker-demo-uamqp:  ## Docker: build + run azure-uamqp-c WebSockets demo
+	$(PYTHON) src/demo-runner.py --build uamqp-websockets
+	$(PYTHON) src/demo-runner.py --run uamqp-websockets --output $(RESULTS)/docker
+
+.PHONY: docker-demo-opendds
+docker-demo-opendds:  ## Docker: build + run OpenDDS Security demo
+	$(PYTHON) src/demo-runner.py --build opendds-security
+	$(PYTHON) src/demo-runner.py --run opendds-security --output $(RESULTS)/docker
+
+.PHONY: docker-demo-quiche
+docker-demo-quiche:  ## Docker: build + run Quiche FFDHE demo
+	$(PYTHON) src/demo-runner.py --build quiche-ffdhe
+	$(PYTHON) src/demo-runner.py --run quiche-ffdhe --output $(RESULTS)/docker
+
+.PHONY: docker-demo-aom
+docker-demo-aom:  ## Docker: build + run AOM encoder demo
+	$(PYTHON) src/demo-runner.py --build aom-encoder
+	$(PYTHON) src/demo-runner.py --run aom-encoder --output $(RESULTS)/docker
+
+.PHONY: docker-build-all
+docker-build-all: docker-build  ## Alias for docker-build (all images)
+
+.PHONY: validate
+validate:  ## Validate demo results against paper-reported numbers
+	$(PYTHON) scripts/validate_paper_results.py $(RESULTS)/docker/ --json $(RESULTS)/validation_report.json
+
+.PHONY: paper-check
+paper-check: docker-build docker-run validate  ## Full pipeline: build → run all → validate against paper
 
 # ── Utilities ───────────────────────────────────────────────────────────────
 

@@ -123,15 +123,15 @@ The paper evaluates PRAT on 7 open-source projects:
 |---|---|---|---|---|---|
 | 1 | **Mosquitto** v2.0.15 | C | Make | TLS, Bridge, WebSockets, SRV, + 15 more | ✅ Full adapter + Docker demos |
 | 2 | **FFmpeg** n5.1.4 | C | Autotools | x264, x265, vpx, mp3lame, opus, ... | ✅ Full adapter + Docker demo |
-| 3 | **azure-uamqp-c** | C | CMake | WebSockets, TLS | 🔲 Generic CMake adapter applies |
-| 4 | **OpenDDS** | C++ | CMake/Make | Security, TCP transport | 🔲 Adapter needed |
-| 5 | **Quiche** | Rust | Cargo | FFDHE, qlog | 🔲 Generic Rust adapter applies |
-| 6 | **rav1e** | Rust | Cargo | ASM optimizations | 🔲 Generic Rust adapter applies |
-| 7 | **AOM (libaom)** | C | CMake | AV1 encoder/decoder split | 🔲 Generic CMake adapter applies |
+| 3 | **azure-uamqp-c** 2024-01-22 | C | CMake | USE_WEBSOCKETS, USE_OPENSSL | ✅ Adapter + Docker demo4 |
+| 4 | **OpenDDS** DDS-3.25 | C++ | CMake | SECURITY, CONTENT_SUBSCRIPTION | ✅ Adapter + Docker demo5 |
+| 5 | **Quiche** 0.20.1 | Rust | Cargo | ffdhe, qlog | ✅ Docker demo6 (generic Rust adapter) |
+| 6 | **rav1e** v0.7.1 | Rust | Cargo | asm, nasm | ✅ Fetchable (generic Rust adapter) |
+| 7 | **AOM (libaom)** v3.7.1 | C | CMake | CONFIG_AV1_ENCODER, CONFIG_AV1_DECODER | ✅ Adapter + Docker demo7 |
 
 ### Reproducing Paper Table 4 (LOC Reduction)
 
-For the currently-supported targets:
+For all supported targets:
 
 ```bash
 # Mosquitto — all features (paper reports all 19):
@@ -139,6 +139,11 @@ prat App/mosquitto --batch --output results/table4-mosquitto/
 
 # FFmpeg — x264:
 prat App/FFmpeg x264 --output results/table4-ffmpeg-x264/
+
+# All paper targets via Docker (self-contained, no local setup):
+make docker-build    # builds all 7 demo images
+make docker-run      # runs all 7, generates demo_report.txt
+cat results/demo_report.txt
 ```
 
 **Expected ranges** (from paper, approximate):

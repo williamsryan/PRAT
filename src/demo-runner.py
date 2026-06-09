@@ -66,7 +66,31 @@ EXPECTED_RESULTS = {
         max_removable_lines=5000,
         key_files=["libavcodec/libx264.c"],
         description="FFmpeg x264 encoder feature analysis"
-    )
+    ),
+    "uamqp-websockets": ExpectedResult(
+        min_removable_lines=200,
+        max_removable_lines=2000,
+        key_files=["wsio.c"],
+        description="azure-uamqp-c WebSockets feature analysis"
+    ),
+    "opendds-security": ExpectedResult(
+        min_removable_lines=500,
+        max_removable_lines=5000,
+        key_files=["Security"],
+        description="OpenDDS Security feature analysis"
+    ),
+    "quiche-ffdhe": ExpectedResult(
+        min_removable_lines=100,
+        max_removable_lines=1500,
+        key_files=["src/"],
+        description="Quiche FFDHE feature analysis"
+    ),
+    "aom-encoder": ExpectedResult(
+        min_removable_lines=5000,
+        max_removable_lines=50000,
+        key_files=["av1/encoder"],
+        description="AOM AV1 encoder feature analysis"
+    ),
 }
 
 
@@ -89,7 +113,31 @@ DEMO_CONFIGS = {
         "image_name": "prat-demo:ffmpeg",
         "feature": "x264",
         "project": "ffmpeg"
-    }
+    },
+    "uamqp-websockets": {
+        "dockerfile": "docker/demo4/Dockerfile",
+        "image_name": "prat-demo:uamqp-websockets",
+        "feature": "USE_WEBSOCKETS",
+        "project": "azure-uamqp-c"
+    },
+    "opendds-security": {
+        "dockerfile": "docker/demo5/Dockerfile",
+        "image_name": "prat-demo:opendds-security",
+        "feature": "SECURITY",
+        "project": "opendds"
+    },
+    "quiche-ffdhe": {
+        "dockerfile": "docker/demo6/Dockerfile",
+        "image_name": "prat-demo:quiche-ffdhe",
+        "feature": "ffdhe",
+        "project": "quiche"
+    },
+    "aom-encoder": {
+        "dockerfile": "docker/demo7/Dockerfile",
+        "image_name": "prat-demo:aom-encoder",
+        "feature": "CONFIG_AV1_ENCODER",
+        "project": "aom"
+    },
 }
 
 
