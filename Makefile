@@ -12,10 +12,10 @@ RESULTS  := results
 
 .DEFAULT_GOAL := help
 
-# ── Setup ─────────────────────────────────────────────────────────────────────
+# ── Setup ───────────────────────────────────────────────────────────────────
 
 .PHONY: setup
-setup: $(VENV)/bin/prat  ## Create venv and install PRAT
+setup: $(VENV)/bin/prat  ## Create venv and install PRAT + dev deps
 
 $(VENV)/bin/prat:
 	$(PYTHON) -m venv $(VENV)
@@ -36,7 +36,27 @@ fetch-mosquitto:  ## Clone only Mosquitto
 fetch-ffmpeg:  ## Clone only FFmpeg
 	bash scripts/fetch-targets.sh ffmpeg
 
-# ── Tests ─────────────────────────────────────────────────────────────────────
+.PHONY: fetch-uamqp
+fetch-uamqp:  ## Clone only azure-uamqp-c
+	bash scripts/fetch-targets.sh uamqp
+
+.PHONY: fetch-opendds
+fetch-opendds:  ## Clone only OpenDDS
+	bash scripts/fetch-targets.sh opendds
+
+.PHONY: fetch-quiche
+fetch-quiche:  ## Clone only Quiche
+	bash scripts/fetch-targets.sh quiche
+
+.PHONY: fetch-rav1e
+fetch-rav1e:  ## Clone only rav1e
+	bash scripts/fetch-targets.sh rav1e
+
+.PHONY: fetch-aom
+fetch-aom:  ## Clone only AOM (libaom)
+	bash scripts/fetch-targets.sh aom
+
+# ── Tests ───────────────────────────────────────────────────────────────────
 
 .PHONY: test
 test:  ## Run full test suite
@@ -46,27 +66,27 @@ test:  ## Run full test suite
 test-fast:  ## Run tests (quiet, stop on first failure)
 	$(VENV)/bin/pytest src/tests/ -q -x
 
-# ── Analyses ──────────────────────────────────────────────────────────────────
+# ── Analyses (local — requires App/ targets fetched) ────────────────────────
 
 $(RESULTS):
 	mkdir -p $(RESULTS)
 
 .PHONY: demo-mosquitto-tls
-demo-mosquitto-tls: $(RESULTS)  ## Analyze Mosquitto TLS feature
+demo-mosquitto-tls: $(RESULTS)  ## Analyze Mosquitto TLS feature (local)
 	@test -d $(APP)/mosquitto || (echo "✗ App/mosquitto not found — run: make fetch-mosquitto" && exit 1)
 	$(PRAT) $(APP)/mosquitto TLS --output $(RESULTS)/mosquitto-tls
 	@echo ""
 	@echo "✓ Reports in $(RESULTS)/mosquitto-tls/"
 
 .PHONY: demo-mosquitto-bridge
-demo-mosquitto-bridge: $(RESULTS)  ## Analyze Mosquitto BRIDGE feature
+demo-mosquitto-bridge: $(RESULTS)  ## Analyze Mosquitto BRIDGE feature (local)
 	@test -d $(APP)/mosquitto || (echo "✗ App/mosquitto not found — run: make fetch-mosquitto" && exit 1)
 	$(PRAT) $(APP)/mosquitto BRIDGE --output $(RESULTS)/mosquitto-bridge
 	@echo ""
 	@echo "✓ Reports in $(RESULTS)/mosquitto-bridge/"
 
 .PHONY: demo-ffmpeg-x264
-demo-ffmpeg-x264: $(RESULTS)  ## Analyze FFmpeg x264 feature
+demo-ffmpeg-x264: $(RESULTS)  ## Analyze FFmpeg x264 feature (local)
 	@test -d $(APP)/FFmpeg || (echo "✗ App/FFmpeg not found — run: make fetch-ffmpeg" && exit 1)
 	$(PRAT) $(APP)/FFmpeg x264 --output $(RESULTS)/ffmpeg-x264
 	@echo ""
@@ -75,7 +95,7 @@ demo-ffmpeg-x264: $(RESULTS)  ## Analyze FFmpeg x264 feature
 .PHONY: demo-all
 demo-all: demo-mosquitto-tls demo-mosquitto-bridge demo-ffmpeg-x264  ## Run all three analyses
 
-# ── Batch / Graphs ────────────────────────────────────────────────────────────
+# ── Batch / Graphs ──────────────────────────────────────────────────────────
 
 .PHONY: batch-mosquitto
 batch-mosquitto: $(RESULTS)  ## Batch-analyze ALL Mosquitto features
@@ -93,7 +113,7 @@ graph: $(RESULTS)  ## Open feature graph HTML (requires prior analysis run)
 	fi; \
 	open "$$GRAPH" 2>/dev/null || xdg-open "$$GRAPH" 2>/dev/null || echo "✓ Open manually: $$GRAPH"
 
-# ── Docker Demos ──────────────────────────────────────────────────────────────
+# ── Docker Demos (self-contained — no local App/ needed) ────────────────────
 
 .PHONY: docker-build
 docker-build:  ## Build all Docker demo images
@@ -107,6 +127,11 @@ docker-run:  ## Run all Docker demos and generate comparison report
 docker-demo-mosquitto-tls:  ## Docker: build + run Mosquitto TLS demo
 	$(PYTHON) src/demo-runner.py --build mosquitto-tls
 	$(PYTHON) src/demo-runner.py --run mosquitto-tls --output $(RESULTS)/docker
+
+.PHONY: docker-demo-mosquitto-bridge
+docker-demo-mosquitto-bridge:  ## Docker: build + run Mosquitto Bridge demo
+	$(PYTHON) src/demo-runner.py --build mosquitto-bridge
+	$(PYTHON) src/demo-runner.py --run mosquitto-bridge --output $(RESULTS)/docker
 
 .PHONY: demo-release
 demo-release:  ## Committee-safe Docker demo: Mosquitto TLS with manifest/logs
@@ -126,7 +151,37 @@ docker-demo-ffmpeg:  ## Docker: build + run FFmpeg x264 demo
 	$(PYTHON) src/demo-runner.py --build ffmpeg-x264
 	$(PYTHON) src/demo-runner.py --run ffmpeg-x264 --output $(RESULTS)/docker
 
-# ── Utilities ─────────────────────────────────────────────────────────────────
+.PHONY: docker-demo-uamqp
+docker-demo-uamqp:  ## Docker: build + run azure-uamqp-c WebSockets demo
+	$(PYTHON) src/demo-runner.py --build uamqp-websockets
+	$(PYTHON) src/demo-runner.py --run uamqp-websockets --output $(RESULTS)/docker
+
+.PHONY: docker-demo-opendds
+docker-demo-opendds:  ## Docker: build + run OpenDDS Security demo
+	$(PYTHON) src/demo-runner.py --build opendds-security
+	$(PYTHON) src/demo-runner.py --run opendds-security --output $(RESULTS)/docker
+
+.PHONY: docker-demo-quiche
+docker-demo-quiche:  ## Docker: build + run Quiche FFDHE demo
+	$(PYTHON) src/demo-runner.py --build quiche-ffdhe
+	$(PYTHON) src/demo-runner.py --run quiche-ffdhe --output $(RESULTS)/docker
+
+.PHONY: docker-demo-aom
+docker-demo-aom:  ## Docker: build + run AOM encoder demo
+	$(PYTHON) src/demo-runner.py --build aom-encoder
+	$(PYTHON) src/demo-runner.py --run aom-encoder --output $(RESULTS)/docker
+
+.PHONY: docker-build-all
+docker-build-all: docker-build  ## Alias for docker-build (all images)
+
+.PHONY: validate
+validate:  ## Validate demo results against paper-reported numbers
+	$(PYTHON) scripts/validate_paper_results.py $(RESULTS)/docker/ --json $(RESULTS)/validation_report.json
+
+.PHONY: paper-check
+paper-check: docker-build docker-run validate  ## Full pipeline: build → run all → validate against paper
+
+# ── Utilities ───────────────────────────────────────────────────────────────
 
 .PHONY: list-features
 list-features:  ## List discoverable features for Mosquitto (requires App/mosquitto)
@@ -148,6 +203,10 @@ clean: clean-results  ## Clean results (keep venv and App/)
 lint:  ## Run ruff linter
 	$(VENV)/bin/ruff check src/prat/
 
+.PHONY: typecheck
+typecheck:  ## Run mypy (advisory)
+	$(VENV)/bin/mypy src/prat/
+
 .PHONY: package-check
 package-check:  ## Build source/wheel artifacts and validate metadata
 	$(VENV)/bin/python -m build
@@ -166,3 +225,6 @@ help:  ## Show this help
 	@echo ""
 	@echo "Quick start:"
 	@echo "  make setup fetch demo-mosquitto-tls"
+	@echo ""
+	@echo "Docker (no local targets needed):"
+	@echo "  make docker-build docker-run"

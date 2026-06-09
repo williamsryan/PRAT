@@ -1,0 +1,231 @@
+name: Paper Results Validation (E2E)
+
+# Full end-to-end pipeline: build Docker demos, run PRAT on all 7 paper targets,
+# validate results against paper-reported numbers from Table 4.
+
+on:
+  push:
+    branches: [main, dev, paper-validation]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:  # manual trigger
+
+env:
+  RESULTS_DIR: results/ci
+
+jobs:
+  # ─── Stage 1: Unit tests + lint (fast gate) ────────────────────────────────
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install PRAT + dev deps
+        run: pip install -e ".[dev]"
+
+      - name: Lint (ruff)
+        run: ruff check src/prat/
+
+      - name: Run unit tests
+        run: pytest src/tests/ -v --tb=short
+
+  # ─── Stage 2: Mosquitto demos (fast — ~5 min each) ─────────────────────────
+  demo-mosquitto:
+    needs: unit-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        demo:
+          - name: mosquitto-tls
+            dockerfile: docker/demo1/Dockerfile
+          - name: mosquitto-bridge
+            dockerfile: docker/demo2/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image (${{ matrix.demo.name }})
+        run: |
+          docker build \
+            -f ${{ matrix.demo.dockerfile }} \
+            -t prat-demo:${{ matrix.demo.name }} \
+            .
+
+      - name: Run demo (${{ matrix.demo.name }})
+        run: |
+          mkdir -p ${{ env.RESULTS_DIR }}/${{ matrix.demo.name }}
+          docker run --rm \
+            -v ${{ github.workspace }}/${{ env.RESULTS_DIR }}/${{ matrix.demo.name }}:/prat/output \
+            prat-demo:${{ matrix.demo.name }}
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-${{ matrix.demo.name }}
+          path: ${{ env.RESULTS_DIR }}/${{ matrix.demo.name }}/
+          retention-days: 30
+
+  # ─── Stage 3: FFmpeg demo (medium — ~20 min) ───────────────────────────────
+  demo-ffmpeg:
+    needs: unit-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image (ffmpeg-x264)
+        run: |
+          docker build \
+            -f docker/demo3/Dockerfile \
+            -t prat-demo:ffmpeg-x264 \
+            .
+
+      - name: Run demo (ffmpeg-x264)
+        run: |
+          mkdir -p ${{ env.RESULTS_DIR }}/ffmpeg-x264
+          docker run --rm \
+            -v ${{ github.workspace }}/${{ env.RESULTS_DIR }}/ffmpeg-x264:/prat/output \
+            prat-demo:ffmpeg-x264
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-ffmpeg-x264
+          path: ${{ env.RESULTS_DIR }}/ffmpeg-x264/
+          retention-days: 30
+
+  # ─── Stage 4: CMake targets (azure-uamqp-c, OpenDDS, AOM) ──────────────────
+  demo-cmake:
+    needs: unit-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      matrix:
+        demo:
+          - name: uamqp-websockets
+            dockerfile: docker/demo4/Dockerfile
+          - name: opendds-security
+            dockerfile: docker/demo5/Dockerfile
+          - name: aom-encoder
+            dockerfile: docker/demo7/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image (${{ matrix.demo.name }})
+        run: |
+          docker build \
+            -f ${{ matrix.demo.dockerfile }} \
+            -t prat-demo:${{ matrix.demo.name }} \
+            .
+
+      - name: Run demo (${{ matrix.demo.name }})
+        run: |
+          mkdir -p ${{ env.RESULTS_DIR }}/${{ matrix.demo.name }}
+          docker run --rm \
+            -v ${{ github.workspace }}/${{ env.RESULTS_DIR }}/${{ matrix.demo.name }}:/prat/output \
+            prat-demo:${{ matrix.demo.name }}
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-${{ matrix.demo.name }}
+          path: ${{ env.RESULTS_DIR }}/${{ matrix.demo.name }}/
+          retention-days: 30
+
+  # ─── Stage 5: Rust target (Quiche — needs Rust toolchain in image) ─────────
+  demo-rust:
+    needs: unit-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image (quiche-ffdhe)
+        run: |
+          docker build \
+            -f docker/demo6/Dockerfile \
+            -t prat-demo:quiche-ffdhe \
+            .
+
+      - name: Run demo (quiche-ffdhe)
+        run: |
+          mkdir -p ${{ env.RESULTS_DIR }}/quiche-ffdhe
+          docker run --rm \
+            -v ${{ github.workspace }}/${{ env.RESULTS_DIR }}/quiche-ffdhe:/prat/output \
+            prat-demo:quiche-ffdhe
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: results-quiche-ffdhe
+          path: ${{ env.RESULTS_DIR }}/quiche-ffdhe/
+          retention-days: 30
+
+  # ─── Stage 6: Validate all results against paper ────────────────────────────
+  validate:
+    needs: [demo-mosquitto, demo-ffmpeg, demo-cmake, demo-rust]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Download all result artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: results-*
+          path: ${{ env.RESULTS_DIR }}/
+          merge-multiple: false
+
+      - name: Reorganize artifacts into expected structure
+        run: |
+          # download-artifact creates subdirs like results-mosquitto-tls/
+          # We need results/ci/mosquitto-tls/workflow_checkpoint.json
+          mkdir -p validated_results
+          for dir in ${{ env.RESULTS_DIR }}/results-*/; do
+            demo_name=$(basename "$dir" | sed 's/^results-//')
+            mv "$dir" "validated_results/$demo_name" 2>/dev/null || true
+          done
+          # Also check if files are directly in the expected structure
+          find ${{ env.RESULTS_DIR }} validated_results -name "workflow_checkpoint.json" -ls || true
+
+      - name: Validate against paper results
+        run: |
+          python3 scripts/validate_paper_results.py validated_results/ \
+            --expected paper_expected_results.json \
+            --json validated_results/validation_report.json
+
+      - name: Upload validation report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: validation-report
+          path: validated_results/validation_report.json
+          retention-days: 90
+
+      - name: Post summary to job
+        if: always()
+        run: |
+          echo "## Paper Validation Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          python3 -c "
+          import json
+          data = json.load(open('validated_results/validation_report.json'))
+          print(f'| Target | Status | Actual | Paper | Deviation |')
+          print(f'|--------|--------|--------|-------|-----------|')
+          for t in data['targets']:
+              status_icon = '✅' if t['status'] == 'PASS' else '❌' if t['status'] == 'FAIL' else '⬜'
+              actual = t['actual_lines'] or '—'
+              paper = t['paper_lines'] or '—'
+              dev = f\"{t['deviation_pct']:+.1f}%\" if t['deviation_pct'] is not None else '—'
+              print(f\"| {t['name']} | {status_icon} {t['status']} | {actual} | {paper} | {dev} |\")
+          print()
+          print(f\"**Result: {data['passed']}/{data['total_targets']} passed**\")
+          " >> $GITHUB_STEP_SUMMARY

@@ -13,6 +13,9 @@ from .cmake import CMakeAdapter
 from .ffmpeg import FFmpegAdapter
 from .mosquitto import MosquittoAdapter
 from .rust import RustAdapter
+from .uamqp import UamqpAdapter
+from .opendds import OpenDDSAdapter
+from .aom import AomAdapter
 
 __all__ = [
     'ProjectAdapter',
@@ -20,6 +23,9 @@ __all__ = [
     'FFmpegAdapter',
     'RustAdapter',
     'CMakeAdapter',
+    'UamqpAdapter',
+    'OpenDDSAdapter',
+    'AomAdapter',
     'get_adapter',
 ]
 
@@ -28,8 +34,9 @@ def get_adapter(project_path: str) -> Optional[ProjectAdapter]:
     """
     Auto-detect and return the appropriate adapter for a project.
 
-    Tries project-specific adapters first (Mosquitto, FFmpeg), then
-    falls back to generic build-system adapters (CMake, Cargo/Rust).
+    Tries project-specific adapters first (Mosquitto, FFmpeg, azure-uamqp-c,
+    OpenDDS, AOM), then falls back to generic build-system adapters (CMake,
+    Cargo/Rust).
 
     Args:
         project_path: Path to project root directory
@@ -43,6 +50,9 @@ def get_adapter(project_path: str) -> Optional[ProjectAdapter]:
     adapter_classes = [
         MosquittoAdapter,
         FFmpegAdapter,
+        UamqpAdapter,
+        OpenDDSAdapter,
+        AomAdapter,
         RustAdapter,
         CMakeAdapter,
     ]
