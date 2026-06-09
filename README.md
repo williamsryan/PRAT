@@ -151,6 +151,7 @@ ruff check src/
 ## Documentation
 
 - [API Reference](docs/API.md)
+- [Paper Alignment](docs/PAPER_ALIGNMENT.md)
 - [Usage Examples](docs/EXAMPLES.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Docker Demos](docker/README.md)

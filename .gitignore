@@ -38,3 +38,6 @@ env/
 
 # Archive (legacy code kept for reference)
 _archive/
+
+App/mosquitto_Ryan/
+
