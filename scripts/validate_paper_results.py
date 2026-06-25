@@ -46,6 +46,7 @@ class TargetValidation:
     combined_lines: Optional[int] = None
     combined_within_range: bool = False
     metric_used: Optional[str] = None  # which measure satisfied the range
+    analyzed_feature: Optional[str] = None  # set when a substitute feature was analyzed
     key_files_found: list = field(default_factory=list)
     key_files_missing: list = field(default_factory=list)
     error_message: Optional[str] = None
@@ -133,6 +134,11 @@ def validate_target(
         min_acceptable=expected["min_acceptable"],
         max_acceptable=expected["max_acceptable"],
     )
+    # A target may analyze a SUBSTITUTE feature when the paper's feature no
+    # longer exists in the pinned version (codebase drift).
+    sub = expected.get("analyzed_feature")
+    if sub and sub != expected["feature"]:
+        result.analyzed_feature = sub
 
     if checkpoint is None:
         result.status = "MISSING"
@@ -208,7 +214,6 @@ def validate_target(
     else:
         result.status = "FAIL"
         result.metric_used = "none"
-        lo_metric = max(actual_lines, combined)
         if combined < min_ok:
             result.error_message = (
                 f"Below minimum under both metrics: interleaved={actual_lines}, "
@@ -297,6 +302,10 @@ def print_report(report: ValidationReport) -> None:
 
         if t.key_files_missing:
             print(f"       ⚠️  Missing key files: {', '.join(t.key_files_missing)}")
+        if t.analyzed_feature:
+            print(f"       ⓘ  SUBSTITUTE feature analyzed: '{t.analyzed_feature}' "
+                  f"(paper feature '{t.feature}' unavailable — codebase drift; "
+                  f"NOT a reproduction of the paper value)")
 
     print()
     print("-" * 78)

@@ -146,7 +146,7 @@ honest account of where the static analysis diverges from the paper's KLEE-based
 | aom-encoder | libaom v3.7.1 | CONFIG_AV1_ENCODER | cmake | 5000–50000 | ✅ reproduces via dynamic coverage (8691) |
 | ffmpeg-x264 | FFmpeg n5.1.4 | libx264 | autotools | 1000–5000 | ❌ below range (551 — wrapper only) |
 | opendds-security | OpenDDS DDS-3.25 | SECURITY | MPC/ACE-TAO | 500–5000 | ⚠️ builds & runs; static diff over-counts generated code (49677) |
-| quiche-ffdhe | quiche 0.20.1 | ffdhe | cargo | 100–1500 | ⬜ blocked (feature does not exist) |
+| quiche-ffdhe | quiche 0.20.1 | ffdhe → qlog | cargo | 100–1500 | 🟢 substitute feature (qlog) — ffdhe absent (drift); 420 |
 
 ```bash
 # Disk-safe full pipeline: per-demo build → run → remove image, then validate

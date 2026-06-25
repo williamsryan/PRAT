@@ -6,6 +6,7 @@ This module handles generation and organization of gcov/llvm-cov coverage files
 from compiled binaries with instrumentation.
 """
 
+import contextlib
 import os
 import shutil
 import subprocess
@@ -295,6 +296,51 @@ def _generate_coverage_autotools(
     return coverage_files, missing_files
 
 
+def _lcov_to_gcov(lcov_path: str, out_dir: str) -> list[str]:
+    """Convert an lcov report into PRAT-compatible per-file .gcov files.
+
+    Rust uses source-based LLVM coverage (`cargo llvm-cov`), which emits lcov,
+    not gcc .gcov. We synthesize one .gcov per source file: lines with execution
+    count 0 are written as never-executed (``#####``) — exactly what PRAT's
+    extraction counts as removable — and executed lines carry their run count.
+    Only ``#####`` lines are parsed downstream, so this is sufficient for the
+    differential.
+    """
+    os.makedirs(out_dir, exist_ok=True)
+    files: list[str] = []
+    cur_sf: Optional[str] = None
+    da: list[tuple[int, int]] = []
+
+    def flush() -> None:
+        nonlocal cur_sf, da
+        if cur_sf and da:
+            gcov_path = os.path.join(out_dir, os.path.basename(cur_sf) + ".gcov")
+            with open(gcov_path, "w", encoding="utf-8") as g:
+                g.write(f"        -:    0:Source:{cur_sf}\n")
+                for line, count in sorted(set(da)):
+                    marker = "#####" if count == 0 else str(count)
+                    g.write(f"{marker:>9}:{line:>5}:\n")
+            files.append(gcov_path)
+        cur_sf = None
+        da = []
+
+    with open(lcov_path, encoding="utf-8", errors="ignore") as f:
+        for raw in f:
+            ln = raw.strip()
+            if ln.startswith("SF:"):
+                flush()
+                cur_sf = ln[3:]
+            elif ln.startswith("DA:"):
+                parts = ln[3:].split(",")
+                if len(parts) >= 2:
+                    with contextlib.suppress(ValueError):
+                        da.append((int(parts[0]), int(parts[1])))
+            elif ln == "end_of_record":
+                flush()
+    flush()
+    return files
+
+
 def _generate_coverage_cargo(
     project_path: str,
     coverage_tool: str
@@ -428,6 +474,24 @@ def generate_coverage_with_adapter(
                 coverage_tool,
                 getattr(adapter, "cmake_build_dir", "build"),
             )
+        elif adapter.build_system == BuildSystem.CARGO and hasattr(adapter, "get_llvm_cov_command"):
+            # Rust: source-based coverage via `cargo llvm-cov` (builds + runs lib
+            # tests + emits lcov), then convert lcov -> PRAT .gcov files.
+            flag = "yes" if enabled else "no"
+            lcov_path = str(project_path / f".prat_cov_{flag}.lcov")
+            llvm_cmd = adapter.get_llvm_cov_command(feature, enabled, lcov_path)
+            print(f"    Running: {' '.join(llvm_cmd)}")
+            cargo_env = os.environ.copy()
+            cargo_env.update(adapter.get_coverage_environment())
+            subprocess.run(
+                llvm_cmd, cwd=str(project_path), capture_output=True, text=True, env=cargo_env,
+            )
+            if os.path.exists(lcov_path):
+                tmp_gcov = project_path / f".prat_gcov_{flag}"
+                coverage_files = _lcov_to_gcov(lcov_path, str(tmp_gcov))
+            else:
+                coverage_files = []
+                missing_files = ["cargo llvm-cov produced no lcov"]
         elif adapter.build_system == BuildSystem.AUTOTOOLS:
             # Autotools projects (e.g. FFmpeg) compile from the project ROOT, so
             # each .gcno records its source path relative to the root

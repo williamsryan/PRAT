@@ -196,13 +196,25 @@ class TestRustAdapter:
         assert "--features" in cmd
 
     def test_compile_command_disabled(self, adapter):
+        # DISABLED keeps default features (feature simply omitted); we must NOT
+        # use --no-default-features (it would drop required defaults like a TLS
+        # backend and break the build).
         cmd = adapter.get_compile_command("tls", False)
-        assert "--no-default-features" in cmd
+        assert "--features" not in cmd
+        assert "--no-default-features" not in cmd
+        assert cmd[:2] == ["cargo", "build"]
 
-    def test_coverage_environment(self, adapter):
-        env = adapter.get_coverage_environment()
-        assert "RUSTFLAGS" in env
-        assert "CARGO_INCREMENTAL" in env
+    def test_llvm_cov_command(self, adapter):
+        enabled = adapter.get_llvm_cov_command("qlog", True, "/tmp/c.lcov")
+        assert enabled[:3] == ["cargo", "llvm-cov", "--lib"]
+        assert "--features" in enabled and "qlog" in enabled
+        assert "--lcov" in enabled
+        disabled = adapter.get_llvm_cov_command("qlog", False, "/tmp/c.lcov")
+        assert "--features" not in disabled
+
+    def test_coverage_environment_empty(self, adapter):
+        # cargo-llvm-cov manages instrumentation itself.
+        assert adapter.get_coverage_environment() == {}
 
 
 class TestCMakeAdapter:

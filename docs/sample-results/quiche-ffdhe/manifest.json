@@ -1,0 +1,35 @@
+{
+  "created_at": "2026-06-25T20:01:15.051155+00:00",
+  "tool": "PRAT",
+  "project_path": "/prat/App/quiche/quiche",
+  "project_name": "quiche",
+  "project_git_commit": "dae27b7d5a0dcf8304a56ffd295399fc00ec03e9",
+  "feature": "qlog",
+  "success": true,
+  "checkpoint": "complete",
+  "error_message": null,
+  "total_time_seconds": 42.4790940284729,
+  "adapter": "RustAdapter",
+  "build_system": "cargo",
+  "coverage_tool": "llvm-cov",
+  "python": "3.11.15",
+  "platform": "Linux-6.12.67-linuxkit-aarch64-with-glibc2.36",
+  "environment": {
+    "gcc": "gcc (Debian 12.2.0-14+deb12u1) 12.2.0\nCopyright (C) 2022 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.",
+    "gcov": "gcov (Debian 12.2.0-14+deb12u1) 12.2.0\nCopyright (C) 2022 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.",
+    "llvm-cov-9": null
+  },
+  "results": {
+    "total_removable_lines": 420,
+    "files_analyzed": 8
+  },
+  "artifacts": {
+    "checkpoint": "/prat/output/workflow_checkpoint.json",
+    "html_report": "/prat/output/report.html",
+    "json_report": "/prat/output/report.json",
+    "dot_graph": "/prat/output/FDG.dot",
+    "diff_dir": "/prat/output/diff_qlog",
+    "coverage_enabled": "/prat/output/coverage_files_WITH_QLOG_yes",
+    "coverage_disabled": "/prat/output/coverage_files_WITH_QLOG_no"
+  }
+}

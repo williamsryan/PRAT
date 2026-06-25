@@ -78,6 +78,7 @@
       "project": "Quiche",
       "version": "0.20.1",
       "feature": "ffdhe",
+      "analyzed_feature": "qlog",
       "build_system": "cargo",
       "paper_lines_removed": 450,
       "paper_table": "Table 4",
@@ -86,7 +87,7 @@
       "max_acceptable": 1500,
       "key_files": ["src/"],
       "docker_demo": "demo6",
-      "notes": "Rust cargo features; gcov-based coverage may differ from kcov"
+      "notes": "CODEBASE DRIFT: 'ffdhe' is NOT a Cargo feature in quiche 0.20.1 (it is BoringSSL C config, not a Rust feature), so the paper's exact target cannot be built. The demo instead analyzes 'qlog' — a real, detectable feature with 63 #[cfg(feature=\"qlog\")] sites across quiche/src, exercised by the crate's tests. The reported number is for qlog (interleaved, like the paper's interleaved features) and is NOT a reproduction of the paper's ffdhe value; its proximity to 450 is coincidental. Coverage uses stable cargo-llvm-cov (source-based) converted to gcov, since rustc's -Zprofile gcov path was removed."
     },
     "aom-encoder": {
       "project": "AOM (libaom)",

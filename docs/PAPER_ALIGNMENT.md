@@ -283,5 +283,7 @@ reproduce within range: Mosquitto TLS/BRIDGE directly, azure-uamqp-c via the com
 (feature-file) metric, and libaom via dynamic coverage. OpenDDS builds and runs end-to-end (a
 full ACE/TAO + configure/MPC environment) but its static differential is dominated by generated
 IDL type-support churn, so it exceeds the range. FFmpeg under-counts (it sees only the in-tree
-x264 wrapper, not the external libx264 library). quiche cannot be run as posed (`ffdhe` is not a
-Cargo feature in 0.20.1). No tolerance ranges were altered.
+x264 wrapper, not the external libx264 library). quiche's paper feature `ffdhe` is not a Cargo
+feature in 0.20.1 (codebase drift), so the demo analyzes a documented **substitute** (`qlog`,
+an interleaved feature) via stable `cargo-llvm-cov` and lands in range — labeled as a substitute,
+not an ffdhe reproduction. No tolerance ranges were altered.

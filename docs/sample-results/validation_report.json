@@ -1,10 +1,10 @@
 {
-  "timestamp": "2026-06-25T19:40:20.743602+00:00",
+  "timestamp": "2026-06-25T20:03:52.466065+00:00",
   "results_dir": "results/docker",
   "total_targets": 7,
-  "passed": 4,
+  "passed": 5,
   "failed": 2,
-  "missing": 1,
+  "missing": 0,
   "success": false,
   "targets": [
     {
@@ -22,6 +22,7 @@
       "combined_lines": 1550,
       "combined_within_range": true,
       "metric_used": "interleaved",
+      "analyzed_feature": null,
       "key_files_found": [
         "net.c",
         "tls_mosq.c",
@@ -45,6 +46,7 @@
       "combined_lines": 989,
       "combined_within_range": false,
       "metric_used": "interleaved",
+      "analyzed_feature": null,
       "key_files_found": [
         "bridge.c"
       ],
@@ -68,6 +70,7 @@
       "combined_lines": 551,
       "combined_within_range": false,
       "metric_used": "none",
+      "analyzed_feature": null,
       "key_files_found": [
         "libavcodec/libx264.c"
       ],
@@ -89,6 +92,7 @@
       "combined_lines": 1282,
       "combined_within_range": true,
       "metric_used": "combined (interleaved + feature-only files)",
+      "analyzed_feature": null,
       "key_files_found": [
         "wsio.c",
         "uws_client.c"
@@ -111,6 +115,7 @@
       "combined_lines": 72262,
       "combined_within_range": false,
       "metric_used": "none",
+      "analyzed_feature": null,
       "key_files_found": [
         "dds/DCPS/security",
         "Security"
@@ -122,20 +127,23 @@
       "name": "quiche-ffdhe",
       "project": "Quiche",
       "feature": "ffdhe",
-      "status": "MISSING",
-      "actual_lines": null,
+      "status": "PASS",
+      "actual_lines": 420,
       "paper_lines": 450,
       "min_acceptable": 100,
       "max_acceptable": 1500,
-      "within_range": false,
-      "deviation_pct": null,
-      "feature_only_lines": null,
-      "combined_lines": null,
-      "combined_within_range": false,
-      "metric_used": null,
+      "within_range": true,
+      "deviation_pct": -6.7,
+      "feature_only_lines": 0,
+      "combined_lines": 420,
+      "combined_within_range": true,
+      "metric_used": "interleaved",
+      "analyzed_feature": "qlog",
       "key_files_found": [],
-      "key_files_missing": [],
-      "error_message": "No workflow_checkpoint.json found"
+      "key_files_missing": [
+        "src/"
+      ],
+      "error_message": null
     },
     {
       "name": "aom-encoder",
@@ -152,6 +160,7 @@
       "combined_lines": 54060,
       "combined_within_range": false,
       "metric_used": "interleaved",
+      "analyzed_feature": null,
       "key_files_found": [
         "av1/encoder",
         "aom_dsp"

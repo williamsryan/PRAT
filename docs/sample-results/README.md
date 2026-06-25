@@ -27,12 +27,14 @@ for the full methodology and analysis.
 | aom-encoder | PASS (dynamic coverage) | 8691 | 54060 | 28000 | 5000–50000 |
 | ffmpeg-x264 | FAIL (wrapper-only) | 2 | 551 | 3241 | 1000–5000 |
 | opendds-security | FAIL (runs; static over-counts generated code) | 49677 | 72262 | 2800 | 500–5000 |
-| quiche-ffdhe | BLOCKED (feature absent) | — | — | 450 | 100–1500 |
+| quiche-ffdhe | runs via substitute `qlog` (drift) | 420 | 420 | 450* | 100–1500 |
 
-4 of 7 reproduce within range. aom now passes via **dynamic** coverage (a real
-encode/decode workload). OpenDDS builds and runs end-to-end but its static
-differential is dominated by generated IDL type-support churn — see
-`REPRODUCIBILITY.md`.
+4 of 7 reproduce the paper's own targets within range (mosquitto TLS/BRIDGE directly,
+azure-uamqp-c via the feature-file metric, libaom via dynamic coverage). quiche runs in range
+via a documented **substitute** feature (`qlog`) because the paper's `ffdhe` is not a Cargo
+feature in 0.20.1 (codebase drift) — *not* a reproduction of the ffdhe value. OpenDDS builds and
+runs end-to-end but its static differential is dominated by generated IDL type-support churn —
+see `REPRODUCIBILITY.md`.
 
 To regenerate: `make paper-check` (or `prat reproduce --all`), then
 `python3 scripts/validate_paper_results.py results/docker/ --json results/validation_report.json`.
