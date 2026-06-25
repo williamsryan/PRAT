@@ -17,7 +17,12 @@ from typing import Optional
 # Add prat module to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from prat.docker_runner import build_docker_image, check_docker_available, run_docker_container
+from prat.docker_runner import (
+    build_docker_image,
+    check_docker_available,
+    remove_docker_image,
+    run_docker_container,
+)
 
 
 @dataclass
@@ -43,51 +48,49 @@ class DemoResult:
     error_message: Optional[str] = None
 
 
-# Expected results for each demo
-EXPECTED_RESULTS = {
-    "mosquitto-tls": ExpectedResult(
-        min_removable_lines=500,
-        max_removable_lines=1500,
-        key_files=["net.c", "tls_mosq.c"],
-        description="Mosquitto TLS feature analysis"
-    ),
-    "mosquitto-bridge": ExpectedResult(
-        min_removable_lines=300,
-        max_removable_lines=800,
-        key_files=["bridge.c"],
-        description="Mosquitto Bridge feature analysis"
-    ),
-    "ffmpeg-x264": ExpectedResult(
-        min_removable_lines=1000,
-        max_removable_lines=5000,
-        key_files=["libavcodec/libx264.c"],
-        description="FFmpeg x264 encoder feature analysis"
-    ),
-    "uamqp-websockets": ExpectedResult(
-        min_removable_lines=200,
-        max_removable_lines=2000,
-        key_files=["wsio.c"],
-        description="azure-uamqp-c WebSockets feature analysis"
-    ),
-    "opendds-security": ExpectedResult(
-        min_removable_lines=500,
-        max_removable_lines=5000,
-        key_files=["Security"],
-        description="OpenDDS Security feature analysis"
-    ),
-    "quiche-ffdhe": ExpectedResult(
-        min_removable_lines=100,
-        max_removable_lines=1500,
-        key_files=["src/"],
-        description="Quiche FFDHE feature analysis"
-    ),
-    "aom-encoder": ExpectedResult(
-        min_removable_lines=5000,
-        max_removable_lines=50000,
-        key_files=["av1/encoder"],
-        description="AOM AV1 encoder feature analysis"
-    ),
+# Expected results for each demo.
+#
+# SINGLE SOURCE OF TRUTH: ranges/key-files are loaded from
+# paper_expected_results.json (the same file the validator uses) so the demo
+# runner and `scripts/validate_paper_results.py` can never disagree. A minimal
+# hardcoded fallback is kept only for the case where the JSON is unavailable.
+_PAPER_EXPECTED_PATH = Path(__file__).resolve().parent.parent / "paper_expected_results.json"
+
+_FALLBACK_EXPECTED = {
+    "mosquitto-tls": ExpectedResult(500, 1800, ["net.c", "tls_mosq.c"], "Mosquitto TLS feature analysis"),
+    "mosquitto-bridge": ExpectedResult(300, 900, ["bridge.c"], "Mosquitto Bridge feature analysis"),
+    "ffmpeg-x264": ExpectedResult(1000, 5000, ["libavcodec/libx264.c"], "FFmpeg x264 encoder feature analysis"),
+    "uamqp-websockets": ExpectedResult(200, 2000, ["wsio.c"], "azure-uamqp-c WebSockets feature analysis"),
+    "opendds-security": ExpectedResult(500, 5000, ["Security"], "OpenDDS Security feature analysis"),
+    "quiche-ffdhe": ExpectedResult(100, 1500, ["src/"], "Quiche FFDHE feature analysis"),
+    "aom-encoder": ExpectedResult(5000, 50000, ["av1/encoder"], "AOM AV1 encoder feature analysis"),
 }
+
+
+def _load_expected_results() -> dict[str, ExpectedResult]:
+    """Build EXPECTED_RESULTS from paper_expected_results.json (authoritative)."""
+    try:
+        with open(_PAPER_EXPECTED_PATH) as f:
+            targets = json.load(f)["targets"]
+    except Exception as e:  # pragma: no cover - defensive
+        print(f"[!] Could not load {_PAPER_EXPECTED_PATH} ({e}); using fallback ranges")
+        return dict(_FALLBACK_EXPECTED)
+
+    results: dict[str, ExpectedResult] = {}
+    for name, spec in targets.items():
+        results[name] = ExpectedResult(
+            min_removable_lines=spec["min_acceptable"],
+            max_removable_lines=spec["max_acceptable"],
+            key_files=spec.get("key_files", []),
+            description=f"{spec.get('project', name)} {spec.get('feature', '')} feature analysis".strip(),
+        )
+    # Keep any fallback-only demos not present in the JSON.
+    for name, spec in _FALLBACK_EXPECTED.items():
+        results.setdefault(name, spec)
+    return results
+
+
+EXPECTED_RESULTS = _load_expected_results()
 
 
 # Demo configurations
@@ -500,6 +503,13 @@ def main():
         help="Output file for comparison report (default: demo_report.txt)"
     )
 
+    parser.add_argument(
+        "--cleanup",
+        action="store_true",
+        help="Remove each demo's Docker image after it runs (frees disk; these "
+             "images are large and rebuildable from their Dockerfiles)"
+    )
+
     args = parser.parse_args()
 
     # Check Docker availability
@@ -539,6 +549,9 @@ def main():
         # Generate report for single demo
         generate_comparison_report([result], args.report)
 
+        if args.cleanup:
+            remove_docker_image(DEMO_CONFIGS[args.run]["image_name"], force=True)
+
         return 0 if result.success and result.within_expected_range else 1
 
     if args.run_all:
@@ -550,6 +563,10 @@ def main():
         for demo_name in DEMO_CONFIGS:
             result = run_demo(demo_name, args.output)
             results.append(result)
+            # Remove the image immediately after its run so large images (aom,
+            # ffmpeg, opendds) never accumulate and exhaust the Docker disk.
+            if args.cleanup:
+                remove_docker_image(DEMO_CONFIGS[demo_name]["image_name"], force=True)
 
         # Generate comparison report
         generate_comparison_report(results, args.report)

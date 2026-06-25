@@ -46,3 +46,9 @@ _archive/
 
 App/mosquitto_Ryan/
 
+# Committed reproducibility snapshot for reviewers (overrides the generic
+# results/ and *.json ignores above so reviewers can see outcomes without
+# running anything). Real filenames are preserved.
+!docs/sample-results/
+!docs/sample-results/**
+

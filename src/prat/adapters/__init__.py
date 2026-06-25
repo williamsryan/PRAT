@@ -8,14 +8,14 @@ differences and project-specific configurations.
 from pathlib import Path
 from typing import Optional
 
+from .aom import AomAdapter
 from .base import ProjectAdapter
 from .cmake import CMakeAdapter
 from .ffmpeg import FFmpegAdapter
 from .mosquitto import MosquittoAdapter
+from .opendds import OpenDDSAdapter
 from .rust import RustAdapter
 from .uamqp import UamqpAdapter
-from .opendds import OpenDDSAdapter
-from .aom import AomAdapter
 
 __all__ = [
     'ProjectAdapter',

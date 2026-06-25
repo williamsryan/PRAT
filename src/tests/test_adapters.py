@@ -168,7 +168,14 @@ class TestFFmpegAdapter:
     def test_compile_command_disabled(self, adapter):
         cmd = adapter.get_compile_command("x264", False)
         assert "--toolchain=gcov" in cmd
-        assert "--disable-x264" in cmd
+        # "x264" maps to FFmpeg's real option name "libx264"; a bare
+        # "--disable-x264" is not a valid configure option.
+        assert "--disable-libx264" in cmd
+
+    def test_compile_command_enabled(self, adapter):
+        cmd = adapter.get_compile_command("x264", True)
+        assert "--enable-libx264" in cmd
+        assert "--enable-gpl" in cmd
 
 
 class TestRustAdapter:

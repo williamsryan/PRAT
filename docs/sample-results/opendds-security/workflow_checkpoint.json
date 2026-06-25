@@ -1,0 +1,21 @@
+{
+  "success": false,
+  "project": "OpenDDS",
+  "feature": "SECURITY",
+  "compilation_enabled": {
+    "success": false,
+    "binary_path": null,
+    "error_message": "Configure failed: Can't find configure on PATH, '.' not in PATH.\n",
+    "compilation_time": 0.0015950202941894531,
+    "coverage_enabled": true,
+    "build_system": "BuildSystem.AUTOTOOLS"
+  },
+  "compilation_disabled": null,
+  "coverage_enabled": null,
+  "coverage_disabled": null,
+  "diff_result": null,
+  "extraction_result": null,
+  "total_time": 0.0,
+  "checkpoint": "compile_enabled",
+  "error_message": "Compilation failed (enabled): Configure failed: Can't find configure on PATH, '.' not in PATH.\n"
+}

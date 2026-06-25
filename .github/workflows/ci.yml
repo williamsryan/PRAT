@@ -39,3 +39,46 @@ jobs:
           pip install build twine
           python -m build
           twine check dist/*
+
+  reproduce:
+    # End-to-end proof that the Docker reproducibility pipeline runs and that the
+    # interleaved-feature demos (Mosquitto TLS/BRIDGE) land in the paper's range.
+    # Uses --cleanup so each image is removed right after its run (disk-safe).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install PRAT
+        run: pip install -e ".[dev]"
+
+      - name: Reproduce mosquitto-tls (build → run → rmi)
+        run: |
+          python3 src/demo-runner.py --build mosquitto-tls
+          python3 src/demo-runner.py --run mosquitto-tls --cleanup --output results/docker
+
+      - name: Reproduce mosquitto-bridge (build → run → rmi)
+        run: |
+          python3 src/demo-runner.py --build mosquitto-bridge
+          python3 src/demo-runner.py --run mosquitto-bridge --cleanup --output results/docker
+
+      - name: Validate against paper numbers
+        run: |
+          python3 scripts/validate_paper_results.py results/docker/ \
+            --json results/validation_report.json || true
+          cat results/validation_report.json
+
+      - name: Upload reproducibility artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reproducibility-report
+          path: |
+            results/validation_report.json
+            results/docker/**/workflow_checkpoint.json
+            results/docker/**/manifest.json
+            results/docker/**/container.log

@@ -1,0 +1,29 @@
+{
+  "created_at": "2026-06-25T16:53:33.908499+00:00",
+  "tool": "PRAT",
+  "project_path": "/prat/App/OpenDDS",
+  "project_name": "OpenDDS",
+  "project_git_commit": "2038b660f2037fb0758dbf106005d77f3b2d52f8",
+  "feature": "SECURITY",
+  "success": false,
+  "checkpoint": "compile_enabled",
+  "error_message": "Compilation failed (enabled): Configure failed: Can't find configure on PATH, '.' not in PATH.\n",
+  "total_time_seconds": 0.0,
+  "adapter": null,
+  "build_system": null,
+  "coverage_tool": null,
+  "python": "3.11.15",
+  "platform": "Linux-6.12.67-linuxkit-aarch64-with-glibc2.36",
+  "environment": {
+    "gcc": "gcc (Debian 12.2.0-14+deb12u1) 12.2.0\nCopyright (C) 2022 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.",
+    "gcov": "gcov (Debian 12.2.0-14+deb12u1) 12.2.0\nCopyright (C) 2022 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.",
+    "llvm-cov-9": null
+  },
+  "results": {
+    "total_removable_lines": null,
+    "files_analyzed": null
+  },
+  "artifacts": {
+    "checkpoint": "/prat/output/workflow_checkpoint.json"
+  }
+}

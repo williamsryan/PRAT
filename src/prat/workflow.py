@@ -319,7 +319,9 @@ def run_complete_workflow(
         extraction_result = extract_features(
             diff_dir=diff_result.diff_dir,
             feature=feature,
-            output_dir=output_dir
+            output_dir=output_dir,
+            enabled_coverage_dir=cov_enabled.coverage_dir,
+            feature_only_files=diff_result.feature_only_files,
         )
         result.extraction_result = extraction_result
 

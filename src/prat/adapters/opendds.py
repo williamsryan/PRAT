@@ -6,11 +6,10 @@ Build system: CMake (also supports MPC/ACE but CMake is modern path)
 Features: SECURITY, CONTENT_SUBSCRIPTION, PERSISTENCE, etc.
 """
 
-from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
-from .base import ProjectAdapter
 from ..compilation import BuildSystem
+from .base import ProjectAdapter
 
 
 class OpenDDSAdapter(ProjectAdapter):
@@ -25,7 +24,7 @@ class OpenDDSAdapter(ProjectAdapter):
         return "gcov"
 
     @property
-    def source_directories(self) -> List[str]:
+    def source_directories(self) -> list[str]:
         return ["dds", "tools"]
 
     def get_compile_command(
@@ -33,7 +32,8 @@ class OpenDDSAdapter(ProjectAdapter):
         feature: str,
         enabled: bool,
         with_coverage: bool = True,
-    ) -> List[str]:
+    ) -> list[str]:
+        """Return ONLY the cmake configure command (build is separate)."""
         flag_value = "ON" if enabled else "OFF"
         cmd = [
             "cmake",
@@ -46,13 +46,23 @@ class OpenDDSAdapter(ProjectAdapter):
                 "-DCMAKE_C_FLAGS=--coverage -fprofile-arcs -ftest-coverage",
                 "-DCMAKE_CXX_FLAGS=--coverage -fprofile-arcs -ftest-coverage",
             ])
-        cmd_build = ["cmake", "--build", "build", "--parallel"]
-        return cmd + ["&&"] + cmd_build
+        return cmd
 
-    def get_clean_command(self) -> List[str]:
+    def get_build_commands(
+        self,
+        feature: str,
+        enabled: bool,
+        with_coverage: bool = True,
+    ) -> list[list[str]]:
+        """Configure then build as two separate commands (no shell chaining)."""
+        configure = self.get_compile_command(feature, enabled, with_coverage)
+        build = ["cmake", "--build", "build", "--parallel"]
+        return [configure, build]
+
+    def get_clean_command(self) -> list[str]:
         return ["rm", "-rf", "build"]
 
-    def get_test_command(self) -> Optional[List[str]]:
+    def get_test_command(self) -> Optional[list[str]]:
         return ["ctest", "--test-dir", "build", "--output-on-failure", "-j4"]
 
     def format_feature_flag(self, feature: str, enabled: bool) -> str:
@@ -64,7 +74,7 @@ class OpenDDSAdapter(ProjectAdapter):
             and (self.project_path / "dds").exists()
         )
 
-    def get_execution_commands(self, feature: str, enabled: bool) -> List[List[str]]:
+    def get_execution_commands(self, feature: str, enabled: bool) -> list[list[str]]:
         return [["ctest", "--test-dir", "build", "--output-on-failure", "-j4"]]
 
 

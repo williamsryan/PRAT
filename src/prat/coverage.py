@@ -201,38 +201,56 @@ def _generate_coverage_make(
 
 def _generate_coverage_cmake(
     project_path: str,
-    coverage_tool: str
+    coverage_tool: str,
+    build_dir_name: str = "build",
 ) -> tuple[list[str], list[str]]:
-    """Generate coverage for CMake-based projects."""
-    coverage_files = []
-    missing_files = []
+    """Generate coverage for CMake-based projects.
 
-    build_dir = Path(project_path) / "build"
+    PRAT performs *compile-time* differential coverage (README: "compiles a
+    project with and without a feature flag, generates coverage data"). gcov
+    produces a .gcov file from the compile-time .gcno graph alone, marking every
+    instrumented line as never-executed (#####) when no runtime .gcda is
+    present. That is exactly what the working Make/Autotools paths rely on.
+
+    The previous implementation only ran gcov on .gcda files, so a CMake build
+    that was compiled-but-not-executed (the common case for large libraries with
+    tests disabled) produced ZERO .gcov files and the whole workflow failed.
+
+    We therefore drive gcov from the .gcno files (the superset that always
+    exists after a coverage build). gcov automatically consumes a sibling .gcda
+    when present, so this still yields true dynamic coverage whenever the binary
+    or test suite was executed.
+    """
+    coverage_files: list[str] = []
+    missing_files: list[str] = []
+
+    build_dir = Path(project_path) / build_dir_name
 
     if not build_dir.exists():
         return coverage_files, missing_files
 
-    # Find all .gcda files and run gcov on them
-    for gcda_file in build_dir.rglob("*.gcda"):
-        parent_dir = gcda_file.parent
+    # Group instrumentation graphs by directory so we invoke gcov once per dir.
+    gcno_dirs = {gcno.parent for gcno in build_dir.rglob("*.gcno")}
 
-        if coverage_tool == "llvm-cov-9":
-            cmd = f"llvm-cov-9 gcov {gcda_file.name}"
-        else:
-            cmd = f"gcov {gcda_file.name}"
+    seen: set[str] = set()
+    for parent_dir in sorted(gcno_dirs):
+        cmd = "llvm-cov-9 gcov *.gcno" if coverage_tool == "llvm-cov-9" else "gcov *.gcno"
 
         subprocess.run(
             cmd,
             shell=True,
             cwd=parent_dir,
             capture_output=True,
-            text=True
+            text=True,
         )
 
-        # Collect generated .gcov files
+        # Collect generated .gcov files (dedupe across iterations).
         for item in parent_dir.iterdir():
             if item.suffix == ".gcov":
-                coverage_files.append(str(item))
+                path = str(item)
+                if path not in seen:
+                    seen.add(path)
+                    coverage_files.append(path)
 
     return coverage_files, missing_files
 
@@ -406,8 +424,36 @@ def generate_coverage_with_adapter(
         # Make/Autotools builds put them alongside source files.
         if adapter.build_system == BuildSystem.CMAKE:
             coverage_files, missing_files = _generate_coverage_cmake(
-                str(project_path), coverage_tool
+                str(project_path),
+                coverage_tool,
+                getattr(adapter, "cmake_build_dir", "build"),
             )
+        elif adapter.build_system == BuildSystem.AUTOTOOLS:
+            # Autotools projects (e.g. FFmpeg) compile from the project ROOT, so
+            # each .gcno records its source path relative to the root
+            # (e.g. "libavcodec/libx264.c"). gcov must therefore be invoked FROM
+            # the root, or it cannot locate the source and emits an empty
+            # header-only .gcov. Run gcov on the .gcno graphs per source dir,
+            # from the project root, and collect the .gcov files produced there.
+            seen: set[str] = set()
+            for src_dir_name in source_dirs:
+                src_dir = project_path / src_dir_name
+                if not src_dir.exists():
+                    continue
+                gcov_prog = coverage_tool if "llvm-cov" not in coverage_tool else f"{coverage_tool} gcov"
+                subprocess.run(
+                    f"{gcov_prog} {src_dir_name}/*.gcno",
+                    shell=True,
+                    cwd=str(project_path),
+                    capture_output=True,
+                    text=True,
+                )
+                for item in project_path.iterdir():
+                    if item.suffix == ".gcov":
+                        path = str(item)
+                        if path not in seen:
+                            seen.add(path)
+                            coverage_files.append(path)
         else:
             for src_dir_name in source_dirs:
                 src_dir = project_path / src_dir_name

@@ -51,9 +51,13 @@ class TestExtractFeatures:
         assert "does not exist" in result.error_message
 
     def test_empty_dir(self, tmp_path):
+        # An existing-but-empty diff directory is a VALID outcome: the diff step
+        # ran but produced no non-empty diffs (e.g. a feature implemented as
+        # dedicated files rather than #ifdef-interleaved code). It reports 0
+        # removable lines, not an error.
         result = extract_features(str(tmp_path))
-        assert result.success is False
-        assert "No diff files" in result.error_message
+        assert result.success is True
+        assert result.total_removable_lines == 0
 
     def test_extracts_removable_lines(self, tmp_path):
         # Create a diff file with ##### markers

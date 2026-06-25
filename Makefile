@@ -120,8 +120,8 @@ docker-build:  ## Build all Docker demo images
 	$(PYTHON) src/demo-runner.py --build-all
 
 .PHONY: docker-run
-docker-run:  ## Run all Docker demos and generate comparison report
-	$(PYTHON) src/demo-runner.py --run-all --output $(RESULTS)/docker --report $(RESULTS)/demo_report.txt
+docker-run:  ## Run all Docker demos (cleans each image after run) and report
+	$(PYTHON) src/demo-runner.py --run-all --cleanup --output $(RESULTS)/docker --report $(RESULTS)/demo_report.txt
 
 .PHONY: docker-demo-mosquitto-tls
 docker-demo-mosquitto-tls:  ## Docker: build + run Mosquitto TLS demo
@@ -179,7 +179,23 @@ validate:  ## Validate demo results against paper-reported numbers
 	$(PYTHON) scripts/validate_paper_results.py $(RESULTS)/docker/ --json $(RESULTS)/validation_report.json
 
 .PHONY: paper-check
-paper-check: docker-build docker-run validate  ## Full pipeline: build → run all → validate against paper
+paper-check:  ## Disk-safe full pipeline: per-demo build → run → rmi, then validate
+	@mkdir -p $(RESULTS)/docker
+	@for d in mosquitto-tls mosquitto-bridge ffmpeg-x264 uamqp-websockets opendds-security quiche-ffdhe aom-encoder; do \
+	  echo "=== $$d ==="; \
+	  $(PYTHON) src/demo-runner.py --build $$d || echo "[!] build failed: $$d (continuing)"; \
+	  $(PYTHON) src/demo-runner.py --run $$d --cleanup --output $(RESULTS)/docker || echo "[!] run failed: $$d (continuing)"; \
+	done
+	$(MAKE) validate
+
+.PHONY: paper-check-fast
+paper-check-fast:  ## Quick pipeline: only the fast Mosquitto demos, then validate
+	@mkdir -p $(RESULTS)/docker
+	@for d in mosquitto-tls mosquitto-bridge; do \
+	  $(PYTHON) src/demo-runner.py --build $$d; \
+	  $(PYTHON) src/demo-runner.py --run $$d --cleanup --output $(RESULTS)/docker; \
+	done
+	$(MAKE) validate
 
 # ── Utilities ───────────────────────────────────────────────────────────────
 

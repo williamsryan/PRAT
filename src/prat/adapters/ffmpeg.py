@@ -55,18 +55,36 @@ class FFmpegAdapter(ProjectAdapter):
         compile_with_adapter then needs to also run get_make_command() separately.
         For the generic pipeline, use compile_project() with BuildSystem.AUTOTOOLS.
 
-        Example: bash configure --toolchain=gcov --disable-x264
+        Example: bash configure --toolchain=gcov --disable-libx264
         """
         cmd = ["bash", "configure"]
 
         if with_coverage:
             cmd.append("--toolchain=gcov")
 
-        # Add feature flag
-        if not enabled:
-            flag = self.format_feature_flag(feature, enabled)
-            cmd.append(flag)
-        # If enabled, most features are on by default
+        # FFmpeg exposes external encoder libraries as --enable-lib<name>, and
+        # several (x264/x265) additionally require --enable-gpl. The paper's
+        # feature name "x264" maps to FFmpeg's "libx264" option. NOTE: a bare
+        # "--disable-x264" is NOT a valid FFmpeg option and makes configure exit
+        # non-zero, which previously broke the feature-disabled build.
+        lib_features = {
+            "x264": ("libx264", True),
+            "x265": ("libx265", True),
+            "vpx": ("libvpx", False),
+        }
+        feat = feature.lower()
+        if feat in lib_features:
+            libname, needs_gpl = lib_features[feat]
+            # Enable GPL in BOTH states (when required) so it is NOT the
+            # differentiator — otherwise --enable-gpl would pull in unrelated
+            # GPL-only filters and inflate the feature's line count. Only the
+            # library itself is toggled, isolating the feature under analysis.
+            if needs_gpl:
+                cmd.append("--enable-gpl")
+            cmd.append(f"--enable-{libname}" if enabled else f"--disable-{libname}")
+        elif not enabled:
+            # Generic FFmpeg component (encoder/decoder/filter/...)
+            cmd.append(self.format_feature_flag(feature, enabled))
 
         return cmd
 

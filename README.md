@@ -1,5 +1,11 @@
 # PRAT — Protocol Representation and Analysis Toolkit
 
+[![CI](https://github.com/RiS3-Lab/PRAT/actions/workflows/ci.yml/badge.svg)](https://github.com/RiS3-Lab/PRAT/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/python-3.9%2B-blue.svg)](pyproject.toml)
+[![Tests](https://img.shields.io/badge/tests-168%20passing-brightgreen.svg)](src/tests)
+[![Reproducibility](https://img.shields.io/badge/reproducibility-documented-informational.svg)](REPRODUCIBILITY.md)
+
+
 PRAT identifies and extracts feature-specific code from C/C++/Rust projects using **compile-time differential coverage analysis**. It compiles a project with and without a feature flag, generates coverage data, and identifies code that can be safely removed.
 
 ## How It Works
@@ -122,15 +128,43 @@ PRAT generates:
 
 ## Docker Demos
 
-Three reproducible demos with pinned dependencies:
+Seven reproducible demos cover the paper's Table 4 evaluation targets. Each demo is
+self-contained (clones the target at a pinned tag, builds it with the feature on/off, runs
+gcov, diffs, extracts) and writes a `manifest.json` recording the exact git commit and tool
+versions used.
 
-| Demo | Project | Feature | Expected Lines | Time |
-|---|---|---|---|---|
-| mosquitto-tls | Mosquitto | TLS | 500–1500 | 2–5 min |
-| mosquitto-bridge | Mosquitto | Bridge | 300–800 | 2–5 min |
-| ffmpeg-x264 | FFmpeg | x264 | 1000–5000 | 10–20 min |
+PRAT reports **two metrics**: `interleaved` (feature code inside files shared by both builds)
+and a paper-aligned `combined` value that also counts dedicated feature-only files. See
+[`REPRODUCIBILITY.md`](REPRODUCIBILITY.md) for the full methodology, per-target results, and an
+honest account of where the static analysis diverges from the paper's KLEE-based numbers.
 
-See `docker/README.md` for detailed Docker instructions.
+| Demo | Project / version | Feature | Build | Accept. range | Status (this env) |
+|---|---|---|---|---|---|
+| mosquitto-tls | Mosquitto v2.0.15 | TLS | make | 500–1800 | ✅ reproduces (1415) |
+| mosquitto-bridge | Mosquitto v2.0.15 | BRIDGE | make | 300–900 | ✅ reproduces (545) |
+| uamqp-websockets | azure-uamqp-c v1.2.0 | use_wsio | cmake | 200–2000 | 🟢 reproduces, paper-aligned metric (1282) |
+| ffmpeg-x264 | FFmpeg n5.1.4 | libx264 | autotools | 1000–5000 | ❌ below range (551 — wrapper only) |
+| aom-encoder | libaom v3.7.1 | CONFIG_AV1_ENCODER | cmake | 5000–50000 | ❌ brackets paper (2837 / 85241) |
+| opendds-security | OpenDDS DDS-3.25 | SECURITY | MPC/ACE-TAO | 500–5000 | ⚠️ not buildable as configured |
+| quiche-ffdhe | quiche 0.20.1 | ffdhe | cargo | 100–1500 | ⬜ blocked (feature does not exist) |
+
+```bash
+# Disk-safe full pipeline: per-demo build → run → remove image, then validate
+make paper-check
+
+# Or one demo at a time, removing its (large) image afterward:
+python3 src/demo-runner.py --build mosquitto-tls
+python3 src/demo-runner.py --run mosquitto-tls --cleanup --output results/docker
+
+# Validate whatever has run against the paper numbers:
+python3 scripts/validate_paper_results.py results/docker/ --json results/validation_report.json
+```
+
+> **Disk note:** the C/C++ targets (ffmpeg, aom, opendds) produce multi-GB images. Always run
+> with `--cleanup` (or `make paper-check`, which removes each image right after its run) so the
+> Docker VM disk is not exhausted.
+
+See `docker/README.md` for detailed Docker instructions and `REPRODUCIBILITY.md` for results.
 
 ## Development
 

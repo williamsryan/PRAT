@@ -6,11 +6,10 @@ Build system: CMake
 Features: CONFIG_AV1_ENCODER, CONFIG_AV1_DECODER, CONFIG_AV1_HIGHBITDEPTH, etc.
 """
 
-from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 
-from .base import ProjectAdapter
 from ..compilation import BuildSystem
+from .base import ProjectAdapter
 
 
 class AomAdapter(ProjectAdapter):
@@ -25,7 +24,14 @@ class AomAdapter(ProjectAdapter):
         return "gcov"
 
     @property
-    def source_directories(self) -> List[str]:
+    def cmake_build_dir(self) -> str:
+        # libaom ships a top-level source directory "build/cmake/" that holds
+        # its CMake helper modules. Using "build" as the out-of-source binary
+        # directory collides with it and breaks include() of aom_configure.cmake.
+        return "aom_build"
+
+    @property
+    def source_directories(self) -> list[str]:
         return ["aom", "aom_dsp", "av1"]
 
     def get_compile_command(
@@ -33,11 +39,12 @@ class AomAdapter(ProjectAdapter):
         feature: str,
         enabled: bool,
         with_coverage: bool = True,
-    ) -> List[str]:
+    ) -> list[str]:
+        """Return ONLY the cmake configure command (build is separate)."""
         flag_value = "1" if enabled else "0"
         cmd = [
             "cmake",
-            "-B", "build",
+            "-B", self.cmake_build_dir,
             f"-D{feature}={flag_value}",
             "-DCMAKE_BUILD_TYPE=Debug",
             "-DENABLE_TESTS=0",
@@ -48,13 +55,23 @@ class AomAdapter(ProjectAdapter):
                 "-DCMAKE_C_FLAGS=--coverage -fprofile-arcs -ftest-coverage",
                 "-DCMAKE_CXX_FLAGS=--coverage -fprofile-arcs -ftest-coverage",
             ])
-        cmd_build = ["cmake", "--build", "build", "--parallel"]
-        return cmd + ["&&"] + cmd_build
+        return cmd
 
-    def get_clean_command(self) -> List[str]:
-        return ["rm", "-rf", "build"]
+    def get_build_commands(
+        self,
+        feature: str,
+        enabled: bool,
+        with_coverage: bool = True,
+    ) -> list[list[str]]:
+        """Configure then build as two separate commands (no shell chaining)."""
+        configure = self.get_compile_command(feature, enabled, with_coverage)
+        build = ["cmake", "--build", self.cmake_build_dir, "--parallel"]
+        return [configure, build]
 
-    def get_test_command(self) -> Optional[List[str]]:
+    def get_clean_command(self) -> list[str]:
+        return ["rm", "-rf", self.cmake_build_dir]
+
+    def get_test_command(self) -> Optional[list[str]]:
         # AOM test suite is heavy; use the testdata runner if available
         return None
 
@@ -67,11 +84,13 @@ class AomAdapter(ProjectAdapter):
             and (self.project_path / "av1").exists()
         )
 
-    def get_execution_commands(self, feature: str, enabled: bool) -> List[List[str]]:
-        # AOM provides aomenc/aomdec; encode a short sequence for coverage
-        return [
-            ["build/aomenc", "--help"],  # minimal execution to generate some coverage
-        ]
+    def get_execution_commands(self, feature: str, enabled: bool) -> list[list[str]]:
+        # Use compile-time coverage only (no execution), consistent with the
+        # working Mosquitto/FFmpeg demos: gcov emits a .gcov from the .gcno
+        # instrumentation graph alone, marking feature lines as removable. This
+        # avoids depending on aomenc (which is not built when the encoder is
+        # disabled) and keeps the enabled/disabled comparison purely structural.
+        return []
 
 
 """

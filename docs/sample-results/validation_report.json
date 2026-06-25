@@ -1,0 +1,160 @@
+{
+  "timestamp": "2026-06-25T18:16:57.290787+00:00",
+  "results_dir": "results/docker",
+  "total_targets": 7,
+  "passed": 3,
+  "failed": 3,
+  "missing": 1,
+  "success": false,
+  "targets": [
+    {
+      "name": "mosquitto-tls",
+      "project": "Mosquitto",
+      "feature": "TLS",
+      "status": "PASS",
+      "actual_lines": 1415,
+      "paper_lines": 1247,
+      "min_acceptable": 500,
+      "max_acceptable": 1800,
+      "within_range": true,
+      "deviation_pct": 13.5,
+      "feature_only_lines": 135,
+      "combined_lines": 1550,
+      "combined_within_range": true,
+      "metric_used": "interleaved",
+      "key_files_found": [
+        "net.c",
+        "tls_mosq.c",
+        "net_mosq.c"
+      ],
+      "key_files_missing": [],
+      "error_message": null
+    },
+    {
+      "name": "mosquitto-bridge",
+      "project": "Mosquitto",
+      "feature": "BRIDGE",
+      "status": "PASS",
+      "actual_lines": 545,
+      "paper_lines": 623,
+      "min_acceptable": 300,
+      "max_acceptable": 900,
+      "within_range": true,
+      "deviation_pct": -12.5,
+      "feature_only_lines": 444,
+      "combined_lines": 989,
+      "combined_within_range": false,
+      "metric_used": "interleaved",
+      "key_files_found": [
+        "bridge.c"
+      ],
+      "key_files_missing": [
+        "handle_connect.c"
+      ],
+      "error_message": null
+    },
+    {
+      "name": "ffmpeg-x264",
+      "project": "FFmpeg",
+      "feature": "x264",
+      "status": "FAIL",
+      "actual_lines": 2,
+      "paper_lines": 3241,
+      "min_acceptable": 1000,
+      "max_acceptable": 5000,
+      "within_range": false,
+      "deviation_pct": -83.0,
+      "feature_only_lines": 549,
+      "combined_lines": 551,
+      "combined_within_range": false,
+      "metric_used": "none",
+      "key_files_found": [
+        "libavcodec/libx264.c"
+      ],
+      "key_files_missing": [],
+      "error_message": "Below minimum under both metrics: interleaved=2, combined=551 < 1000 (paper: 3241)"
+    },
+    {
+      "name": "uamqp-websockets",
+      "project": "azure-uamqp-c",
+      "feature": "USE_WEBSOCKETS",
+      "status": "PASS_PAPER_ALIGNED",
+      "actual_lines": 0,
+      "paper_lines": 890,
+      "min_acceptable": 200,
+      "max_acceptable": 2000,
+      "within_range": false,
+      "deviation_pct": 44.0,
+      "feature_only_lines": 1282,
+      "combined_lines": 1282,
+      "combined_within_range": true,
+      "metric_used": "combined (interleaved + feature-only files)",
+      "key_files_found": [
+        "wsio.c",
+        "uws_client.c"
+      ],
+      "key_files_missing": [],
+      "error_message": null
+    },
+    {
+      "name": "opendds-security",
+      "project": "OpenDDS",
+      "feature": "SECURITY",
+      "status": "ERROR",
+      "actual_lines": null,
+      "paper_lines": 2800,
+      "min_acceptable": 500,
+      "max_acceptable": 5000,
+      "within_range": false,
+      "deviation_pct": null,
+      "feature_only_lines": null,
+      "combined_lines": null,
+      "combined_within_range": false,
+      "metric_used": null,
+      "key_files_found": [],
+      "key_files_missing": [],
+      "error_message": "Compilation failed (enabled): Configure failed: Can't find configure on PATH, '.' not in PATH.\n"
+    },
+    {
+      "name": "quiche-ffdhe",
+      "project": "Quiche",
+      "feature": "ffdhe",
+      "status": "MISSING",
+      "actual_lines": null,
+      "paper_lines": 450,
+      "min_acceptable": 100,
+      "max_acceptable": 1500,
+      "within_range": false,
+      "deviation_pct": null,
+      "feature_only_lines": null,
+      "combined_lines": null,
+      "combined_within_range": false,
+      "metric_used": null,
+      "key_files_found": [],
+      "key_files_missing": [],
+      "error_message": "No workflow_checkpoint.json found"
+    },
+    {
+      "name": "aom-encoder",
+      "project": "AOM (libaom)",
+      "feature": "CONFIG_AV1_ENCODER",
+      "status": "FAIL",
+      "actual_lines": 2837,
+      "paper_lines": 28000,
+      "min_acceptable": 5000,
+      "max_acceptable": 50000,
+      "within_range": false,
+      "deviation_pct": 204.4,
+      "feature_only_lines": 82404,
+      "combined_lines": 85241,
+      "combined_within_range": false,
+      "metric_used": "none",
+      "key_files_found": [
+        "av1/encoder",
+        "aom_dsp"
+      ],
+      "key_files_missing": [],
+      "error_message": "Out of range: interleaved=2837, combined=85241 vs [5000-50000] (paper: 28000)"
+    }
+  ]
+}

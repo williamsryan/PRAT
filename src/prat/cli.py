@@ -384,8 +384,88 @@ def run_analysis(
         return 1
 
 
+def _package_version() -> str:
+    try:
+        from importlib import metadata
+        return metadata.version("prat")
+    except Exception:
+        return "0.2.0"
+
+
+# Docker demo names (authoritative list lives in src/demo-runner.py DEMO_CONFIGS).
+_REPRODUCE_DEMOS = [
+    "mosquitto-tls",
+    "mosquitto-bridge",
+    "ffmpeg-x264",
+    "uamqp-websockets",
+    "opendds-security",
+    "quiche-ffdhe",
+    "aom-encoder",
+]
+
+
+def run_reproduce(argv: list[str]) -> int:
+    """Build + run PRAT Docker demo(s) and validate against the paper numbers.
+
+    Thin wrapper over ``src/demo-runner.py`` and
+    ``scripts/validate_paper_results.py`` so the published ``prat`` entry point
+    offers a one-command reproduction. Disk-safe by default: each (large) image
+    is removed right after its run. Requires a source checkout / editable install.
+    """
+    import subprocess
+
+    p = argparse.ArgumentParser(
+        prog="prat reproduce",
+        description="Build + run PRAT Docker demo(s) and validate against paper numbers",
+    )
+    p.add_argument("demo", nargs="?", choices=_REPRODUCE_DEMOS,
+                   help="Demo to reproduce (omit and pass --all for every demo)")
+    p.add_argument("--all", action="store_true", help="Reproduce all demos (per-demo, disk-safe)")
+    p.add_argument("--output", default="results/docker", help="Output directory (default: results/docker)")
+    p.add_argument("--keep-images", action="store_true",
+                   help="Do NOT remove Docker images after each run (default: remove)")
+    p.add_argument("--no-validate", action="store_true", help="Skip the validation step")
+    args = p.parse_args(argv)
+
+    if not args.all and not args.demo:
+        p.error("specify a demo name or --all")
+
+    repo_root = Path(__file__).resolve().parents[2]
+    runner = repo_root / "src" / "demo-runner.py"
+    validator = repo_root / "scripts" / "validate_paper_results.py"
+    if not runner.exists():
+        print("✗ `prat reproduce` requires a source checkout (editable install).")
+        print(f"  Expected runner at: {runner}")
+        return 1
+
+    if not check_docker_available():
+        print("✗ Docker is not available. Install/start Docker and try again.")
+        return 1
+
+    cleanup = [] if args.keep_images else ["--cleanup"]
+    demos = _REPRODUCE_DEMOS if args.all else [args.demo]
+
+    for demo in demos:
+        print(f"\n{'='*70}\nReproducing: {demo}\n{'='*70}")
+        subprocess.run([sys.executable, str(runner), "--build", demo])
+        subprocess.run(
+            [sys.executable, str(runner), "--run", demo, *cleanup, "--output", args.output]
+        )
+
+    if not args.no_validate:
+        subprocess.run(
+            [sys.executable, str(validator), f"{args.output}/",
+             "--json", "results/validation_report.json"]
+        )
+    return 0
+
+
 def main():
     """Main CLI entry point."""
+    # Subcommand: `prat reproduce ...` (handled before the analysis arg parser).
+    if len(sys.argv) > 1 and sys.argv[1] == "reproduce":
+        return run_reproduce(sys.argv[2:])
+
     if len(sys.argv) > 1 and sys.argv[1] == "doctor":
         sys.argv[1] = "--doctor"
 
@@ -410,11 +490,22 @@ Examples:
   # Preview analysis without executing
   prat App/mosquitto TLS --dry-run
 
+  # Reproduce a paper Docker demo (disk-safe; removes image after run)
+  prat reproduce mosquitto-tls
+  prat reproduce --all
+
   # Verbose output for debugging
   prat App/mosquitto TLS --verbose
 
 For more information, see docs/API.md
         """
+    )
+
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"PRAT {_package_version()}",
+        help="Show PRAT version and exit",
     )
 
     parser.add_argument(

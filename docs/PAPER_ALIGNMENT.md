@@ -214,3 +214,67 @@ Docker reproducibility            → docker/demo{1,2,3}/Dockerfile
    make -C <project>
    ls -la <binary-after>
    ```
+
+---
+
+## Methodology: Static Differential Coverage vs. the Paper's Dynamic Approach
+
+PRAT performs **static, compile-time differential coverage**: it compiles a target with a
+feature on and off (instrumented with `--coverage`) and runs `gcov` over the resulting
+instrumentation graph (`.gcno`). The paper's headline numbers were produced with
+**KLEE-enhanced dynamic coverage** (symbolic execution + test replay). Reproducing the paper
+exactly is therefore not expected; the tolerance ranges in `paper_expected_results.json`
+(40–60%) exist to absorb this gap. The full per-target analysis lives in
+[`../REPRODUCIBILITY.md`](../REPRODUCIBILITY.md); a committed sample run is in
+[`sample-results/`](sample-results/).
+
+### Two metrics
+
+PRAT reports both, and never silently substitutes one for the other:
+
+- **Interleaved** (`total_removable_lines`) — feature code inside files **shared** by both
+  builds (`#ifdef FEATURE … #endif`). This is the primary metric and keeps the
+  interleaved-feature demos comparable.
+- **Combined / paper-aligned** (`total_feature_lines`) — interleaved **plus** whole source
+  files that exist only when the feature is enabled (`feature_only_removable_lines`). This is
+  closest to the paper's notion of total removable feature code.
+
+### Why feature *structure* determines reproducibility
+
+| Feature structure | Example | Interleaved | Combined | Reproduces? |
+|-------------------|---------|-------------|----------|-------------|
+| Interleaved via `#ifdef` in shared files | Mosquitto TLS / BRIDGE | high | ~same | ✅ in range |
+| Dedicated module, modest size | azure-uamqp-c WebSockets (`wsio.c`, `uws_client.c`) | ~0 | moderate | 🟢 in range via combined |
+| Dedicated wrapper only | FFmpeg `libavcodec/libx264.c` | ~0 | small | ❌ below range |
+| Large dedicated subsystem | libaom AV1 encoder (187 files) | low | very high | ❌ brackets the paper |
+
+The recurring signature for dedicated-file features is that the paper value sits **between**
+PRAT's interleaved (too low) and combined (too high) static measures — precisely what a
+static-vs-dynamic-coverage gap predicts.
+
+### Threats to validity
+
+1. **Coverage tool & flags.** gcov emits per-line `#####` data from `.gcno` only when the
+   build is unoptimized (`-O0`/`Debug`) and gcov is invoked from the directory where
+   compilation occurred (so it can locate sources). Mosquitto additionally executes its test
+   suite, yielding true dynamic coverage. These conditions are encoded per build system in
+   `src/prat/coverage.py`.
+2. **Feature flag fidelity.** A demo only measures what the flag actually toggles. Two paper
+   feature names did not map to real build switches: azure-uamqp-c WebSockets is `use_wsio`
+   (not `USE_WEBSOCKETS`), and quiche 0.20.1 has **no** `ffdhe` Cargo feature at all.
+3. **Build-system coverage.** OpenDDS DDS-3.25 is not a CMake-root project (Perl `configure` +
+   MPC + ACE/TAO); the bundled CMake adapter cannot drive it, so that target is not reproduced
+   here.
+4. **No KLEE / no symbolic execution.** Out of scope by design; the dynamic reachability the
+   paper obtained from KLEE is not reconstructed.
+5. **Platform.** Numbers were collected on Linux aarch64 (Docker on Apple Silicon) with the
+   compilers recorded in each `manifest.json`; absolute counts can shift with compiler version
+   and architecture.
+
+### Status of the seven Docker demos
+
+All seven paper targets now ship as self-contained Docker demos (`docker/demo1`–`demo7`) with
+pinned tags whose commits are verified equal to upstream (see `REPRODUCIBILITY.md` §2). Three
+reproduce within range (Mosquitto TLS/BRIDGE, azure-uamqp-c via the combined metric); two run
+end-to-end but fall outside the range while bracketing the paper value (FFmpeg, libaom); two
+cannot be run as specified (OpenDDS build system, quiche missing feature).

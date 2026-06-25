@@ -29,6 +29,16 @@ class ProjectAdapter(ABC):
         self.project_path = Path(project_path)
 
     @property
+    def cmake_build_dir(self) -> str:
+        """Name of the CMake binary directory (relative to project root).
+
+        Defaults to "build". Override when a project ships its own top-level
+        "build/" directory in source (e.g. libaom) that would collide with an
+        out-of-source build named "build".
+        """
+        return "build"
+
+    @property
     @abstractmethod
     def build_system(self) -> BuildSystem:
         """Return the build system used by this project."""
