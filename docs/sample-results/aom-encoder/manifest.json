@@ -1,5 +1,5 @@
 {
-  "created_at": "2026-06-25T18:16:49.696107+00:00",
+  "created_at": "2026-06-25T19:06:00.631168+00:00",
   "tool": "PRAT",
   "project_path": "/prat/App/aom",
   "project_name": "aom",
@@ -8,7 +8,7 @@
   "success": true,
   "checkpoint": "complete",
   "error_message": null,
-  "total_time_seconds": 15.69276762008667,
+  "total_time_seconds": 45.88892936706543,
   "adapter": "AomAdapter",
   "build_system": "cmake",
   "coverage_tool": "gcov",
@@ -20,8 +20,8 @@
     "llvm-cov-9": null
   },
   "results": {
-    "total_removable_lines": 2837,
-    "files_analyzed": 30
+    "total_removable_lines": 8691,
+    "files_analyzed": 90
   },
   "artifacts": {
     "checkpoint": "/prat/output/workflow_checkpoint.json",

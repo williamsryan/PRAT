@@ -1,9 +1,9 @@
 {
-  "timestamp": "2026-06-25T18:16:57.290787+00:00",
+  "timestamp": "2026-06-25T19:40:20.743602+00:00",
   "results_dir": "results/docker",
   "total_targets": 7,
-  "passed": 3,
-  "failed": 3,
+  "passed": 4,
+  "failed": 2,
   "missing": 1,
   "success": false,
   "targets": [
@@ -100,20 +100,23 @@
       "name": "opendds-security",
       "project": "OpenDDS",
       "feature": "SECURITY",
-      "status": "ERROR",
-      "actual_lines": null,
+      "status": "FAIL",
+      "actual_lines": 49677,
       "paper_lines": 2800,
       "min_acceptable": 500,
       "max_acceptable": 5000,
       "within_range": false,
-      "deviation_pct": null,
-      "feature_only_lines": null,
-      "combined_lines": null,
+      "deviation_pct": 2480.8,
+      "feature_only_lines": 22585,
+      "combined_lines": 72262,
       "combined_within_range": false,
-      "metric_used": null,
-      "key_files_found": [],
+      "metric_used": "none",
+      "key_files_found": [
+        "dds/DCPS/security",
+        "Security"
+      ],
       "key_files_missing": [],
-      "error_message": "Compilation failed (enabled): Configure failed: Can't find configure on PATH, '.' not in PATH.\n"
+      "error_message": "Out of range: interleaved=49677, combined=72262 vs [500-5000] (paper: 2800)"
     },
     {
       "name": "quiche-ffdhe",
@@ -138,23 +141,23 @@
       "name": "aom-encoder",
       "project": "AOM (libaom)",
       "feature": "CONFIG_AV1_ENCODER",
-      "status": "FAIL",
-      "actual_lines": 2837,
+      "status": "PASS",
+      "actual_lines": 8691,
       "paper_lines": 28000,
       "min_acceptable": 5000,
       "max_acceptable": 50000,
-      "within_range": false,
-      "deviation_pct": 204.4,
-      "feature_only_lines": 82404,
-      "combined_lines": 85241,
+      "within_range": true,
+      "deviation_pct": -69.0,
+      "feature_only_lines": 45369,
+      "combined_lines": 54060,
       "combined_within_range": false,
-      "metric_used": "none",
+      "metric_used": "interleaved",
       "key_files_found": [
         "av1/encoder",
         "aom_dsp"
       ],
       "key_files_missing": [],
-      "error_message": "Out of range: interleaved=2837, combined=85241 vs [5000-50000] (paper: 28000)"
+      "error_message": null
     }
   ]
 }

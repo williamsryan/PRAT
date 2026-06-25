@@ -11,7 +11,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     g++ \
     make \
     cmake \
+    curl \
     perl \
+    perl-modules \
     git \
     libssl-dev \
     libxerces-c-dev \

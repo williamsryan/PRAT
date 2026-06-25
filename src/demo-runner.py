@@ -221,7 +221,7 @@ def run_demo(demo_name: str, output_dir: str) -> DemoResult:
             str(demo_output.absolute()): "/prat/output"
         },
         remove=True,
-        timeout=1800  # 30 minute timeout
+        timeout=3600  # 60 min — OpenDDS builds ACE+TAO+OpenDDS twice (security on/off)
     )
 
     log_file = demo_output / "container.log"

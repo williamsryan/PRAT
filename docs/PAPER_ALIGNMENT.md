@@ -246,11 +246,15 @@ PRAT reports both, and never silently substitutes one for the other:
 | Interleaved via `#ifdef` in shared files | Mosquitto TLS / BRIDGE | high | ~same | ✅ in range |
 | Dedicated module, modest size | azure-uamqp-c WebSockets (`wsio.c`, `uws_client.c`) | ~0 | moderate | 🟢 in range via combined |
 | Dedicated wrapper only | FFmpeg `libavcodec/libx264.c` | ~0 | small | ❌ below range |
-| Large dedicated subsystem | libaom AV1 encoder (187 files) | low | very high | ❌ brackets the paper |
+| Large dedicated subsystem (static) | libaom AV1 encoder (187 files) | low | very high | ❌ static over-counts |
+| Large dedicated subsystem (dynamic) | libaom AV1 encoder, real encode/decode | 8691 | 54060 | ✅ in range (interleaved) |
+| Generated-code churn | OpenDDS SECURITY (IDL type-support) | very high | very high | ❌ generated diff swamps it |
 
-The recurring signature for dedicated-file features is that the paper value sits **between**
-PRAT's interleaved (too low) and combined (too high) static measures — precisely what a
-static-vs-dynamic-coverage gap predicts.
+For static dedicated-file features the paper value sits **between** PRAT's interleaved (too
+low) and combined (too high) measures. **Dynamic** coverage closes that gap (libaom: a real
+encode/decode pulls the count into range). OpenDDS is a distinct failure mode: the differential
+is dominated by *generated* IDL type-support files that regenerate wholesale when the feature
+changes the IDL set (see `REPRODUCIBILITY.md` §6.5).
 
 ### Threats to validity
 
@@ -274,7 +278,10 @@ static-vs-dynamic-coverage gap predicts.
 ### Status of the seven Docker demos
 
 All seven paper targets now ship as self-contained Docker demos (`docker/demo1`–`demo7`) with
-pinned tags whose commits are verified equal to upstream (see `REPRODUCIBILITY.md` §2). Three
-reproduce within range (Mosquitto TLS/BRIDGE, azure-uamqp-c via the combined metric); two run
-end-to-end but fall outside the range while bracketing the paper value (FFmpeg, libaom); two
-cannot be run as specified (OpenDDS build system, quiche missing feature).
+pinned tags whose commits are verified equal to upstream (see `REPRODUCIBILITY.md` §2). Four
+reproduce within range: Mosquitto TLS/BRIDGE directly, azure-uamqp-c via the combined
+(feature-file) metric, and libaom via dynamic coverage. OpenDDS builds and runs end-to-end (a
+full ACE/TAO + configure/MPC environment) but its static differential is dominated by generated
+IDL type-support churn, so it exceeds the range. FFmpeg under-counts (it sees only the in-tree
+x264 wrapper, not the external libx264 library). quiche cannot be run as posed (`ffdhe` is not a
+Cargo feature in 0.20.1). No tolerance ranges were altered.

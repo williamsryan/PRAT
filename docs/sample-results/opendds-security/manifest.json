@@ -1,17 +1,17 @@
 {
-  "created_at": "2026-06-25T16:53:33.908499+00:00",
+  "created_at": "2026-06-25T19:37:58.730783+00:00",
   "tool": "PRAT",
   "project_path": "/prat/App/OpenDDS",
   "project_name": "OpenDDS",
   "project_git_commit": "2038b660f2037fb0758dbf106005d77f3b2d52f8",
   "feature": "SECURITY",
-  "success": false,
-  "checkpoint": "compile_enabled",
-  "error_message": "Compilation failed (enabled): Configure failed: Can't find configure on PATH, '.' not in PATH.\n",
-  "total_time_seconds": 0.0,
-  "adapter": null,
-  "build_system": null,
-  "coverage_tool": null,
+  "success": true,
+  "checkpoint": "complete",
+  "error_message": null,
+  "total_time_seconds": 744.3790361881256,
+  "adapter": "OpenDDSAdapter",
+  "build_system": "cmake",
+  "coverage_tool": "gcov",
   "python": "3.11.15",
   "platform": "Linux-6.12.67-linuxkit-aarch64-with-glibc2.36",
   "environment": {
@@ -20,10 +20,16 @@
     "llvm-cov-9": null
   },
   "results": {
-    "total_removable_lines": null,
-    "files_analyzed": null
+    "total_removable_lines": 49677,
+    "files_analyzed": 95
   },
   "artifacts": {
-    "checkpoint": "/prat/output/workflow_checkpoint.json"
+    "checkpoint": "/prat/output/workflow_checkpoint.json",
+    "html_report": "/prat/output/report.html",
+    "json_report": "/prat/output/report.json",
+    "dot_graph": "/prat/output/FDG.dot",
+    "diff_dir": "/prat/output/diff_SECURITY",
+    "coverage_enabled": "/prat/output/coverage_files_WITH_SECURITY_yes",
+    "coverage_disabled": "/prat/output/coverage_files_WITH_SECURITY_no"
   }
 }

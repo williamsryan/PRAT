@@ -24,10 +24,15 @@ for the full methodology and analysis.
 | mosquitto-tls | PASS | 1415 | 1550 | 1247 | 500–1800 |
 | mosquitto-bridge | PASS | 545 | 989 | 623 | 300–900 |
 | uamqp-websockets | PASS (paper-aligned) | 0 | 1282 | 890 | 200–2000 |
-| ffmpeg-x264 | FAIL (below) | 2 | 551 | 3241 | 1000–5000 |
-| aom-encoder | FAIL (brackets paper) | 2837 | 85241 | 28000 | 5000–50000 |
-| opendds-security | ERROR (not buildable as configured) | — | — | 2800 | 500–5000 |
+| aom-encoder | PASS (dynamic coverage) | 8691 | 54060 | 28000 | 5000–50000 |
+| ffmpeg-x264 | FAIL (wrapper-only) | 2 | 551 | 3241 | 1000–5000 |
+| opendds-security | FAIL (runs; static over-counts generated code) | 49677 | 72262 | 2800 | 500–5000 |
 | quiche-ffdhe | BLOCKED (feature absent) | — | — | 450 | 100–1500 |
+
+4 of 7 reproduce within range. aom now passes via **dynamic** coverage (a real
+encode/decode workload). OpenDDS builds and runs end-to-end but its static
+differential is dominated by generated IDL type-support churn — see
+`REPRODUCIBILITY.md`.
 
 To regenerate: `make paper-check` (or `prat reproduce --all`), then
 `python3 scripts/validate_paper_results.py results/docker/ --json results/validation_report.json`.

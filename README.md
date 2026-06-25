@@ -143,9 +143,9 @@ honest account of where the static analysis diverges from the paper's KLEE-based
 | mosquitto-tls | Mosquitto v2.0.15 | TLS | make | 500–1800 | ✅ reproduces (1415) |
 | mosquitto-bridge | Mosquitto v2.0.15 | BRIDGE | make | 300–900 | ✅ reproduces (545) |
 | uamqp-websockets | azure-uamqp-c v1.2.0 | use_wsio | cmake | 200–2000 | 🟢 reproduces, paper-aligned metric (1282) |
+| aom-encoder | libaom v3.7.1 | CONFIG_AV1_ENCODER | cmake | 5000–50000 | ✅ reproduces via dynamic coverage (8691) |
 | ffmpeg-x264 | FFmpeg n5.1.4 | libx264 | autotools | 1000–5000 | ❌ below range (551 — wrapper only) |
-| aom-encoder | libaom v3.7.1 | CONFIG_AV1_ENCODER | cmake | 5000–50000 | ❌ brackets paper (2837 / 85241) |
-| opendds-security | OpenDDS DDS-3.25 | SECURITY | MPC/ACE-TAO | 500–5000 | ⚠️ not buildable as configured |
+| opendds-security | OpenDDS DDS-3.25 | SECURITY | MPC/ACE-TAO | 500–5000 | ⚠️ builds & runs; static diff over-counts generated code (49677) |
 | quiche-ffdhe | quiche 0.20.1 | ffdhe | cargo | 100–1500 | ⬜ blocked (feature does not exist) |
 
 ```bash
