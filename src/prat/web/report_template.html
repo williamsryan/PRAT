@@ -1,0 +1,1046 @@
+<!DOCTYPE html>
+<!--
+  PRAT feature report template.
+  Rendered by prat.reporting.generate_html_report(). Placeholders of the form
+  __PRAT_*__ are substituted at generation time (see src/prat/web/README.md).
+  This file is intentionally a single, self-contained document with no external
+  network dependencies (no hosted fonts/scripts) so reports work fully offline.
+-->
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="generator" content="PRAT — Protocol Representation and Analysis Toolkit">
+<title>PRAT — __PRAT_FEATURE__ Feature Report</title>
+<style>
+  :root {
+    --bg: #f4efe6;
+    --surface: #fffdf8;
+    --surface-alt: #f6efe4;
+    --surface-hover: #eee3d1;
+    --border: #dbcdb5;
+    --text: #1f2633;
+    --text-secondary: #5c6678;
+    --text-muted: #8c95a5;
+    --primary: #2f67d8;
+    --accent: #157a6e;
+    --warning: #c88414;
+    --danger: #c0392b;
+    --shadow: 0 18px 48px rgba(41, 51, 70, 0.12);
+    --mono: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --focus-ring: 0 0 0 3px rgba(47,103,216,.4);
+  }
+  [data-theme="dark"] {
+    --bg: #11151c;
+    --surface: #1a212b;
+    --surface-alt: #222b38;
+    --surface-hover: #2c3848;
+    --border: #33404f;
+    --text: #e7ecf3;
+    --text-secondary: #a9b4c4;
+    --text-muted: #76828f;
+    --primary: #5b8def;
+    --accent: #35b8a6;
+    --warning: #e0a13a;
+    --danger: #e57368;
+    --shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: var(--sans);
+    color: var(--text);
+    background:
+      radial-gradient(circle at top left, rgba(47,103,216,.10), transparent 28%),
+      radial-gradient(circle at top right, rgba(21,122,110,.10), transparent 22%),
+      var(--bg);
+    min-height: 100vh;
+    padding: 24px;
+    transition: background .2s ease, color .2s ease;
+  }
+  .shell { max-width: 1500px; margin: 0 auto; }
+  a { color: var(--primary); }
+
+  /* ── Hero ─────────────────────────────────────────────────────────────── */
+  .hero {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    align-items: end;
+    margin-bottom: 18px;
+    flex-wrap: wrap;
+  }
+  .hero h1 { font-size: 30px; margin-bottom: 8px; }
+  .subtitle { color: var(--text-secondary); font-size: 14px; }
+  .hero-actions { display: flex; gap: 8px; align-items: center; }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 9px 13px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--text);
+    font-size: 13px;
+    font-family: var(--sans);
+    cursor: pointer;
+    transition: background .15s ease, border-color .15s ease, transform .05s ease;
+  }
+  .btn:hover { background: var(--surface-hover); }
+  .btn:active { transform: translateY(1px); }
+  .btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+  .btn-icon { font-size: 15px; line-height: 1; }
+
+  .summary-strip {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 12px;
+    flex-wrap: wrap;
+  }
+  .summary-pill {
+    padding: 8px 12px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--surface-alt);
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+  .summary-pill strong { color: var(--text); font-family: var(--mono); }
+
+  /* ── Cards ────────────────────────────────────────────────────────────── */
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+  .card {
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+    padding: 16px 18px;
+  }
+  .card-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+  }
+  .card-value { font-size: 30px; font-weight: 700; font-family: var(--mono); }
+  .card-note { margin-top: 4px; color: var(--text-secondary); font-size: 12px; }
+
+  /* ── Panels ───────────────────────────────────────────────────────────── */
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .panel {
+    border: 1px solid var(--border);
+    border-radius: 22px;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
+  .panel-header {
+    padding: 18px 20px 16px;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, rgba(47,103,216,.08), transparent);
+  }
+  .panel-header h2 { font-size: 18px; margin-bottom: 6px; }
+  .panel-header p { font-size: 13px; color: var(--text-secondary); }
+  .panel-body { padding: 18px 20px 20px; }
+
+  /* ── Toolbar ──────────────────────────────────────────────────────────── */
+  .graph-toolbar {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+  }
+  .toolbar-left { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .toolbar-right { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .search-wrap { position: relative; display: inline-flex; align-items: center; }
+  .search {
+    width: min(280px, 100%);
+    padding: 10px 30px 10px 12px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: var(--surface-alt);
+    color: var(--text);
+    font-size: 13px;
+    outline: none;
+  }
+  .search:focus { border-color: var(--primary); box-shadow: var(--focus-ring); }
+  .search-clear {
+    position: absolute;
+    right: 8px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 15px;
+    line-height: 1;
+    padding: 2px 4px;
+    display: none;
+  }
+  .search-clear.visible { display: inline; }
+  .result-count { font-size: 12px; color: var(--text-secondary); white-space: nowrap; }
+  .legend { display: flex; flex-wrap: wrap; gap: 10px; color: var(--text-secondary); font-size: 12px; }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-swatch { width: 12px; height: 12px; border-radius: 4px; }
+
+  /* ── Graph ────────────────────────────────────────────────────────────── */
+  .graph-frame {
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    background:
+      radial-gradient(circle at center, rgba(47,103,216,.06), transparent 42%),
+      var(--surface-alt);
+    padding: 8px;
+    margin-bottom: 16px;
+  }
+  #graphSvg { width: 100%; height: 470px; display: block; }
+  .node-feature { fill: var(--primary); }
+  .node-file { fill: var(--accent); }
+  .node-selected { stroke: var(--surface); stroke-width: 5; }
+  .node-dimmed { opacity: .18; }
+  .link { stroke: rgba(47,103,216,.26); stroke-width: 2; }
+  .link-dimmed { opacity: .12; }
+  .flow-band { fill: none; stroke-linecap: round; opacity: .82; }
+  .flow-band.dimmed { opacity: .12; }
+  .flow-bar { fill: rgba(21,122,110,.16); stroke: rgba(21,122,110,.18); }
+  .flow-bar-selected { fill: rgba(47,103,216,.14); stroke: rgba(47,103,216,.3); }
+  .flow-chip { fill: var(--surface); stroke: var(--border); }
+  .graph-label { fill: var(--text); font-size: 12px; font-weight: 600; }
+  .graph-subtle { fill: var(--text-secondary); font-size: 11px; }
+
+  /* ── Table ────────────────────────────────────────────────────────────── */
+  .table-shell { border: 1px solid var(--border); border-radius: 18px; overflow: hidden; }
+  .table-scroll { max-height: 560px; overflow: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  thead th { position: sticky; top: 0; z-index: 1; }
+  th {
+    text-align: left;
+    padding: 12px 14px;
+    background: var(--surface-alt);
+    color: var(--text-secondary);
+    font-size: 12px;
+    cursor: pointer;
+    user-select: none;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+  th:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+  th.sorted { color: var(--primary); }
+  th .sort-arrow { font-size: 10px; opacity: .8; }
+  td { padding: 12px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: var(--surface-hover); }
+  tbody tr.active { background: rgba(47,103,216,.12); }
+  tbody tr:focus-visible { outline: none; box-shadow: inset var(--focus-ring); }
+  .file-name { font-weight: 600; word-break: break-all; }
+  .file-meta { margin-top: 3px; font-size: 11px; color: var(--text-secondary); }
+  .metric-cell { font-family: var(--mono); }
+  .bar-wrap { display: flex; align-items: center; gap: 10px; }
+  .bar {
+    height: 8px;
+    min-width: 2px;
+    border-radius: 999px;
+    background: linear-gradient(90deg, var(--primary), var(--accent));
+  }
+  .pct { color: var(--text-muted); font-size: 11px; }
+
+  /* ── Drawer ───────────────────────────────────────────────────────────── */
+  .detail-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+  .detail-card { border: 1px solid var(--border); border-radius: 14px; padding: 12px; background: var(--surface-alt); }
+  .detail-card-label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--text-muted);
+    margin-bottom: 5px;
+  }
+  .detail-card-value { font-size: 21px; font-weight: 700; font-family: var(--mono); }
+  .detail-section { margin-bottom: 16px; }
+  .detail-section h3 { font-size: 14px; margin-bottom: 10px; }
+  .inline-drawer {
+    margin-bottom: 16px;
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    background: var(--surface);
+    box-shadow: 0 10px 28px rgba(41, 51, 70, 0.08);
+    overflow: hidden;
+    max-height: 0;
+    opacity: 0;
+    transform: translateY(-6px);
+    transition: max-height .22s ease, opacity .18s ease, transform .18s ease;
+  }
+  .inline-drawer.open { max-height: 760px; opacity: 1; transform: translateY(0); }
+  .drawer-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 16px;
+    align-items: start;
+    padding: 16px 18px 14px;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, rgba(47,103,216,.08), rgba(21,122,110,.04));
+  }
+  .drawer-eyebrow {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+  }
+  .drawer-title { font-size: 22px; font-weight: 700; margin-bottom: 4px; word-break: break-all; }
+  .drawer-subtitle { font-size: 13px; color: var(--text-secondary); }
+  .drawer-actions { display: flex; gap: 8px; flex-shrink: 0; }
+  .drawer-body { padding: 16px 18px 18px; }
+  .source-panel { border: 1px solid var(--border); border-radius: 16px; overflow: hidden; background: var(--surface); }
+  .source-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: center;
+    padding: 12px 14px;
+    background: linear-gradient(180deg, rgba(47,103,216,.08), rgba(21,122,110,.04));
+    border-bottom: 1px solid var(--border);
+  }
+  .source-title { font-size: 13px; font-weight: 700; word-break: break-all; }
+  .source-subtitle { margin-top: 3px; font-size: 11px; color: var(--text-secondary); }
+  .source-badge {
+    padding: 6px 9px;
+    border-radius: 999px;
+    background: rgba(47,103,216,.1);
+    color: var(--primary);
+    font-size: 11px;
+    font-family: var(--mono);
+    white-space: nowrap;
+  }
+  .code-view { max-height: 430px; overflow: auto; padding: 8px 0 12px; }
+  .code-line {
+    display: grid;
+    grid-template-columns: 74px minmax(0, 1fr);
+    gap: 12px;
+    padding: 2px 14px;
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.6;
+  }
+  .code-line:hover { background: rgba(47,103,216,.05); }
+  .line-number { color: var(--text-muted); text-align: right; user-select: none; }
+  .line-content { white-space: pre-wrap; word-break: break-word; }
+  .tok-keyword { color: #7a43c3; font-weight: 600; }
+  .tok-string { color: #0d7b62; }
+  .tok-comment { color: #8a94a5; font-style: italic; }
+  .tok-number { color: #c15d2a; }
+  .tok-preproc { color: #2f67d8; font-weight: 600; }
+  .tok-fn { color: #aa4b1f; }
+  [data-theme="dark"] .tok-keyword { color: #c79bf0; }
+  [data-theme="dark"] .tok-string { color: #5cd1b3; }
+  [data-theme="dark"] .tok-comment { color: #76828f; }
+  [data-theme="dark"] .tok-number { color: #e8a06a; }
+  [data-theme="dark"] .tok-preproc { color: #7ba6f5; }
+  [data-theme="dark"] .tok-fn { color: #e3936a; }
+
+  .empty-state {
+    border: 1px dashed var(--border);
+    border-radius: 16px;
+    padding: 16px;
+    color: var(--text-secondary);
+    background: var(--surface-alt);
+    text-align: center;
+  }
+
+  /* ── Help popover ─────────────────────────────────────────────────────── */
+  .help-popover {
+    position: fixed;
+    right: 24px;
+    bottom: 24px;
+    width: min(320px, calc(100vw - 48px));
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+    padding: 16px 18px;
+    display: none;
+    z-index: 20;
+  }
+  .help-popover.open { display: block; }
+  .help-popover h3 { font-size: 14px; margin-bottom: 10px; }
+  .help-row { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; padding: 4px 0; color: var(--text-secondary); }
+  kbd {
+    font-family: var(--mono);
+    font-size: 11px;
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1px 6px;
+    color: var(--text);
+  }
+
+  /* ── Toast ────────────────────────────────────────────────────────────── */
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: 28px;
+    transform: translateX(-50%) translateY(20px);
+    background: var(--text);
+    color: var(--surface);
+    padding: 10px 16px;
+    border-radius: 10px;
+    font-size: 13px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .2s ease, transform .2s ease;
+    z-index: 30;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  .footer { margin-top: 16px; text-align: center; color: var(--text-muted); font-size: 11px; }
+
+  @media (max-width: 900px) {
+    body { padding: 14px; }
+    .hero { flex-direction: column; align-items: start; }
+    .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+
+  /* ── Print ────────────────────────────────────────────────────────────── */
+  @media print {
+    body { background: #fff; color: #000; padding: 0; }
+    .hero-actions, .toolbar-right, .search-wrap, .help-popover, .toast, .drawer-actions, .drawer-close { display: none !important; }
+    .panel, .card { box-shadow: none; }
+    .inline-drawer { max-height: none !important; opacity: 1 !important; transform: none !important; }
+    .table-scroll, .code-view { max-height: none !important; overflow: visible !important; }
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+  <section class="hero">
+    <div>
+      <h1>PRAT Feature Report</h1>
+      <p class="subtitle">
+        Feature: <strong>__PRAT_FEATURE__</strong> · __PRAT_FILE_COUNT__ files · __PRAT_TOTAL_LINES__ removable lines
+      </p>
+      <div class="summary-strip">
+        <div class="summary-pill">Most impacted file: <strong>__PRAT_LARGEST_FILE__</strong></div>
+        <div class="summary-pill">Average/file: <strong>__PRAT_AVG_LINES__</strong></div>
+      </div>
+    </div>
+    <div class="hero-actions">
+      <button class="btn" id="themeToggle" type="button" title="Toggle light/dark theme (t)" aria-label="Toggle color theme">
+        <span class="btn-icon" id="themeIcon">🌙</span><span id="themeLabel">Dark</span>
+      </button>
+      <button class="btn" id="helpToggle" type="button" title="Keyboard shortcuts (?)" aria-label="Show keyboard shortcuts">
+        <span class="btn-icon">⌨</span><span>Shortcuts</span>
+      </button>
+    </div>
+  </section>
+
+  <section class="cards">
+    <div class="card">
+      <div class="card-label">Total Removable Lines</div>
+      <div class="card-value">__PRAT_TOTAL_LINES__</div>
+      <div class="card-note">Feature-specific dead code candidate volume</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Files Affected</div>
+      <div class="card-value">__PRAT_FILE_COUNT__</div>
+      <div class="card-note">Source files participating in this feature</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Average / File</div>
+      <div class="card-value">__PRAT_AVG_LINES__</div>
+      <div class="card-note">Useful for spotting concentrated vs. diffuse removal</div>
+    </div>
+    <div class="card">
+      <div class="card-label">Largest File Slice</div>
+      <div class="card-value">__PRAT_MAX_LINES__</div>
+      <div class="card-note">Single-file maximum removable LoC</div>
+    </div>
+  </section>
+
+  <section class="layout">
+    <div class="panel">
+      <div class="panel-header">
+        <h2>Interactive Impact Graph</h2>
+        <p>Click a band, bar, or row to inspect removable source lines inline. The flow ranks files by impact so the connections communicate magnitude instead of just adjacency.</p>
+      </div>
+      <div class="panel-body">
+        <div class="graph-toolbar">
+          <div class="toolbar-left">
+            <div class="search-wrap">
+              <input class="search" id="filter" type="text" placeholder="Filter files…  ( / )" aria-label="Filter files by name" autocomplete="off">
+              <button class="search-clear" id="filterClear" type="button" aria-label="Clear filter">×</button>
+            </div>
+            <span class="result-count" id="resultCount" aria-live="polite"></span>
+          </div>
+          <div class="toolbar-right">
+            <button class="btn" id="exportCsv" type="button" title="Download the table as CSV">
+              <span class="btn-icon">⬇</span><span>CSV</span>
+            </button>
+            <button class="btn" id="exportJson" type="button" title="Download the report data as JSON">
+              <span class="btn-icon">⬇</span><span>JSON</span>
+            </button>
+            <button class="btn" id="copyList" type="button" title="Copy the visible file list to the clipboard">
+              <span class="btn-icon">⧉</span><span>Copy list</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="legend" style="margin-bottom:14px">
+          <div class="legend-item"><span class="legend-swatch" style="background: var(--primary)"></span><span>Feature source</span></div>
+          <div class="legend-item"><span class="legend-swatch" style="background: var(--accent)"></span><span>Ranked file impact</span></div>
+        </div>
+
+        <div class="graph-frame">
+          <svg id="graphSvg" viewBox="0 0 980 470" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Ranked impact flow of feature files"></svg>
+        </div>
+
+        <div class="inline-drawer" id="inlineDrawer" role="region" aria-label="Inline source preview">
+          <div class="drawer-header">
+            <div>
+              <div class="drawer-eyebrow">Inline Source Preview</div>
+              <div class="drawer-title" id="drawerTitle">Select a file</div>
+              <div class="drawer-subtitle" id="drawerSubtitle">Click a graph band or table row to expand the relevant source lines here.</div>
+            </div>
+            <div class="drawer-actions">
+              <button class="btn" id="copyPath" type="button" title="Copy file path">Copy path</button>
+              <button class="btn" id="copyCode" type="button" title="Copy source lines">Copy code</button>
+              <button class="btn drawer-close" id="drawerClose" type="button">Collapse</button>
+            </div>
+          </div>
+          <div class="drawer-body" id="drawerBody"></div>
+        </div>
+
+        <div class="table-shell">
+          <div class="table-scroll">
+            <table id="results">
+              <thead>
+                <tr>
+                  <th data-col="file" data-type="string" scope="col" tabindex="0" aria-sort="none">Source File <span class="sort-arrow"></span></th>
+                  <th data-col="count" data-type="number" class="sorted" scope="col" tabindex="0" aria-sort="descending">Lines to Remove <span class="sort-arrow">▼</span></th>
+                  <th data-col="span" data-type="number" scope="col" tabindex="0" aria-sort="none">Line Span <span class="sort-arrow"></span></th>
+                </tr>
+              </thead>
+              <tbody id="resultsBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <p class="footer">Generated by PRAT — Protocol Representation and Analysis Toolkit · __PRAT_GENERATED_AT__</p>
+</div>
+
+<div class="help-popover" id="helpPopover" role="dialog" aria-label="Keyboard shortcuts">
+  <h3>Keyboard shortcuts</h3>
+  <div class="help-row"><span>Focus filter</span><kbd>/</kbd></div>
+  <div class="help-row"><span>Move selection</span><span><kbd>↑</kbd> <kbd>↓</kbd> / <kbd>j</kbd> <kbd>k</kbd></span></div>
+  <div class="help-row"><span>Open / close file</span><kbd>Enter</kbd></div>
+  <div class="help-row"><span>Toggle theme</span><kbd>t</kbd></div>
+  <div class="help-row"><span>Clear filter / close</span><kbd>Esc</kbd></div>
+  <div class="help-row"><span>Show / hide this help</span><kbd>?</kbd></div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+const FEATURE_NAME = __PRAT_FEATURE_JSON__;
+const FILES = __PRAT_FILE_DATA_JSON__;
+const META = __PRAT_META_JSON__;
+
+(function() {
+  const body = document.getElementById('resultsBody');
+  const headers = Array.from(document.querySelectorAll('th'));
+  const filterInput = document.getElementById('filter');
+  const filterClear = document.getElementById('filterClear');
+  const resultCount = document.getElementById('resultCount');
+  const svg = document.getElementById('graphSvg');
+  const inlineDrawer = document.getElementById('inlineDrawer');
+  const drawerTitle = document.getElementById('drawerTitle');
+  const drawerSubtitle = document.getElementById('drawerSubtitle');
+  const drawerBody = document.getElementById('drawerBody');
+  const drawerClose = document.getElementById('drawerClose');
+  const copyPathBtn = document.getElementById('copyPath');
+  const copyCodeBtn = document.getElementById('copyCode');
+  const themeToggle = document.getElementById('themeToggle');
+  const themeIcon = document.getElementById('themeIcon');
+  const themeLabel = document.getElementById('themeLabel');
+  const helpToggle = document.getElementById('helpToggle');
+  const helpPopover = document.getElementById('helpPopover');
+  const toast = document.getElementById('toast');
+
+  const TOTAL_LINES = META.total_lines || FILES.reduce((sum, f) => sum + f.removable_lines, 0);
+
+  let activeFile = null;
+  let sortCol = 'count';
+  let sortAsc = false;
+  let filterQuery = '';
+  let toastTimer = null;
+
+  /* ── Utilities ────────────────────────────────────────────────────────── */
+  function escapeHtml(value) {
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function showToast(message) {
+    toast.textContent = message;
+    toast.classList.add('show');
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.remove('show'), 1800);
+  }
+
+  async function copyText(text, label) {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      showToast(label + ' copied');
+    } catch (e) {
+      showToast('Copy failed — your browser blocked clipboard access');
+    }
+  }
+
+  function downloadFile(filename, content, mime) {
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  function highlightCode(source, fileName) {
+    const placeholders = [];
+    let text = String(source || '');
+
+    function stash(pattern, cls) {
+      text = text.replace(pattern, match => {
+        const token = `<span class="${cls}">${escapeHtml(match)}</span>`;
+        placeholders.push(token);
+        return `@@TOKEN_${placeholders.length - 1}@@`;
+      });
+    }
+
+    const cLike = /\.(c|cc|cpp|cxx|h|hpp)$/i.test(fileName || '');
+    stash(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, 'tok-comment');
+    stash(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g, 'tok-string');
+    stash(/#[A-Za-z_][A-Za-z0-9_]*/g, 'tok-preproc');
+    stash(/\b\d+(?:\.\d+)?\b/g, 'tok-number');
+    if (cLike) {
+      stash(/\b(?:if|else|for|while|switch|case|default|break|continue|return|goto|do|struct|typedef|enum|union|const|static|extern|inline|void|char|short|int|long|float|double|signed|unsigned|bool|NULL|true|false|sizeof)\b/g, 'tok-keyword');
+    }
+    stash(/\b[A-Za-z_][A-Za-z0-9_]*(?=\s*\()/g, 'tok-fn');
+
+    return escapeHtml(text).replace(/@@TOKEN_(\d+)@@/g, (_, index) => placeholders[Number(index)]);
+  }
+
+  function getLineSpan(file) {
+    if (!file.line_numbers.length) return 0;
+    return file.line_numbers[file.line_numbers.length - 1] - file.line_numbers[0] + 1;
+  }
+
+  function shortenLabel(value, maxLength) {
+    if (value.length <= maxLength) return value;
+    return value.slice(0, maxLength - 1) + '…';
+  }
+
+  function visibleFiles() {
+    const query = filterQuery.trim().toLowerCase();
+    let files = FILES.slice();
+
+    if (query) {
+      files = files.filter(file => file.file.toLowerCase().includes(query));
+    }
+
+    files.sort((a, b) => {
+      let av;
+      let bv;
+      if (sortCol === 'file') {
+        av = a.file.toLowerCase();
+        bv = b.file.toLowerCase();
+      } else if (sortCol === 'span') {
+        av = getLineSpan(a);
+        bv = getLineSpan(b);
+      } else {
+        av = a.removable_lines;
+        bv = b.removable_lines;
+      }
+
+      if (av < bv) return sortAsc ? -1 : 1;
+      if (av > bv) return sortAsc ? 1 : -1;
+      return 0;
+    });
+
+    return files;
+  }
+
+  /* ── Rendering ────────────────────────────────────────────────────────── */
+  function renderTable() {
+    const files = visibleFiles();
+    const max = Math.max(...FILES.map(item => item.removable_lines), 1);
+
+    if (!files.length) {
+      body.innerHTML = `<tr><td colspan="3"><div class="empty-state">${
+        FILES.length ? 'No files match the current filter.' : 'No removable lines were detected for this feature.'
+      }</div></td></tr>`;
+    } else {
+      body.innerHTML = files.map(file => {
+        const span = getLineSpan(file);
+        const width = Math.max(4, (file.removable_lines / max) * 100);
+        const pct = TOTAL_LINES ? ((file.removable_lines / TOTAL_LINES) * 100).toFixed(1) : '0.0';
+        return `
+          <tr data-file="${escapeHtml(file.file)}" tabindex="0" class="${activeFile === file.file ? 'active' : ''}">
+            <td>
+              <div class="file-name">${escapeHtml(file.file)}</div>
+              <div class="file-meta">${file.line_numbers.length} captured source lines</div>
+            </td>
+            <td class="metric-cell">
+              <div class="bar-wrap">
+                <span>${file.removable_lines}</span>
+                <div class="bar" style="width:${width}%"></div>
+                <span class="pct">${pct}%</span>
+              </div>
+            </td>
+            <td class="metric-cell">${span}</td>
+          </tr>`;
+      }).join('');
+
+      Array.from(body.querySelectorAll('tr')).forEach(row => {
+        row.addEventListener('click', () => selectFile(row.dataset.file));
+        row.addEventListener('keydown', evt => {
+          if (evt.key === 'Enter') { evt.preventDefault(); selectFile(row.dataset.file); }
+        });
+      });
+    }
+
+    headers.forEach(header => {
+      const isSorted = header.dataset.col === sortCol;
+      header.classList.toggle('sorted', isSorted);
+      const arrow = header.querySelector('.sort-arrow');
+      if (arrow) arrow.textContent = isSorted ? (sortAsc ? '▲' : '▼') : '';
+      header.setAttribute('aria-sort', isSorted ? (sortAsc ? 'ascending' : 'descending') : 'none');
+    });
+
+    resultCount.textContent = `Showing ${files.length} of ${FILES.length} files`;
+    filterClear.classList.toggle('visible', filterQuery.length > 0);
+  }
+
+  function renderGraph() {
+    const files = visibleFiles();
+    const graphFiles = files.slice(0, 8);
+    const maxCount = Math.max(...FILES.map(item => item.removable_lines), 1);
+
+    const sourceX = 132;
+    const sourceY = 235;
+    const sourceWidth = 130;
+    const rowStartY = 82;
+    const rowGap = 42;
+    const barStartX = 530;
+    const barMaxWidth = 340;
+    const visibleTotal = graphFiles.reduce((sum, file) => sum + file.removable_lines, 0);
+    const hiddenCount = Math.max(files.length - graphFiles.length, 0);
+
+    if (!graphFiles.length) {
+      svg.innerHTML = `<text x="490" y="235" text-anchor="middle" class="graph-subtle">No files to visualise${FILES.length ? ' for this filter' : ''}.</text>`;
+      return;
+    }
+
+    const sourceMarkup = `
+      <rect x="${sourceX - 58}" y="${sourceY - 48}" width="${sourceWidth}" height="96" rx="24" class="flow-chip"></rect>
+      <circle cx="${sourceX}" cy="${sourceY}" r="34" class="node-feature ${activeFile ? 'node-dimmed' : 'node-selected'}"></circle>
+      <text x="${sourceX}" y="${sourceY - 4}" text-anchor="middle" class="graph-label">${escapeHtml(FEATURE_NAME)}</text>
+      <text x="${sourceX}" y="${sourceY + 16}" text-anchor="middle" class="graph-subtle">${FILES.length} files</text>
+      <text x="${sourceX - 46}" y="70" class="graph-subtle">Removal source</text>
+    `;
+
+    const rowsMarkup = graphFiles.map((file, index) => {
+      const y = rowStartY + index * rowGap;
+      const thickness = Math.max(6, (file.removable_lines / maxCount) * 22);
+      const barWidth = Math.max(42, (file.removable_lines / maxCount) * barMaxWidth);
+      const dimmed = activeFile && activeFile !== file.file;
+      const selected = activeFile === file.file;
+      const path = `M ${sourceX + 34} ${sourceY} C 270 ${sourceY}, 345 ${y}, ${barStartX - 28} ${y}`;
+      return `
+        <g data-file="${escapeHtml(file.file)}" style="cursor:pointer">
+          <path d="${path}" class="flow-band ${dimmed ? 'dimmed' : ''}" stroke="url(#impactFlowGradient)" stroke-width="${thickness}"></path>
+          <rect x="${barStartX}" y="${y - 14}" width="${barWidth}" height="28" rx="14" class="${selected ? 'flow-bar-selected' : 'flow-bar'} ${dimmed ? 'node-dimmed' : ''}"></rect>
+          <text x="${barStartX + 12}" y="${y - 18}" class="graph-label ${dimmed ? 'node-dimmed' : ''}">${index + 1}. ${escapeHtml(shortenLabel(file.file, 24))}</text>
+          <text x="${barStartX + 12}" y="${y + 5}" class="graph-subtle ${dimmed ? 'node-dimmed' : ''}">${file.removable_lines} LoC · span ${getLineSpan(file)}</text>
+        </g>
+      `;
+    }).join('');
+
+    const summaryMarkup = hiddenCount
+      ? `
+        <rect x="530" y="424" width="330" height="30" rx="15" class="flow-chip"></rect>
+        <text x="546" y="443" class="graph-subtle">${hiddenCount} more files remain below in the table · ${visibleTotal} visible LoC shown here</text>
+      `
+      : '';
+
+    svg.innerHTML = `
+      <defs>
+        <linearGradient id="impactFlowGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" stop-color="rgba(47,103,216,.42)"></stop>
+          <stop offset="100%" stop-color="rgba(21,122,110,.6)"></stop>
+        </linearGradient>
+      </defs>
+      <rect x="0" y="0" width="980" height="470" fill="transparent"></rect>
+      <text x="48" y="40" class="graph-subtle">Ranked impact flow</text>
+      <text x="530" y="40" class="graph-subtle">Top affected files</text>
+      ${sourceMarkup}
+      ${rowsMarkup}
+      ${summaryMarkup}
+    `;
+
+    Array.from(svg.querySelectorAll('g[data-file]')).forEach(group => {
+      group.addEventListener('click', () => selectFile(group.dataset.file));
+    });
+  }
+
+  function closeDrawer() {
+    inlineDrawer.classList.remove('open');
+    drawerTitle.textContent = 'Select a file';
+    drawerSubtitle.textContent = 'Click a graph band or table row to expand the relevant source lines here.';
+    drawerBody.innerHTML = '';
+  }
+
+  function renderFileDrawer(file) {
+    drawerTitle.textContent = file.file;
+    drawerSubtitle.textContent = `${file.removable_lines} removable lines across ${file.line_numbers.length} captured source entries.`;
+
+    const firstLine = file.line_numbers.length ? file.line_numbers[0] : 'n/a';
+    const lastLine = file.line_numbers.length ? file.line_numbers[file.line_numbers.length - 1] : 'n/a';
+
+    drawerBody.innerHTML = `
+      <div class="detail-grid">
+        <div class="detail-card">
+          <div class="detail-card-label">Removable LoC</div>
+          <div class="detail-card-value">${file.removable_lines}</div>
+        </div>
+        <div class="detail-card">
+          <div class="detail-card-label">Line range</div>
+          <div class="detail-card-value">${firstLine}-${lastLine}</div>
+        </div>
+      </div>
+      <div class="detail-section">
+        <h3>Source LoC</h3>
+        ${
+          file.snippets.length
+            ? `
+              <div class="source-panel">
+                <div class="source-header">
+                  <div>
+                    <div class="source-title">${escapeHtml(file.file)}</div>
+                    <div class="source-subtitle">Integrated source preview with syntax highlighting</div>
+                  </div>
+                  <div class="source-badge">${file.snippets.length} lines</div>
+                </div>
+                <div class="code-view">
+                  ${
+                    file.snippets.map(line => `
+                      <div class="code-line">
+                        <span class="line-number">${line.line_number ?? ''}</span>
+                        <span class="line-content">${highlightCode(line.content, file.file)}</span>
+                      </div>
+                    `).join('')
+                  }
+                </div>
+              </div>
+            `
+            : '<div class="empty-state">No captured source lines are available for this file.</div>'
+        }
+      </div>`;
+
+    inlineDrawer.classList.add('open');
+  }
+
+  function selectFile(fileName) {
+    if (activeFile === fileName) {
+      activeFile = null;
+      renderTable();
+      renderGraph();
+      closeDrawer();
+      return;
+    }
+
+    activeFile = fileName;
+    const file = FILES.find(item => item.file === fileName);
+    renderTable();
+    renderGraph();
+    if (file) {
+      renderFileDrawer(file);
+      inlineDrawer.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  }
+
+  function moveSelection(delta) {
+    const files = visibleFiles();
+    if (!files.length) return;
+    const currentIndex = files.findIndex(f => f.file === activeFile);
+    let nextIndex = currentIndex + delta;
+    if (currentIndex === -1) nextIndex = delta > 0 ? 0 : files.length - 1;
+    nextIndex = Math.max(0, Math.min(files.length - 1, nextIndex));
+    selectFile(files[nextIndex].file);
+  }
+
+  /* ── Exports ──────────────────────────────────────────────────────────── */
+  function exportCsv() {
+    const rows = [['file', 'removable_lines', 'line_span', 'pct_of_total', 'captured_lines']];
+    visibleFiles().forEach(file => {
+      const pct = TOTAL_LINES ? ((file.removable_lines / TOTAL_LINES) * 100).toFixed(2) : '0';
+      rows.push([file.file, file.removable_lines, getLineSpan(file), pct, file.line_numbers.length]);
+    });
+    const csv = rows.map(r => r.map(cell => {
+      const s = String(cell);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    }).join(',')).join('\n');
+    downloadFile(`prat-${FEATURE_NAME}-files.csv`, csv, 'text/csv');
+    showToast('CSV downloaded');
+  }
+
+  function exportJson() {
+    const payload = { feature: FEATURE_NAME, meta: META, files: FILES };
+    downloadFile(`prat-${FEATURE_NAME}-report.json`, JSON.stringify(payload, null, 2), 'application/json');
+    showToast('JSON downloaded');
+  }
+
+  /* ── Theme ────────────────────────────────────────────────────────────── */
+  function applyTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+    const dark = theme === 'dark';
+    themeIcon.textContent = dark ? '☀' : '🌙';
+    themeLabel.textContent = dark ? 'Light' : 'Dark';
+    try { localStorage.setItem('prat-theme', theme); } catch (e) { /* storage blocked */ }
+  }
+
+  function initTheme() {
+    let theme = 'light';
+    try { theme = localStorage.getItem('prat-theme') || ''; } catch (e) { theme = ''; }
+    if (!theme) {
+      theme = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+    }
+    applyTheme(theme);
+  }
+
+  /* ── Events ───────────────────────────────────────────────────────────── */
+  headers.forEach(header => {
+    function doSort() {
+      const col = header.dataset.col;
+      if (sortCol === col) {
+        sortAsc = !sortAsc;
+      } else {
+        sortCol = col;
+        sortAsc = col === 'file';
+      }
+      renderTable();
+    }
+    header.addEventListener('click', doSort);
+    header.addEventListener('keydown', evt => {
+      if (evt.key === 'Enter' || evt.key === ' ') { evt.preventDefault(); doSort(); }
+    });
+  });
+
+  function onFilterChange() {
+    filterQuery = filterInput.value;
+    if (activeFile && !visibleFiles().some(file => file.file === activeFile)) {
+      activeFile = null;
+      closeDrawer();
+    }
+    renderTable();
+    renderGraph();
+  }
+
+  filterInput.addEventListener('input', onFilterChange);
+  filterClear.addEventListener('click', () => {
+    filterInput.value = '';
+    filterInput.focus();
+    onFilterChange();
+  });
+
+  drawerClose.addEventListener('click', () => {
+    activeFile = null;
+    renderTable();
+    renderGraph();
+    closeDrawer();
+  });
+
+  copyPathBtn.addEventListener('click', () => {
+    if (activeFile) copyText(activeFile, 'Path');
+  });
+  copyCodeBtn.addEventListener('click', () => {
+    const file = FILES.find(f => f.file === activeFile);
+    if (file) {
+      const code = file.snippets.map(s => (s.line_number != null ? s.line_number + '\t' : '') + s.content).join('\n');
+      copyText(code, 'Source');
+    }
+  });
+
+  document.getElementById('exportCsv').addEventListener('click', exportCsv);
+  document.getElementById('exportJson').addEventListener('click', exportJson);
+  document.getElementById('copyList').addEventListener('click', () => {
+    copyText(visibleFiles().map(f => f.file).join('\n'), 'File list');
+  });
+
+  themeToggle.addEventListener('click', () => {
+    const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    applyTheme(next);
+  });
+
+  helpToggle.addEventListener('click', () => helpPopover.classList.toggle('open'));
+
+  document.addEventListener('keydown', evt => {
+    const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName);
+    if (evt.key === '/' && !typing) { evt.preventDefault(); filterInput.focus(); return; }
+    if (evt.key === 'Escape') {
+      if (helpPopover.classList.contains('open')) { helpPopover.classList.remove('open'); return; }
+      if (filterQuery) { filterInput.value = ''; onFilterChange(); return; }
+      if (activeFile) { activeFile = null; renderTable(); renderGraph(); closeDrawer(); }
+      return;
+    }
+    if (typing) return;
+    if (evt.key === '?') { evt.preventDefault(); helpPopover.classList.toggle('open'); }
+    else if (evt.key === 't') { themeToggle.click(); }
+    else if (evt.key === 'j' || evt.key === 'ArrowDown') { evt.preventDefault(); moveSelection(1); }
+    else if (evt.key === 'k' || evt.key === 'ArrowUp') { evt.preventDefault(); moveSelection(-1); }
+  });
+
+  /* ── Init ─────────────────────────────────────────────────────────────── */
+  initTheme();
+  renderTable();
+  renderGraph();
+  closeDrawer();
+})();
+</script>
+</body>
+</html>

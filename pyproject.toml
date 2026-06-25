@@ -34,6 +34,11 @@ prat = "prat.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+# Ship the self-contained web UI template (and its docs) inside the wheel so
+# prat.reporting.generate_html_report can load it at runtime.
+"prat.web" = ["*.html", "*.md"]
+
 [tool.ruff]
 target-version = "py39"
 line-length = 100
