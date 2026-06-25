@@ -47,7 +47,7 @@ def get_adapter(project_path: str) -> Optional[ProjectAdapter]:
     Path(project_path)
 
     # Order matters: specific adapters first, generic ones last.
-    adapter_classes = [
+    adapter_classes: list[type[ProjectAdapter]] = [
         MosquittoAdapter,
         FFmpegAdapter,
         UamqpAdapter,
@@ -58,7 +58,7 @@ def get_adapter(project_path: str) -> Optional[ProjectAdapter]:
     ]
 
     for adapter_cls in adapter_classes:
-        adapter = adapter_cls(project_path)
+        adapter = adapter_cls(project_path)  # type: ignore[abstract]
         if adapter.validate_project():
             return adapter
 

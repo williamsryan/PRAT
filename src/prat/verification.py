@@ -16,7 +16,7 @@ import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from .symbolic import SymbolicResult, replay_tests
 
@@ -56,7 +56,7 @@ class VerificationResult:
 
 def verify_correctness(
     project_path: str,
-    adapter=None,
+    adapter: Optional[Any] = None,
     build_command: Optional[list[str]] = None,
     test_commands: Optional[list[list[str]]] = None,
     symbolic_result: Optional[SymbolicResult] = None,
@@ -165,7 +165,7 @@ def verify_correctness(
 def _rebuild(
     project_path: str,
     build_command: Optional[list[str]],
-    adapter=None,
+    adapter: Optional[Any] = None,
 ) -> bool:
     """Rebuild the project to verify it still compiles."""
     if build_command is not None:
@@ -201,7 +201,7 @@ def _rebuild(
 
 def _discover_test_commands(
     project_path: str,
-    adapter=None,
+    adapter: Optional[Any] = None,
     override: Optional[list[list[str]]] = None,
 ) -> list[tuple]:
     """Discover available test commands. Returns list of (name, command)."""

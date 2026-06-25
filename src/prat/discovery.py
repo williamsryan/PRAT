@@ -61,7 +61,7 @@ def discover_features_cmake(project_path: str) -> list[Feature]:
     Returns:
         List of discovered features
     """
-    features = []
+    features: list[Feature] = []
     cmake_file = Path(project_path) / "CMakeLists.txt"
 
     if not cmake_file.exists():
@@ -109,7 +109,7 @@ def discover_features_cmake(project_path: str) -> list[Feature]:
                 for line in result.stdout.splitlines():
                     if ':BOOL=' in line:
                         # Format: NAME:BOOL=ON
-                        match = re.match(r'(\w+):BOOL=(ON|OFF)', line)
+                        match = re.match(r'(\w+):BOOL=(ON|OFF)', line)  # type: ignore[assignment]
                         if match:
                             name = match.group(1)
                             value = match.group(2)
@@ -145,7 +145,7 @@ def discover_features_autotools(project_path: str) -> list[Feature]:
     Returns:
         List of discovered features
     """
-    features = []
+    features: list[Feature] = []
     configure_script = Path(project_path) / "configure"
 
     if not configure_script.exists():
@@ -220,7 +220,7 @@ def discover_features_cargo(project_path: str) -> list[Feature]:
     Returns:
         List of discovered features
     """
-    features = []
+    features: list[Feature] = []
     cargo_toml = Path(project_path) / "Cargo.toml"
 
     if not cargo_toml.exists():
@@ -229,7 +229,7 @@ def discover_features_cargo(project_path: str) -> list[Feature]:
     try:
         # Try to use toml library if available
         try:
-            import toml
+            import toml  # type: ignore[import-untyped]
             data = toml.load(cargo_toml)
 
             if 'features' in data:
@@ -306,7 +306,7 @@ def discover_features_make(project_path: str) -> list[Feature]:
     Returns:
         List of discovered features
     """
-    features = []
+    features: list[Feature] = []
     makefile = Path(project_path) / "Makefile"
     config_mk = Path(project_path) / "config.mk"
 
@@ -367,7 +367,7 @@ def discover_features_make(project_path: str) -> list[Feature]:
     return features
 
 
-def print_features(features: list[Feature], project_name: str = "Project"):
+def print_features(features: list[Feature], project_name: str = "Project") -> None:
     """
     Print discovered features in a readable format.
 

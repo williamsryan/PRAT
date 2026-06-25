@@ -44,26 +44,26 @@ class ProgressIndicator:
         self.current_step = 0
         self.total_steps = 7
 
-    def step(self, message: str):
+    def step(self, message: str) -> None:
         """Print progress step."""
         self.current_step += 1
         prefix = f"[{self.current_step}/{self.total_steps}]"
         print(f"\n{prefix} {message}")
 
-    def info(self, message: str):
+    def info(self, message: str) -> None:
         """Print info message."""
         if self.verbose:
             print(f"    ℹ {message}")
 
-    def success(self, message: str):
+    def success(self, message: str) -> None:
         """Print success message."""
         print(f"    ✓ {message}")
 
-    def error(self, message: str):
+    def error(self, message: str) -> None:
         """Print error message."""
         print(f"    ✗ {message}")
 
-    def warning(self, message: str):
+    def warning(self, message: str) -> None:
         """Print warning message."""
         print(f"    ⚠ {message}")
 
@@ -460,7 +460,7 @@ def run_reproduce(argv: list[str]) -> int:
     return 0
 
 
-def main():
+def main() -> int:
     """Main CLI entry point."""
     # Subcommand: `prat reproduce ...` (handled before the analysis arg parser).
     if len(sys.argv) > 1 and sys.argv[1] == "reproduce":

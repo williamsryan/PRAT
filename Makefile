@@ -216,11 +216,11 @@ clean-venv:  ## Delete virtual environment
 clean: clean-results  ## Clean results (keep venv and App/)
 
 .PHONY: lint
-lint:  ## Run ruff linter
-	$(VENV)/bin/ruff check src/prat/
+lint:  ## Run ruff linter (src/)
+	$(VENV)/bin/ruff check src/
 
 .PHONY: typecheck
-typecheck:  ## Run mypy (advisory)
+typecheck:  ## Run mypy type checker (src/prat/)
 	$(VENV)/bin/mypy src/prat/
 
 .PHONY: package-check
