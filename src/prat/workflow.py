@@ -65,7 +65,7 @@ class WorkflowResult:
         result['checkpoint'] = self.checkpoint.value
         return result
 
-    def save_checkpoint(self, output_dir: str):
+    def save_checkpoint(self, output_dir: str) -> None:
         """
         Save workflow state to checkpoint file.
 

@@ -116,6 +116,7 @@ def build_docker_image(
         )
 
         # Stream output
+        assert process.stdout is not None
         for line in process.stdout:
             print(line, end='')
 
@@ -257,6 +258,7 @@ def run_docker_container(
             stderr_lines = []
 
             # Stream stdout
+            assert process.stdout is not None
             for line in process.stdout:
                 print(line, end='')
                 stdout_lines.append(line)
@@ -265,6 +267,7 @@ def run_docker_container(
             process.wait(timeout=timeout)
 
             # Capture stderr
+            assert process.stderr is not None
             stderr = process.stderr.read()
             if stderr:
                 print(stderr, end='')

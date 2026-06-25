@@ -51,8 +51,8 @@ def generate_coverage(
     if coverage_tool == "auto":
         coverage_tool = _detect_coverage_tool()
 
-    coverage_files = []
-    missing_files = []
+    coverage_files: list[str] = []
+    missing_files: list[str] = []
 
     try:
         # Generate coverage based on build system
@@ -169,8 +169,8 @@ def _generate_coverage_make(
     coverage_tool: str
 ) -> tuple[list[str], list[str]]:
     """Generate coverage for Make-based projects (e.g., Mosquitto)."""
-    coverage_files = []
-    missing_files = []
+    coverage_files: list[str] = []
+    missing_files: list[str] = []
 
     # Run coverage on src and lib directories
     src_dir = Path(project_path) / "src"
@@ -260,16 +260,16 @@ def _generate_coverage_autotools(
     coverage_tool: str
 ) -> tuple[list[str], list[str]]:
     """Generate coverage for Autotools-based projects (e.g., FFmpeg)."""
-    coverage_files = []
-    missing_files = []
+    coverage_files: list[str] = []
+    missing_files: list[str] = []
 
-    project_path = Path(project_path)
+    project = Path(project_path)
 
     # FFmpeg-specific directories
     lib_dirs = ["libavcodec", "libavfilter", "libavformat"]
 
     for lib_dir in lib_dirs:
-        lib_path = project_path / lib_dir
+        lib_path = project / lib_dir
         if not lib_path.exists():
             continue
 
@@ -282,13 +282,13 @@ def _generate_coverage_autotools(
         subprocess.run(
             cmd,
             shell=True,
-            cwd=project_path,
+            cwd=project,
             capture_output=True,
             text=True
         )
 
         # Collect generated .gcov files from project root
-        for item in project_path.iterdir():
+        for item in project.iterdir():
             if item.suffix == ".gcov":
                 coverage_files.append(str(item))
 
@@ -300,8 +300,8 @@ def _generate_coverage_cargo(
     coverage_tool: str
 ) -> tuple[list[str], list[str]]:
     """Generate coverage for Cargo-based Rust projects."""
-    coverage_files = []
-    missing_files = []
+    coverage_files: list[str] = []
+    missing_files: list[str] = []
 
     deps_dir = Path(project_path) / "target" / "debug" / "deps"
 
@@ -406,8 +406,8 @@ def generate_coverage_with_adapter(
     source_dirs = adapter.source_directories
     project_path = Path(str(adapter.project_path))
 
-    coverage_files = []
-    missing_files = []
+    coverage_files: list[str] = []
+    missing_files: list[str] = []
 
     try:
         # Step 1: Execute binary/tests to generate .gcda profile data

@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 
 class BuildSystem(Enum):
@@ -45,22 +45,22 @@ def detect_build_system(project_path: str) -> BuildSystem:
     Returns:
         BuildSystem enum value indicating detected build system
     """
-    project_path = Path(project_path)
+    project = Path(project_path)
 
     # Check for Cargo.toml (Rust)
-    if (project_path / "Cargo.toml").exists():
+    if (project / "Cargo.toml").exists():
         return BuildSystem.CARGO
 
     # Check for CMakeLists.txt (CMake)
-    if (project_path / "CMakeLists.txt").exists():
+    if (project / "CMakeLists.txt").exists():
         return BuildSystem.CMAKE
 
     # Check for configure script (Autotools)
-    if (project_path / "configure").exists():
+    if (project / "configure").exists():
         return BuildSystem.AUTOTOOLS
 
     # Check for Makefile (Make)
-    if (project_path / "Makefile").exists():
+    if (project / "Makefile").exists():
         return BuildSystem.MAKE
 
     return BuildSystem.UNKNOWN
@@ -426,7 +426,7 @@ def _compile_cargo(
 
 
 def compile_with_adapter(
-    adapter,
+    adapter: Any,
     feature: str,
     enabled: bool,
     run_tests: bool = False
