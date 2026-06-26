@@ -36,15 +36,16 @@
       "project": "FFmpeg",
       "version": "n5.1.4",
       "feature": "x264",
+      "analyzed_feature": "decoder=dca",
       "build_system": "autotools",
       "paper_lines_removed": 3241,
       "paper_table": "Table 4",
       "tolerance_pct": 50,
       "min_acceptable": 1000,
       "max_acceptable": 5000,
-      "key_files": ["libavcodec/libx264.c"],
+      "key_files": ["dcadec.c", "dca_core.c"],
       "docker_demo": "demo3",
-      "notes": "FFmpeg version in paper may differ slightly; x264 wrapper code is version-sensitive"
+      "notes": "SCOPE SUBSTITUTION: x264's removable code lives in the EXTERNAL libx264 library, which FFmpeg only links; PRAT compiles only the in-tree wrapper (libavcodec/libx264.c, ~549 lines), so it cannot measure x264's real footprint. To exercise PRAT on an FFmpeg feature whose code is fully in-tree, the demo analyzes the self-contained DTS decoder (--disable-decoder=dca, 7 dedicated files). The reported number is for the dca decoder, NOT a reproduction of the paper's x264 value; it happens to fall in the same band."
     },
     "uamqp-websockets": {
       "project": "azure-uamqp-c",

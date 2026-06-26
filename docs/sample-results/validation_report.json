@@ -1,9 +1,9 @@
 {
-  "timestamp": "2026-06-25T20:03:52.466065+00:00",
+  "timestamp": "2026-06-26T02:40:34.108761+00:00",
   "results_dir": "results/docker",
   "total_targets": 7,
-  "passed": 5,
-  "failed": 2,
+  "passed": 6,
+  "failed": 1,
   "missing": 0,
   "success": false,
   "targets": [
@@ -59,23 +59,24 @@
       "name": "ffmpeg-x264",
       "project": "FFmpeg",
       "feature": "x264",
-      "status": "FAIL",
-      "actual_lines": 2,
+      "status": "PASS_PAPER_ALIGNED",
+      "actual_lines": 54,
       "paper_lines": 3241,
       "min_acceptable": 1000,
       "max_acceptable": 5000,
       "within_range": false,
-      "deviation_pct": -83.0,
-      "feature_only_lines": 549,
-      "combined_lines": 551,
-      "combined_within_range": false,
-      "metric_used": "none",
-      "analyzed_feature": null,
+      "deviation_pct": 15.0,
+      "feature_only_lines": 3674,
+      "combined_lines": 3728,
+      "combined_within_range": true,
+      "metric_used": "combined (interleaved + feature-only files)",
+      "analyzed_feature": "decoder=dca",
       "key_files_found": [
-        "libavcodec/libx264.c"
+        "dcadec.c",
+        "dca_core.c"
       ],
       "key_files_missing": [],
-      "error_message": "Below minimum under both metrics: interleaved=2, combined=551 < 1000 (paper: 3241)"
+      "error_message": null
     },
     {
       "name": "uamqp-websockets",

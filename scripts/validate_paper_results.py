@@ -304,7 +304,7 @@ def print_report(report: ValidationReport) -> None:
             print(f"       ⚠️  Missing key files: {', '.join(t.key_files_missing)}")
         if t.analyzed_feature:
             print(f"       ⓘ  SUBSTITUTE feature analyzed: '{t.analyzed_feature}' "
-                  f"(paper feature '{t.feature}' unavailable — codebase drift; "
+                  f"(paper feature '{t.feature}' not directly measurable here — see notes; "
                   f"NOT a reproduction of the paper value)")
 
     print()

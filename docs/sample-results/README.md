@@ -25,16 +25,17 @@ for the full methodology and analysis.
 | mosquitto-bridge | PASS | 545 | 989 | 623 | 300–900 |
 | uamqp-websockets | PASS (paper-aligned) | 0 | 1282 | 890 | 200–2000 |
 | aom-encoder | PASS (dynamic coverage) | 8691 | 54060 | 28000 | 5000–50000 |
-| ffmpeg-x264 | FAIL (wrapper-only) | 2 | 551 | 3241 | 1000–5000 |
+| ffmpeg-x264 | runs via substitute `decoder=dca` (scope) | 54 | 3728 | 3241* | 1000–5000 |
 | opendds-security | FAIL (runs; static over-counts generated code) | 49677 | 72262 | 2800 | 500–5000 |
 | quiche-ffdhe | runs via substitute `qlog` (drift) | 420 | 420 | 450* | 100–1500 |
 
-4 of 7 reproduce the paper's own targets within range (mosquitto TLS/BRIDGE directly,
-azure-uamqp-c via the feature-file metric, libaom via dynamic coverage). quiche runs in range
-via a documented **substitute** feature (`qlog`) because the paper's `ffdhe` is not a Cargo
-feature in 0.20.1 (codebase drift) — *not* a reproduction of the ffdhe value. OpenDDS builds and
-runs end-to-end but its static differential is dominated by generated IDL type-support churn —
-see `REPRODUCIBILITY.md`.
+6 of 7 produce in-range results: 3 are the paper's own targets measured directly (mosquitto
+TLS/BRIDGE; libaom via dynamic coverage), 1 via the paper-aligned feature-file metric
+(azure-uamqp-c), and 2 via documented **substitute** features — ffmpeg→`decoder=dca` (x264's
+code is in the external libx264 library PRAT doesn't compile) and quiche→`qlog` (`ffdhe` is not a
+Cargo feature in 0.20.1). Substitutes are flagged inline as NOT reproductions of the paper value.
+OpenDDS builds and runs end-to-end but its static differential is dominated by generated IDL
+type-support churn — see `REPRODUCIBILITY.md`.
 
 To regenerate: `make paper-check` (or `prat reproduce --all`), then
 `python3 scripts/validate_paper_results.py results/docker/ --json results/validation_report.json`.

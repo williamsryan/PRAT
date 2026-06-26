@@ -245,7 +245,8 @@ PRAT reports both, and never silently substitutes one for the other:
 |-------------------|---------|-------------|----------|-------------|
 | Interleaved via `#ifdef` in shared files | Mosquitto TLS / BRIDGE | high | ~same | ✅ in range |
 | Dedicated module, modest size | azure-uamqp-c WebSockets (`wsio.c`, `uws_client.c`) | ~0 | moderate | 🟢 in range via combined |
-| Dedicated wrapper only | FFmpeg `libavcodec/libx264.c` | ~0 | small | ❌ below range |
+| Dedicated wrapper only (external lib) | FFmpeg x264 wrapper `libavcodec/libx264.c` | ~0 | small | ❌ real code is external (libx264) |
+| In-tree internal codec (substitute) | FFmpeg DTS decoder (`decoder=dca`, 7 files) | 54 | 3728 | ✅ in range |
 | Large dedicated subsystem (static) | libaom AV1 encoder (187 files) | low | very high | ❌ static over-counts |
 | Large dedicated subsystem (dynamic) | libaom AV1 encoder, real encode/decode | 8691 | 54060 | ✅ in range (interleaved) |
 | Generated-code churn | OpenDDS SECURITY (IDL type-support) | very high | very high | ❌ generated diff swamps it |
@@ -280,10 +281,11 @@ changes the IDL set (see `REPRODUCIBILITY.md` §6.5).
 All seven paper targets now ship as self-contained Docker demos (`docker/demo1`–`demo7`) with
 pinned tags whose commits are verified equal to upstream (see `REPRODUCIBILITY.md` §2). Four
 reproduce within range: Mosquitto TLS/BRIDGE directly, azure-uamqp-c via the combined
-(feature-file) metric, and libaom via dynamic coverage. OpenDDS builds and runs end-to-end (a
-full ACE/TAO + configure/MPC environment) but its static differential is dominated by generated
-IDL type-support churn, so it exceeds the range. FFmpeg under-counts (it sees only the in-tree
-x264 wrapper, not the external libx264 library). quiche's paper feature `ffdhe` is not a Cargo
-feature in 0.20.1 (codebase drift), so the demo analyzes a documented **substitute** (`qlog`,
-an interleaved feature) via stable `cargo-llvm-cov` and lands in range — labeled as a substitute,
-not an ffdhe reproduction. No tolerance ranges were altered.
+(feature-file) metric, and libaom via dynamic coverage. Two more run in range via documented
+**substitute** features, each flagged inline as not reproducing the paper value: FFmpeg analyzes
+the in-tree DTS decoder (`decoder=dca`, 3728) because x264's real code is the *external* libx264
+library PRAT never compiles (it sees only the ~549-line in-tree wrapper); quiche analyzes `qlog`
+(420) because the paper's `ffdhe` is not a Cargo feature in 0.20.1 (codebase drift), via stable
+`cargo-llvm-cov`. That is 6 of 7 in range. OpenDDS builds and runs end-to-end (a full ACE/TAO +
+configure/MPC environment) but its static differential is dominated by generated IDL type-support
+churn, so it exceeds the range. No tolerance ranges were altered.

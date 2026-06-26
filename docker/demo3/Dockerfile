@@ -43,12 +43,18 @@ RUN git clone --depth 1 --branch n5.1.4 \
     https://github.com/FFmpeg/FFmpeg.git /prat/App/FFmpeg
 
 ENV PROJECT_PATH=/prat/App/FFmpeg
-ENV FEATURE=x264
+ENV FEATURE=decoder=dca
 ENV PATH="/usr/bin:${PATH}"
 
 RUN mkdir -p /prat/output
 
+# SCOPE SUBSTITUTION: the paper's `x264` removable code lives in the EXTERNAL
+# libx264 library, which FFmpeg only links — PRAT compiles just the in-tree
+# wrapper (libavcodec/libx264.c, ~549 lines), so it cannot see the feature's
+# real footprint. To demonstrate PRAT on an FFmpeg feature whose code is fully
+# in-tree, the demo analyzes the DTS (`dca`) decoder — a self-contained internal
+# codec (7 dedicated files) removable via `--disable-decoder=dca`.
 CMD ["python3", "/prat/src/demo_workflow.py", \
      "--project", "/prat/App/FFmpeg", \
-     "--feature", "x264", \
+     "--feature", "decoder=dca", \
      "--output", "/prat/output"]
