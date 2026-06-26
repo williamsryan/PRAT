@@ -31,4 +31,4 @@ First public release of the research artifact accompanying the ACM TOSEM 2021 pa
   a documented in-tree substitute feature is analyzed and clearly labeled as *not* a
   reproduction of the paper value. No acceptance ranges were tuned to pass.
 
-[1.0.0]: https://github.com/<your-username>/PRAT/releases/tag/v1.0.0
+[1.0.0]: https://github.com/williamsryan/PRAT/releases/tag/v1.0.0

@@ -31,8 +31,7 @@ dependencies = [
 
 [project.urls]
 "Paper (ACM TOSEM)" = "https://doi.org/10.1145/3487568"
-# TODO: set to your public repository after moving it to your personal account.
-Repository = "https://github.com/your-username/PRAT"
+Repository = "https://github.com/williamsryan/PRAT"
 
 [project.optional-dependencies]
 dev = [

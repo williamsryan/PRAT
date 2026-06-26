@@ -1,5 +1,6 @@
 # PRAT — Protocol Representation and Analysis Toolkit
 
+[![CI](https://github.com/williamsryan/PRAT/actions/workflows/ci.yml/badge.svg)](https://github.com/williamsryan/PRAT/actions/workflows/ci.yml)
 [![DOI](https://img.shields.io/badge/DOI-10.1145%2F3487568-blue.svg)](https://doi.org/10.1145/3487568)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue.svg)](pyproject.toml)
