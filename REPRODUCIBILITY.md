@@ -4,7 +4,7 @@
 coverage analysis for feature identification/removal.
 **Paper:** Williams et al., *Guided Feature Identification and Removal for
 Resource-constrained Firmware*, ACM TOSEM 2021 (doi:10.1145/3487568), Table 4.
-**Date of run:** 2026-06-25
+**Date of run:** 2026-06-26
 **Prepared for:** independent reproducibility / code-audit review.
 
 > **Read this first.** This report is deliberately honest. It does **not** claim 7/7
@@ -131,7 +131,7 @@ others out of their ranges. This is a genuine methodology gap, not a bug.
 
 ---
 
-## 5. Code fixes applied (all legitimate engineering; full test suite passes: 168/168)
+## 5. Code fixes applied (all legitimate engineering; full test suite passes: 169/169)
 
 These were real defects that prevented the CMake/autotools demos from ever completing. None of
 them tune output toward the paper numbers.
@@ -293,7 +293,7 @@ number-tuning: a representative encode/decode is run and whatever count results 
 
 ```bash
 cd /Users/ryanpwil/git/PRAT
-python3 -m pytest src/tests/ -q                 # 168 unit tests
+python3 -m pytest src/tests/ -q                 # 169 unit tests
 
 # One demo at a time (recommended; --cleanup removes each large image after run):
 python3 src/demo-runner.py --build mosquitto-tls
@@ -301,9 +301,9 @@ python3 src/demo-runner.py --run   mosquitto-tls --cleanup --output results/dock
 #   ...or simply:  prat reproduce mosquitto-tls   (disk-safe wrapper)
 
 # Demo names: mosquitto-tls, mosquitto-bridge, ffmpeg-x264, uamqp-websockets,
-#             aom-encoder, opendds-security  (quiche-ffdhe is blocked — see §6.6)
+#             aom-encoder, opendds-security, quiche-ffdhe  (all seven run end-to-end)
 # Note: opendds-security builds ACE+TAO+OpenDDS twice (~15 min); aom runs a real
-#       encode/decode for dynamic coverage.
+#       encode/decode for dynamic coverage; quiche uses cargo-llvm-cov (qlog substitute).
 
 # Validate everything that has results against the paper numbers:
 python3 scripts/validate_paper_results.py results/docker/ --json results/validation_report.json
@@ -325,14 +325,13 @@ Each `manifest.json` records the exact upstream commit and compiler versions for
 | `FDG.dot` | feature-dependency graph |
 | `diff_<FEATURE>/` | retained coverage diffs |
 | `results/validation_report.json` | consolidated validation across all 7 targets |
-| `results/docker/quiche-ffdhe/BLOCKED.json` | blocked-status record + evidence |
+| `quiche-ffdhe/workflow_checkpoint.json` | quiche `qlog`-substitute run (420 lines); see §6.6 |
 
 ---
 
 ## 10. What full reproduction would require
 
 - **aom — DONE.** Switched to dynamic coverage (real encode/decode); now in range (§6.7).
-- **opendds — environment DONE; count not reconcilable via static diff.** The working
 - **opendds — environment DONE; dependency isolation + generated-IDL filter applied; core plugin
   in range.** The ACE/TAO + configure/MPC build runs end-to-end. Holding `--openssl --xerces3`
   constant (toggling only `--security`) and excluding generated IDL cut the differential from
@@ -345,14 +344,12 @@ Each `manifest.json` records the exact upstream commit and compiler versions for
   external libx264 library, which PRAT never compiles. The demo therefore analyzes a real in-tree
   feature instead — the DTS decoder (`decoder=dca` = 3728, in range, §6.3). Reproducing x264's
   exact figure would require analyzing the libx264 library itself (a different experiment).
-- **quiche — nonexistent feature (irreconcilable as posed).** `ffdhe` is not a Cargo feature in
 - **quiche — paper feature absent; substitute analyzed (codebase drift).** `ffdhe` is not a
   Cargo feature in quiche 0.20.1 (it is BoringSSL C code under `deps/boringssl`, gated at the C
   build level). The Rust pipeline now works on a stable toolchain (BoringSSL submodule + Go +
   `cargo-llvm-cov` → lcov → gcov) and the demo analyzes the real `qlog` feature (420 lines).
   Reproducing the paper's actual `ffdhe` would require analyzing BoringSSL's C build directly —
   a different codebase/experiment.
-- **Bottom line:** 4/7 reproduce the paper's own targets within range (2 directly, 1 via the
 - **Bottom line:** 6/7 produce in-range results — 3 are the paper's own targets measured
   directly (mosquitto TLS/BRIDGE; libaom via dynamic coverage), 1 via the paper-aligned
   feature-file metric on the real feature (azure-uamqp-c), and 2 via documented **substitute**

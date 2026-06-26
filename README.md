@@ -99,17 +99,25 @@ python3 src/demo-runner.py --run-all --output demo_output
 ```
 src/prat/
 ├── workflow.py        # End-to-end orchestration with checkpoints
+├── batch.py           # Multi-feature batch analysis (paper Algorithm 1)
+├── discovery.py       # Automatic feature flag discovery
 ├── compilation.py     # Multi-build-system compilation (Make, CMake, Autotools, Cargo)
-├── coverage.py        # gcov/llvm-cov coverage generation
+├── coverage.py        # gcov/llvm-cov/cargo-llvm-cov coverage generation
 ├── diff.py            # Coverage file comparison
 ├── extraction.py      # Feature-specific line identification
+├── removal.py         # Automated feature code removal (line- and file-level)
+├── verification.py    # Post-removal correctness verification
+├── symbolic.py        # KLEE symbolic test generation (experimental)
+├── feature_graph.py   # Interactive feature-dependency graph (D3.js)
 ├── reporting.py       # HTML report + DOT graph generation
-├── discovery.py       # Automatic feature flag discovery
 ├── docker_runner.py   # Docker container orchestration
 └── adapters/          # Project-specific build adapters
     ├── base.py        # Abstract adapter interface
-    ├── mosquitto.py   # Mosquitto MQTT broker
-    ├── ffmpeg.py      # FFmpeg multimedia framework
+    ├── mosquitto.py   # Mosquitto MQTT broker (Make)
+    ├── ffmpeg.py      # FFmpeg multimedia framework (Autotools)
+    ├── uamqp.py       # azure-uamqp-c (CMake)
+    ├── opendds.py     # OpenDDS (MPC/ACE-TAO)
+    ├── aom.py         # libaom AV1 codec (CMake)
     ├── cmake.py       # Generic CMake projects
     └── rust.py        # Cargo/Rust projects
 ```

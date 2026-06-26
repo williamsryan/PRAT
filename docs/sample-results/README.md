@@ -14,8 +14,10 @@ for the full methodology and analysis.
   `total_feature_lines` = paper-aligned combined; `feature_only_source_paths`).
 - `<demo>/manifest.json` — provenance: checked-out git commit (verified equal to
   the upstream tag), adapter, build system, compiler/tool versions, platform.
-- `quiche-ffdhe/BLOCKED.json` — evidence that the `ffdhe` feature does not exist
-  in quiche 0.20.1 (the demo cannot be constructed as specified).
+- `quiche-ffdhe/workflow_checkpoint.json` — the quiche demo run. `ffdhe` is not a Cargo
+  feature in quiche 0.20.1 (it is BoringSSL C config), so the demo analyzes the real `qlog`
+  feature instead (420 lines) — flagged as a **substitute**, not a reproduction of the paper's
+  ffdhe value. See [`../../REPRODUCIBILITY.md`](../../REPRODUCIBILITY.md) §6.6.
 
 ## Summary (this snapshot)
 
