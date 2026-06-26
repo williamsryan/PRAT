@@ -23,7 +23,7 @@ Resource-constrained Firmware*, ACM TOSEM 2021 (doi:10.1145/3487568), Table 4.
 | 2 | mosquitto-bridge | BRIDGE | ✅ **PASS** | 545 | 623 | 300–900 |
 | 3 | ffmpeg-x264 | x264 → **dca**\*\* | 🟢 runs via substitute feature | 3728 | 3241\*\* | 1000–5000 |
 | 4 | uamqp-websockets | use_wsio | 🟢 **PASS (paper-aligned)** | 1282 | 890 | 200–2000 |
-| 5 | opendds-security | SECURITY | ⚠️ builds & runs; over range | 49677 / 72262 | 2800 | 500–5000 |
+| 5 | opendds-security | SECURITY | ⚠️ builds & runs; over range | 10224 / 17021 | 2800 | 500–5000 |
 | 6 | quiche-ffdhe | ffdhe → **qlog**\* | 🟢 runs via substitute feature | 420 | 450\* | 100–1500 |
 | 7 | aom-encoder | CONFIG_AV1_ENCODER | ✅ **PASS (dynamic coverage)** | 8691 | 28000 | 5000–50000 |
 
@@ -42,8 +42,9 @@ of x264; its landing in the same band is coincidental.
 (1, 2 interleaved; 7 via dynamic coverage), 1 via the paper-aligned feature-file metric on the
 real feature (4), and 2 via documented **substitute** features (3 ffmpeg, 6 quiche) because the
 paper's exact feature is not measurable by source-level differential (external library /
-nonexistent Cargo feature). The 7th (5, OpenDDS) builds and runs end-to-end but its static
-differential over-counts generated code (see §6.5).
+nonexistent Cargo feature). The 7th (5, OpenDDS) builds and runs end-to-end; after isolating
+dependencies and filtering generated IDL its differential is 17021 — the core DDS Security
+plugin (4802) is in range, but the full `--security` footprint pulls in discovery/ICE deps (see §6.5).
 
 `make paper-check` / `validate_paper_results.py` reports **6 passed, 1 failed, 0 missing**
 (ffmpeg and quiche pass via documented substitute features; exits non-zero only because of
@@ -204,36 +205,38 @@ feature-only 1282 = uws_client.c 728 + wsio.c 289 + main.c 106 + utf8_checker.c 
 uws_frame_encoder.c 62 + iot_c_utility.c 32. Combined 1282 lands in range and is near the paper
 value.
 
-### ⚠️ 5. opendds-security — builds & runs end-to-end, but over range (interleaved 49677 / combined 72262; paper 2800; range 500–5000)
-**Working environment now established.** OpenDDS DDS-3.25 has **no top-level `CMakeLists.txt`**;
-it builds via a Perl `configure` + MPC (`*.mwc`) system on ACE/TAO. The rewritten
-`OpenDDSAdapter` drives this directly: `./configure --prefix=/usr/local [--security] --doc-group`,
-appends `--coverage` flags to ACE's generated `platform_macros.GNU`, sources `setenv.sh`, and
-runs `make -j`. Both configs build cleanly (~6 min each on this host) and the full PRAT
-workflow completes (`success: true`).
+### ⚠️ 5. opendds-security — builds & runs end-to-end, but over range (interleaved 10224 / combined 17021; paper 2800; range 500–5000)
+**Working environment established.** OpenDDS DDS-3.25 has **no top-level `CMakeLists.txt`**; it
+builds via a Perl `configure` + MPC (`*.mwc`) system on ACE/TAO. The rewritten `OpenDDSAdapter`
+drives this directly and applies two principled reductions:
+- **Dependency isolation** — `--security` *implies* `--openssl` and `--xerces3` (the latter also
+  enables QoS-XML handling). Both flags are held ON in the feature-disabled build too, so only
+  `--security` is toggled (the same technique used for FFmpeg/x264). This removes the QoS-XML
+  subsystem (`dds_qos.cpp`, etc.) from the differential.
+- **Generated-IDL filter** — TAO/OpenDDS IDL-compiler output (`*TypeSupportImpl.cpp`,
+  `*C.cpp`/`*S.cpp`, …) is excluded; it regenerates *wholesale* when `--security` adds IDL types
+  (it alone was ~49k lines / 63 % of the raw count) and is mechanical churn, not feature source.
 
-**Why the count is ~25× the paper (the interesting finding).** The static differential is
-dominated by **generated IDL type-support code**, not hand-written security logic:
+These cut the raw 72 262 down to **17 021** combined (interleaved 10 224 + feature-only 6 797).
 
-| File | Lines | Kind |
-|------|-------|------|
-| RtpsCoreTypeSupportImpl.cpp | 31194 | generated (IDL type support) — **63% of interleaved** |
-| TypeLookupTypeSupportImpl.cpp | 5709 | generated |
-| DdsSecurityCoreTypeSupportImpl.cpp | 4822 | generated (feature-only) |
-| CryptoBuiltInTypeSupportImpl.cpp | 2370 | generated (feature-only) |
-| CryptoBuiltInImpl.cpp | 1235 | **hand-written security** |
-| AccessControlBuiltInImpl.cpp | 836 | **hand-written security** |
-| AuthenticationBuiltInImpl.cpp | 767 | **hand-written security** |
+**The core DDS Security plugin reproduces; the rest is security-adjacent.** Of the feature-only
+total, the DDS Security **plugin** subsystem (`dds/DCPS/security/`, non-generated) is exactly
+**4 802 lines across 32 files** (CryptoBuiltInImpl 1235, AccessControlBuiltInImpl 836,
+AuthenticationBuiltInImpl 767, SSL/* DiffieHellman/Certificate/PrivateKey, AccessControl/*
+Permissions/Governance, …) — squarely in the 500–5000 band and the natural mapping to the
+paper's "SECURITY." The remaining ~12k is **security-adjacent** code that `--security`
+necessarily co-enables: secure-discovery hooks (`Sedp.cpp` 2069, `Spdp.cpp` 1683, `Utils.cpp`
+1101, RtpsUdp transport ~1050 — real but inflated by static line-shift), ICE/STUN for secure
+NAT traversal (~2k), and C++ standard-library headers gcov attributes to the build (stl_tree.h,
+move.h, … ~2k).
 
-When `--security` adds IDL types, OpenDDS regenerates the `*TypeSupportImpl.cpp` / `*C.cpp`
-files *wholesale*, so they diff almost entirely — mechanical churn that has nothing to do with
-removable feature code. The hand-written DDS Security implementation (Crypto / AccessControl /
-Authentication / SSL) totals only a few thousand lines, in the neighborhood of the paper's
-2800. PRAT's file-level static diff cannot isolate that without (a) a generated-code filter and
-(b) dynamic reachability from a secure DDS pub/sub test harness (multi-process, certificate
-provisioning) — out of scope here. **Net: a working, reproducible OpenDDS build environment was
-achieved; the SECURITY count is not reconcilable to the paper via static differential, and the
-reason is now precisely understood and evidenced** (`docs/sample-results/opendds-security/`).
+**Net:** a working, reproducible OpenDDS+security build environment, with the differential reduced
+to its principled components. The DDS Security plugin itself (4802) is in range; the *full*
+`--security` footprint (17021) exceeds it because the feature pulls in discovery/ICE dependencies
+and static coverage cannot prune unreachable code the way the paper's dynamic (KLEE) approach
+did. Closing the remaining gap would require a generic system-header/third-party filter plus a
+secure DDS pub/sub test harness for dynamic reachability — left as future work. Evidence:
+`docs/sample-results/opendds-security/`.
 
 ### 🟢 6. quiche-ffdhe — runs via substitute feature `qlog` (420; range 100–1500)
 **Codebase drift.** The paper's `ffdhe` is **not** a Cargo feature in quiche 0.20.1 (features are
@@ -330,10 +333,13 @@ Each `manifest.json` records the exact upstream commit and compiler versions for
 
 - **aom — DONE.** Switched to dynamic coverage (real encode/decode); now in range (§6.7).
 - **opendds — environment DONE; count not reconcilable via static diff.** The working
-  ACE/TAO + configure/MPC build now runs end-to-end. To approach the paper's 2800 would
-  additionally need (a) a generated-code filter to drop `*TypeSupportImpl.cpp`/`*C.cpp` IDL
-  output (which diffs wholesale, §6.5) and (b) dynamic reachability from a secure DDS pub/sub
-  test harness (multi-process + certificates). Both are substantial follow-ups.
+- **opendds — environment DONE; dependency isolation + generated-IDL filter applied; core plugin
+  in range.** The ACE/TAO + configure/MPC build runs end-to-end. Holding `--openssl --xerces3`
+  constant (toggling only `--security`) and excluding generated IDL cut the differential from
+  72262 → 17021; the core DDS Security plugin (`dds/DCPS/security`, 4802) is in range. Closing the
+  remaining gap to ~2800 would need (a) a generic system-header / third-party (ACE) filter and
+  (b) dynamic reachability from a secure DDS pub/sub test harness (multi-process + certificates).
+  Both are substantial follow-ups.
 - **ffmpeg — x264 itself is a scope mismatch; substitute analyzed.** PRAT analyzes FFmpeg's
   in-tree x264 *wrapper* (`libavcodec/libx264.c`, 549 lines); the paper's 3241 counts the
   external libx264 library, which PRAT never compiles. The demo therefore analyzes a real in-tree

@@ -389,7 +389,7 @@ def _package_version() -> str:
         from importlib import metadata
         return metadata.version("prat")
     except Exception:
-        return "0.2.0"
+        return "1.0.0"
 
 
 # Docker demo names (authoritative list lives in src/demo-runner.py DEMO_CONFIGS).

@@ -249,13 +249,14 @@ PRAT reports both, and never silently substitutes one for the other:
 | In-tree internal codec (substitute) | FFmpeg DTS decoder (`decoder=dca`, 7 files) | 54 | 3728 | ✅ in range |
 | Large dedicated subsystem (static) | libaom AV1 encoder (187 files) | low | very high | ❌ static over-counts |
 | Large dedicated subsystem (dynamic) | libaom AV1 encoder, real encode/decode | 8691 | 54060 | ✅ in range (interleaved) |
-| Generated-code churn | OpenDDS SECURITY (IDL type-support) | very high | very high | ❌ generated diff swamps it |
+| Large subsystem + deps (filtered) | OpenDDS SECURITY plugin / co-enabled deps | 10224 | 17021 | ❌ plugin 4802 in range; full footprint over |
 
 For static dedicated-file features the paper value sits **between** PRAT's interleaved (too
 low) and combined (too high) measures. **Dynamic** coverage closes that gap (libaom: a real
-encode/decode pulls the count into range). OpenDDS is a distinct failure mode: the differential
-is dominated by *generated* IDL type-support files that regenerate wholesale when the feature
-changes the IDL set (see `REPRODUCIBILITY.md` §6.5).
+encode/decode pulls the count into range). OpenDDS is a distinct case: after isolating
+dependencies and filtering generated IDL type-support, its differential is 17021 — the core DDS
+Security plugin (`dds/DCPS/security`, 4802) is in range, but the full `--security` footprint also
+pulls in secure-discovery and ICE dependencies (see `REPRODUCIBILITY.md` §6.5).
 
 ### Threats to validity
 
@@ -287,5 +288,6 @@ the in-tree DTS decoder (`decoder=dca`, 3728) because x264's real code is the *e
 library PRAT never compiles (it sees only the ~549-line in-tree wrapper); quiche analyzes `qlog`
 (420) because the paper's `ffdhe` is not a Cargo feature in 0.20.1 (codebase drift), via stable
 `cargo-llvm-cov`. That is 6 of 7 in range. OpenDDS builds and runs end-to-end (a full ACE/TAO +
-configure/MPC environment) but its static differential is dominated by generated IDL type-support
-churn, so it exceeds the range. No tolerance ranges were altered.
+configure/MPC environment); after isolating dependencies and filtering generated IDL, its
+differential is 17021 — the core DDS Security plugin (4802) is in range, but the full
+`--security` footprint (discovery + ICE deps) exceeds it. No tolerance ranges were altered.

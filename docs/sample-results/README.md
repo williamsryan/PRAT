@@ -26,7 +26,7 @@ for the full methodology and analysis.
 | uamqp-websockets | PASS (paper-aligned) | 0 | 1282 | 890 | 200–2000 |
 | aom-encoder | PASS (dynamic coverage) | 8691 | 54060 | 28000 | 5000–50000 |
 | ffmpeg-x264 | runs via substitute `decoder=dca` (scope) | 54 | 3728 | 3241* | 1000–5000 |
-| opendds-security | FAIL (runs; static over-counts generated code) | 49677 | 72262 | 2800 | 500–5000 |
+| opendds-security | builds & runs; plugin 4802 in range, full 17021 over | 10224 | 17021 | 2800 | 500–5000 |
 | quiche-ffdhe | runs via substitute `qlog` (drift) | 420 | 420 | 450* | 100–1500 |
 
 6 of 7 produce in-range results: 3 are the paper's own targets measured directly (mosquitto

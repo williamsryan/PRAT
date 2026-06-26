@@ -1,0 +1,45 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the paper below."
+title: "PRAT — Protocol Representation and Analysis Toolkit"
+abstract: >-
+  PRAT identifies and extracts feature-specific code from C/C++/Rust projects
+  using compile-time differential coverage analysis. It is the research artifact
+  accompanying the ACM TOSEM 2021 paper "Guided Feature Identification and
+  Removal for Resource-constrained Firmware."
+type: software
+license: MIT
+authors:
+  - given-names: Ryan
+    family-names: Williams
+repository-code: "https://github.com/<your-username>/PRAT"
+keywords:
+  - software debloating
+  - feature identification
+  - coverage analysis
+  - firmware
+  - gcov
+preferred-citation:
+  type: article
+  title: "Guided Feature Identification and Removal for Resource-constrained Firmware"
+  authors:
+    - given-names: Ryan
+      family-names: Williams
+    - given-names: Tongwei
+      family-names: Ren
+    - given-names: Lorenzo
+      family-names: De Carli
+    - given-names: Long
+      family-names: Lu
+    - given-names: Gillian
+      family-names: Smith
+  journal: "ACM Transactions on Software Engineering and Methodology"
+  volume: 31
+  issue: 2
+  start: 1
+  end: 25
+  year: 2021
+  publisher:
+    name: "Association for Computing Machinery"
+  issn: "1049-331X"
+  doi: "10.1145/3487568"
+  url: "https://doi.org/10.1145/3487568"

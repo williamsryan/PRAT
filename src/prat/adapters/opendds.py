@@ -61,10 +61,16 @@ class OpenDDSAdapter(ProjectAdapter):
         return ["dds"]
 
     def _build_script(self, enabled: bool) -> str:
+        # ISOLATE the SECURITY feature: `--security` implies `--openssl` and
+        # `--xerces3` (the latter also enables QoS-XML handling). To measure the
+        # security subsystem rather than its co-enabled dependencies, we hold
+        # --openssl/--xerces3 ON in BOTH builds and toggle only --security
+        # (mirrors the FFmpeg approach of holding --enable-gpl constant).
+        common = "--openssl --xerces3"
         security = "--security " if enabled else ""
         return (
             "set -e; "
-            f"./configure --prefix=/usr/local {security}--doc-group; "
+            f"./configure --prefix=/usr/local {security}{common} --doc-group; "
             f"printf '{_COVERAGE_FLAGS}' >> {_PLATFORM_MACROS}; "
             ". ./setenv.sh; "
             'make -j"$(nproc)"'

@@ -1,5 +1,5 @@
 {
-  "created_at": "2026-06-25T19:37:58.730783+00:00",
+  "created_at": "2026-06-26T12:53:21.551794+00:00",
   "tool": "PRAT",
   "project_path": "/prat/App/OpenDDS",
   "project_name": "OpenDDS",
@@ -8,7 +8,7 @@
   "success": true,
   "checkpoint": "complete",
   "error_message": null,
-  "total_time_seconds": 744.3790361881256,
+  "total_time_seconds": 745.5978720188141,
   "adapter": "OpenDDSAdapter",
   "build_system": "cmake",
   "coverage_tool": "gcov",
@@ -20,8 +20,8 @@
     "llvm-cov-9": null
   },
   "results": {
-    "total_removable_lines": 49677,
-    "files_analyzed": 95
+    "total_removable_lines": 10224,
+    "files_analyzed": 91
   },
   "artifacts": {
     "checkpoint": "/prat/output/workflow_checkpoint.json",

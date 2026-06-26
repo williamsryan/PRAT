@@ -60,6 +60,24 @@ def _gcov_source_path(gcov_file: str) -> Optional[str]:
     return None
 
 
+def _is_generated_idl(name: str) -> bool:
+    """Return True for IDL-compiler-generated C++ files (TAO/OpenDDS).
+
+    These regenerate wholesale when the IDL set changes, so they are mechanical
+    churn rather than removable hand-written feature source. Patterns match TAO
+    stubs/skeletons (`<Name>C.cpp`/`S.cpp`/`C.h`/`S.h`) and OpenDDS type support
+    (`<Name>TypeSupportImpl/C/S.*`). These suffixes are C++-IDL specific and do
+    not occur in the other targets (C/.rs sources), so this is a safe no-op for
+    Mosquitto/FFmpeg/libaom/quiche.
+    """
+    return (
+        "TypeSupportImpl" in name
+        or "TypeSupportC" in name
+        or "TypeSupportS" in name
+        or name.endswith(("C.cpp", "S.cpp", "C.h", "S.h", "C.inl", "S.inl"))
+    )
+
+
 def count_removable_lines(diff_file: str) -> int:
     """
     Count lines marked with ##### in a diff file.
@@ -125,6 +143,8 @@ def extract_features(
         if not (enabled_coverage_dir and feature_only_files):
             return counts, total, paths
         for name in feature_only_files:
+            if _is_generated_idl(name):
+                continue
             gcov_path = os.path.join(enabled_coverage_dir, f"{name}.gcov")
             if not os.path.exists(gcov_path):
                 # Coverage files are stored without a trailing .gcov when the
@@ -195,6 +215,10 @@ def extract_features(
         file_name = diff_file
         if file_name.endswith('.gcov'):
             file_name = file_name[:-5]  # Remove .gcov
+
+        # Skip IDL-compiler-generated files (mechanical churn, not feature source).
+        if _is_generated_idl(file_name):
+            continue
 
         # Parse the diff file
         line_numbers = []

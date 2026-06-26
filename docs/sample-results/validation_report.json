@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-06-26T02:40:34.108761+00:00",
+  "timestamp": "2026-06-26T13:03:19.394177+00:00",
   "results_dir": "results/docker",
   "total_targets": 7,
   "passed": 6,
@@ -106,14 +106,14 @@
       "project": "OpenDDS",
       "feature": "SECURITY",
       "status": "FAIL",
-      "actual_lines": 49677,
+      "actual_lines": 10224,
       "paper_lines": 2800,
       "min_acceptable": 500,
       "max_acceptable": 5000,
       "within_range": false,
-      "deviation_pct": 2480.8,
-      "feature_only_lines": 22585,
-      "combined_lines": 72262,
+      "deviation_pct": 507.9,
+      "feature_only_lines": 6797,
+      "combined_lines": 17021,
       "combined_within_range": false,
       "metric_used": "none",
       "analyzed_feature": null,
@@ -122,7 +122,7 @@
         "Security"
       ],
       "key_files_missing": [],
-      "error_message": "Out of range: interleaved=49677, combined=72262 vs [500-5000] (paper: 2800)"
+      "error_message": "Out of range: interleaved=10224, combined=17021 vs [500-5000] (paper: 2800)"
     },
     {
       "name": "quiche-ffdhe",

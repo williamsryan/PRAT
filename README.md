@@ -1,12 +1,17 @@
 # PRAT — Protocol Representation and Analysis Toolkit
 
-[![CI](https://github.com/RiS3-Lab/PRAT/actions/workflows/ci.yml/badge.svg)](https://github.com/RiS3-Lab/PRAT/actions/workflows/ci.yml)
+[![DOI](https://img.shields.io/badge/DOI-10.1145%2F3487568-blue.svg)](https://doi.org/10.1145/3487568)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue.svg)](pyproject.toml)
-[![Tests](https://img.shields.io/badge/tests-168%20passing-brightgreen.svg)](src/tests)
-[![Reproducibility](https://img.shields.io/badge/reproducibility-documented-informational.svg)](REPRODUCIBILITY.md)
+[![Tests](https://img.shields.io/badge/tests-169%20passing-brightgreen.svg)](src/tests)
 
+PRAT is the research artifact accompanying the paper *"Guided Feature Identification and Removal
+for Resource-constrained Firmware"* (ACM TOSEM, 2021). It identifies and extracts
+feature-specific code from C/C++/Rust projects using **compile-time differential coverage
+analysis**: it compiles a project with and without a feature flag, generates coverage data, and
+identifies code that can be safely removed.
 
-PRAT identifies and extracts feature-specific code from C/C++/Rust projects using **compile-time differential coverage analysis**. It compiles a project with and without a feature flag, generates coverage data, and identifies code that can be safely removed.
+> 📚 If you use PRAT in academic work, please [cite the paper](#citation).
 
 ## How It Works
 
@@ -145,7 +150,7 @@ honest account of where the static analysis diverges from the paper's KLEE-based
 | uamqp-websockets | azure-uamqp-c v1.2.0 | use_wsio | cmake | 200–2000 | 🟢 reproduces, paper-aligned metric (1282) |
 | aom-encoder | libaom v3.7.1 | CONFIG_AV1_ENCODER | cmake | 5000–50000 | ✅ reproduces via dynamic coverage (8691) |
 | ffmpeg-x264 | FFmpeg n5.1.4 | x264 → decoder=dca | autotools | 1000–5000 | 🟢 substitute feature (DTS decoder) — x264 is external-lib; 3728 |
-| opendds-security | OpenDDS DDS-3.25 | SECURITY | MPC/ACE-TAO | 500–5000 | ⚠️ builds & runs; static diff over-counts generated code (49677) |
+| opendds-security | OpenDDS DDS-3.25 | SECURITY | MPC/ACE-TAO | 500–5000 | ⚠️ builds & runs; security plugin = 4802 (in range), full footprint 17021 |
 | quiche-ffdhe | quiche 0.20.1 | ffdhe → qlog | cargo | 100–1500 | 🟢 substitute feature (qlog) — ffdhe absent (drift); 420 |
 
 ```bash
@@ -184,12 +189,53 @@ ruff check src/
 
 ## Documentation
 
+- [Reproducibility report](REPRODUCIBILITY.md) — per-target results vs. the paper, methodology, and honest limitations
 - [API Reference](docs/API.md)
 - [Paper Alignment](docs/PAPER_ALIGNMENT.md)
 - [Usage Examples](docs/EXAMPLES.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Docker Demos](docker/README.md)
 
+## Citation
+
+If you use PRAT or build on this work, please cite the paper:
+
+```bibtex
+@article{williams2021guided,
+  author    = {Williams, Ryan and Ren, Tongwei and De Carli, Lorenzo and Lu, Long and Smith, Gillian},
+  title     = {Guided Feature Identification and Removal for Resource-constrained Firmware},
+  journal   = {ACM Transactions on Software Engineering and Methodology},
+  volume    = {31},
+  number    = {2},
+  pages     = {1--25},
+  year      = {2021},
+  publisher = {Association for Computing Machinery},
+  address   = {New York, NY, USA},
+  issn      = {1049-331X},
+  doi       = {10.1145/3487568},
+  url       = {https://doi.org/10.1145/3487568}
+}
+```
+
+> Ryan Williams, Tongwei Ren, Lorenzo De Carli, Long Lu, and Gillian Smith. 2021.
+> *Guided Feature Identification and Removal for Resource-constrained Firmware.*
+> ACM Transactions on Software Engineering and Methodology 31, 2: 1–25.
+> https://doi.org/10.1145/3487568
+
+A machine-readable [`CITATION.cff`](CITATION.cff) is also provided (GitHub renders a
+"Cite this repository" button from it).
+
+## Authors
+
+- **Ryan Williams** — author and maintainer
+- Tongwei Ren, Lorenzo De Carli, Long Lu, Gillian Smith — paper co-authors
+
+## Versioning & releases
+
+PRAT follows [Semantic Versioning](https://semver.org/). The current version is declared in
+[`pyproject.toml`](pyproject.toml); release history is in [`CHANGELOG.md`](CHANGELOG.md).
+
 ## License
 
-See `LICENSE.txt` for license information.
+PRAT is released under the [MIT License](LICENSE).
+
