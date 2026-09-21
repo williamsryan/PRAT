@@ -46,7 +46,7 @@ def _artifact_paths(output_dir: Path, feature: str) -> dict[str, str]:
         "html_report": output_dir / "report.html",
         "json_report": output_dir / "report.json",
         "dot_graph": output_dir / "FDG.dot",
-        "diff_dir": output_dir / f"diff_{feature}",
+        "comparison_reports": output_dir / "comparison_reports",
         "coverage_enabled": output_dir / f"coverage_files_WITH_{feature_upper}_yes",
         "coverage_disabled": output_dir / f"coverage_files_WITH_{feature_upper}_no",
     }
@@ -85,15 +85,28 @@ def _write_manifest(
         "environment": {
             "gcc": _command_output(["gcc", "--version"]),
             "gcov": _command_output(["gcov", "--version"]),
-            "llvm-cov-9": _command_output(["llvm-cov-9", "--version"]),
+            "llvm-cov": _command_output(["llvm-cov", "--version"]),
+            "cargo-llvm-cov": _command_output(["cargo", "llvm-cov", "--version"]),
         },
         "results": {
+            # |D_f|, and the partition of it that lives in files present only in
+            # the feature-enabled build.
             "total_removable_lines": (
                 extraction.total_removable_lines if extraction else None
+            ),
+            "feature_only_removable_lines": (
+                extraction.feature_only_removable_lines if extraction else None
             ),
             "files_analyzed": (
                 len(extraction.file_line_counts) if extraction else None
             ),
+            # Executable lines left in place because no test reached them in
+            # either build, per the paper's soundness-over-completeness design.
+            "excluded_never_executed": (
+                extraction.excluded_never_executed if extraction else None
+            ),
+            "line_coverage_percent_enabled": result.coverage_percent_enabled,
+            "line_coverage_percent_disabled": result.coverage_percent_disabled,
         },
         "artifacts": _artifact_paths(output_dir, feature),
     }
