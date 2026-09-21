@@ -5,11 +5,13 @@ This module provides functions to build Docker images and run containers
 for reproducible PRAT analysis workflows.
 """
 
+
+from __future__ import annotations
+
 import json
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 
 @dataclass
@@ -19,8 +21,8 @@ class ContainerResult:
     exit_code: int
     stdout: str
     stderr: str
-    container_id: Optional[str] = None
-    error_message: Optional[str] = None
+    container_id: str | None = None
+    error_message: str | None = None
 
 
 def check_docker_available() -> bool:
@@ -45,8 +47,8 @@ def check_docker_available() -> bool:
 def build_docker_image(
     dockerfile_path: str,
     image_name: str,
-    build_context: Optional[str] = None,
-    build_args: Optional[dict[str, str]] = None,
+    build_context: str | None = None,
+    build_args: dict[str, str] | None = None,
     no_cache: bool = False
 ) -> bool:
     """
@@ -139,13 +141,13 @@ def build_docker_image(
 
 def run_docker_container(
     image_name: str,
-    container_name: Optional[str] = None,
-    volumes: Optional[dict[str, str]] = None,
-    environment: Optional[dict[str, str]] = None,
-    command: Optional[list[str]] = None,
+    container_name: str | None = None,
+    volumes: dict[str, str] | None = None,
+    environment: dict[str, str] | None = None,
+    command: list[str] | None = None,
     remove: bool = True,
     detach: bool = False,
-    timeout: Optional[int] = None
+    timeout: int | None = None
 ) -> ContainerResult:
     """
     Run Docker container and return results.
@@ -316,7 +318,7 @@ def run_docker_container(
         )
 
 
-def list_docker_images(filter_name: Optional[str] = None) -> list[dict[str, str]]:
+def list_docker_images(filter_name: str | None = None) -> list[dict[str, str]]:
     """
     List Docker images on the system.
 

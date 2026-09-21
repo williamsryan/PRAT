@@ -4,8 +4,10 @@ CMake project adapter for PRAT.
 Handles CMake-based builds with -DCONFIG_FEATURE=1/0 flags.
 """
 
+
+from __future__ import annotations
+
 from pathlib import Path
-from typing import Optional
 
 from ..compilation import BuildSystem
 from .base import ProjectAdapter
@@ -76,9 +78,18 @@ class CMakeAdapter(ProjectAdapter):
         # For now, return make clean which works in build directory
         return ["make", "clean"]
 
-    def get_test_command(self) -> Optional[list[str]]:
+    def get_test_command(self) -> list[str] | None:
         """Get CMake test command (CTest)."""
         return ["ctest", "--output-on-failure"]
+
+    def normalize_feature_name(self, raw_option: str) -> str:
+        """Strip the ``CONFIG_`` prefix that :meth:`format_feature_flag` re-adds.
+
+        Discovery reports build options verbatim (``CONFIG_TLS``); passing that
+        through unchanged would yield ``-DCONFIG_CONFIG_TLS=1``.
+        """
+        upper = raw_option.upper()
+        return upper[len("CONFIG_"):] if upper.startswith("CONFIG_") else upper
 
     def format_feature_flag(self, feature: str, enabled: bool) -> str:
         """
@@ -94,7 +105,7 @@ class CMakeAdapter(ProjectAdapter):
         flag_value = "1" if enabled else "0"
         return f"-DCONFIG_{feature.upper()}={flag_value}"
 
-    def get_binary_path(self) -> Optional[str]:
+    def get_binary_path(self) -> str | None:
         """Get path to CMake build directory."""
         build_dir = self.project_path / "build"
         if build_dir.exists():

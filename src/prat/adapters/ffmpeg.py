@@ -4,7 +4,8 @@ FFmpeg project adapter for PRAT.
 Handles Autotools-based builds with --enable/--disable flags.
 """
 
-from typing import Optional
+
+from __future__ import annotations
 
 from ..compilation import BuildSystem
 from .base import ProjectAdapter
@@ -82,17 +83,24 @@ class FFmpegAdapter(ProjectAdapter):
             if needs_gpl:
                 cmd.append("--enable-gpl")
             cmd.append(f"--enable-{libname}" if enabled else f"--disable-{libname}")
-        elif not enabled:
-            # Generic FFmpeg component (encoder/decoder/filter/...)
+        else:
+            # Generic FFmpeg component (encoder/decoder/filter/...). Both
+            # polarities are emitted so that an all-features baseline build is
+            # expressible; previously only the disabled side produced a flag,
+            # which made the "enabled" build simply the project default.
             cmd.append(self.format_feature_flag(feature, enabled))
 
         return cmd
+
+    def normalize_feature_name(self, raw_option: str) -> str:
+        """FFmpeg configure options are lowercase and used verbatim."""
+        return raw_option.lower()
 
     def get_clean_command(self) -> list[str]:
         """Get Make clean command."""
         return ["make", "clean"]
 
-    def get_test_command(self) -> Optional[list[str]]:
+    def get_test_command(self) -> list[str] | None:
         """Get FFmpeg test command (FATE test suite)."""
         return ["make", "fate", "-j3", "SAMPLES=fate-suite/"]
 
@@ -110,7 +118,7 @@ class FFmpegAdapter(ProjectAdapter):
         prefix = "--enable" if enabled else "--disable"
         return f"{prefix}-{feature.lower()}"
 
-    def get_binary_path(self) -> Optional[str]:
+    def get_binary_path(self) -> str | None:
         """Get path to FFmpeg binaries."""
         # FFmpeg builds multiple binaries
         ffmpeg_bin = self.project_path / "ffmpeg"

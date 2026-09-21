@@ -152,42 +152,135 @@ def execute_for_coverage(
 ) -> bool
 ```
 
-### diff.py
+### gcov.py
 
-Module for comparing coverage files.
+Parses gcov output into line sets. This is the foundation of the mapping: gcov
+distinguishes three states per line and only one of them counts as "executed".
 
-#### `diff_coverage_files()`
-
-Generate unified diffs between matching coverage files.
+#### `parse_gcov()`
 
 ```python
-def diff_coverage_files(
-    enabled_dir: str,
-    disabled_dir: str,
-    feature: str,
-    output_dir: Optional[str] = None
-) -> DiffResult
+def parse_gcov(gcov_path: str) -> GcovFile | None
 ```
 
-**Returns:** `DiffResult` with paths to diff files and statistics
+Returns a `GcovFile` whose `executed` set is the `L` of Algorithm 1. Lines marked
+`#####` land in `never_executed` and lines marked `-` in `non_executable`;
+neither is part of `L`.
+
+#### `load_coverage_dir()`
+
+```python
+def load_coverage_dir(coverage_dir: str) -> dict[str, GcovFile]
+```
+
+Parses every gcov file in a directory, keyed by the path in each file's
+`Source:` header (not the basename, which collides across directories). Files
+covering the same source from different translation units are unioned.
+
+#### `merge_contiguous()` / `format_ranges()`
+
+```python
+def merge_contiguous(line_numbers: list[int]) -> list[tuple[int, int]]
+def format_ranges(line_numbers: list[int]) -> str
+```
+
+Groups line numbers into contiguous runs — the LOC-node unit of a feature graph
+("contiguous lines of code are merged in a single node") — and renders them as
+`"12-14, 44, 91-92"`.
+
+### mapping.py
+
+Implements Algorithm 1's feature-to-code mapping.
+
+#### `map_feature()` / `map_feature_from_coverage()`
+
+```python
+def map_feature(
+    feature: str,
+    enabled_coverage_dir: str,
+    disabled_coverage_dir: str,
+) -> FeatureMapping
+
+def map_feature_from_coverage(
+    feature: str,
+    enabled: dict[str, GcovFile],
+    disabled: dict[str, GcovFile],
+) -> FeatureMapping
+```
+
+Computes `D_f = L_all \ L_f`. Lines never executed in either build are excluded
+and counted in `FeatureMapping.excluded_never_executed`, per the paper's
+soundness-over-completeness design.
+
+#### `protected_lines()`
+
+```python
+def protected_lines(mapping: FeatureMapping) -> dict[str, set[int]]
+```
+
+The `L_f` lines that must survive removal. Pass to `remove_feature_code()` so
+the balance guard cannot absorb shared code while repairing a run.
+
+#### `coverage_percent()` / `function_percent()`
+
+```python
+def coverage_percent(coverage: dict[str, GcovFile]) -> float | None
+def function_percent(coverage: dict[str, GcovFile]) -> float | None
+```
+
+Line and function coverage across a coverage set. Function data requires
+`gcov -f`, which `prat.coverage` always requests.
+
+### diff.py
+
+Generates the paper's side-by-side code comparison reports. The authoritative
+mapping lives in `mapping.py`; these reports render it for human review.
+
+#### `generate_comparison_reports()`
+
+```python
+def generate_comparison_reports(
+    mapping: FeatureMapping,
+    enabled_coverage_dir: str,
+    disabled_coverage_dir: str,
+    output_dir: str,
+    original_root: str | None = None,
+    debloated_root: str | None = None,
+) -> ComparisonResult
+```
+
+Writes a *coverage comparison* per file (each line's execution state in both
+builds, with `D_f` marked) for auditing the mapping, and — when both a
+pre-removal and post-removal tree are supplied — a *source comparison* for
+auditing the removal, plus a browsable index.
 
 ### extraction.py
 
-Module for extracting feature-specific code from diffs.
+Packages a `FeatureMapping` for reporting and removal.
 
 #### `extract_features()`
 
-Parse diff files and extract feature-specific code.
-
 ```python
 def extract_features(
-    diff_dir: str,
+    enabled_coverage_dir: str,
+    disabled_coverage_dir: str,
     feature: str = "",
-    output_dir: Optional[str] = None
+    skip_generated_idl: bool = True,
 ) -> ExtractionResult
 ```
 
-**Returns:** `ExtractionResult` with line counts and file mappings
+#### `extract_from_mapping()`
+
+```python
+def extract_from_mapping(
+    mapping: FeatureMapping,
+    skip_generated_idl: bool = True,
+) -> ExtractionResult
+```
+
+**Returns:** `ExtractionResult` with line counts, line numbers, contiguous
+ranges, and the partition of `D_f` over files that exist only in the
+feature-enabled build.
 
 ### discovery.py
 
@@ -272,11 +365,18 @@ class WorkflowResult:
     compilation_disabled: Optional[CompilationResult]
     coverage_enabled: Optional[CoverageResult]
     coverage_disabled: Optional[CoverageResult]
-    diff_result: Optional[DiffResult]
     extraction_result: Optional[ExtractionResult]
     total_time: float
     checkpoint: WorkflowCheckpoint
     error_message: Optional[str] = None
+    symbolic_result: Optional[SymbolicResult] = None
+    comparison_result: Optional[ComparisonResult] = None
+    removal_result: Optional[RemovalResult] = None
+    verification_result: Optional[VerificationResult] = None
+    coverage_percent_enabled: Optional[float] = None
+    coverage_percent_disabled: Optional[float] = None
+    # D_f itself. Excluded from to_dict() because it carries full source text.
+    mapping: Optional[FeatureMapping] = None
 ```
 
 ### CompilationResult
@@ -304,16 +404,51 @@ class CoverageResult:
     error_message: Optional[str]
 ```
 
-### DiffResult
+### GcovFile
 
 ```python
 @dataclass
-class DiffResult:
+class GcovFile:
+    source_path: str              # from the gcov "Source:" header
+    gcov_path: str
+    executed: set[int]            # the L set of Algorithm 1
+    never_executed: set[int]      # gcov "#####": executable, not run
+    non_executable: set[int]      # gcov "-": no code generated
+    source: dict[int, str]
+    functions: dict[str, int]     # name -> call count (requires gcov -f)
+```
+
+### FeatureMapping / FileMapping
+
+```python
+@dataclass
+class FeatureMapping:
+    feature: str
+    files: dict[str, FileMapping]     # source path -> lines in D_f
+    excluded_never_executed: int      # retained, per the conservatism claim
+
+@dataclass
+class FileMapping:
+    source_path: str
+    lines: list[int]                  # D_f for this file
+    source: dict[int, str]
+    feature_only_file: bool           # present only in the enabled build
+    executed_enabled: int
+    executed_disabled: int
+    shared_lines: set[int]            # L_f: must never be removed
+    never_executed_both: list[int]
+```
+
+### ComparisonResult
+
+```python
+@dataclass
+class ComparisonResult:
     success: bool
-    diff_dir: str
-    diff_files: List[str]
-    feature_only_files: List[str]
-    total_diffs: int
+    report_dir: str
+    coverage_reports: list[str]
+    source_reports: list[str]
+    index_path: Optional[str]
     error_message: Optional[str]
 ```
 
@@ -323,13 +458,31 @@ class DiffResult:
 @dataclass
 class ExtractionResult:
     success: bool
-    file_line_counts: Dict[str, int]       # filename -> removable line count
-    total_removable_lines: int
-    file_line_numbers: Dict[str, List[int]] # filename -> list of line numbers
-    file_line_content: Dict[str, List[str]] # filename -> list of source snippets
+    file_line_counts: dict[str, int]        # source path -> lines in D_f
+    total_removable_lines: int              # |D_f|
+    file_line_numbers: dict[str, list[int]]
+    file_line_content: dict[str, list[str]]
     html_report_path: Optional[str]
     dot_graph_path: Optional[str]
     error_message: Optional[str]
+
+    # Partition of D_f over files that exist only in the enabled build. Already
+    # included in total_removable_lines; tracked separately because the paper
+    # contrasts dedicated feature files against interleaved code in shared files.
+    feature_only_file_counts: dict[str, int]
+    feature_only_removable_lines: int
+    feature_only_source_paths: list[str]
+
+    # Executable with the feature on but executed in neither build. Algorithm 1
+    # leaves these in place; the count makes that trade-off visible.
+    excluded_never_executed: int
+
+    # Contiguous (start, end) runs per file — the LOC-node unit of a feature graph.
+    file_line_ranges: dict[str, list[tuple[int, int]]]
+
+    # Properties
+    total_feature_lines: int           # alias of total_removable_lines
+    interleaved_removable_lines: int   # D_f restricted to shared files
 ```
 
 ### Feature
@@ -337,9 +490,12 @@ class ExtractionResult:
 ```python
 @dataclass
 class Feature:
-    name: str
+    name: str                          # adapter-facing name
     description: Optional[str] = None
     default_enabled: Optional[bool] = None
+    raw_name: Optional[str] = None      # the build option, verbatim
+    source: Optional[str] = None        # which analyzer found it
+    filtered_reason: Optional[str] = None
 ```
 
 ### ContainerResult

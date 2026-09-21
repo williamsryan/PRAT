@@ -10,14 +10,16 @@ The interactive HTML report's UI (markup, styling, and behavior) lives in the
 the ``__PRAT_*__`` placeholder reference used below.
 """
 
+
+from __future__ import annotations
+
 import html
 import json
 import os
-import shutil
-import subprocess
 from datetime import datetime, timezone
 
 from .extraction import ExtractionResult
+from .gcov import merge_contiguous
 from .web import load_report_template
 
 
@@ -117,26 +119,42 @@ def generate_dot_graph(
     feature: str = "Feature",
     output_path: str = "FDG.dot",
     max_content_length: int = 80,
+    max_loc_nodes_per_file: int | None = None,
 ) -> str:
     """
-    Generate a DOT file showing files and their removable code.
+    Write the feature graph as Graphviz DOT.
 
-    The graph is fully project-agnostic.
+    Emits the paper's three tiers — feature, source file, and one leaf per
+    contiguous run of removable lines. Node ids are namespaced (``feat_``,
+    ``file_``, ``loc_``) with separate display labels, so a feature whose name
+    matches a source file cannot collapse into a self-loop.
+
+    Args:
+        extraction_result: The mapping D_f, packaged for reporting.
+        feature: Feature name, used as the root vertex.
+        output_path: Destination .dot path.
+        max_content_length: Truncate each source line in a leaf label.
+        max_loc_nodes_per_file: Cap leaves per file, largest runs first. None
+            emits every run.
     """
     print(f"[+] Generating DOT graph: {output_path}")
 
+    def escape(text: str) -> str:
+        return text.replace("\\", "\\\\").replace('"', '\\"')
+
     lines = [
-        'digraph PRAT {',
+        "digraph PRAT {",
+        "  rankdir=LR;",
         '  graph [fontsize=10 fontname="Helvetica" label='
-        f'"Feature: {feature}\\nRemovable Lines: '
+        f'"Feature: {escape(feature)}\\nRemovable Lines: '
         f'{extraction_result.total_removable_lines}" labelloc=t];',
         '  node [fontsize=9 fontname="Helvetica" shape=box '
         'style="rounded,filled" fillcolor="#e8eaf6"];',
         '  edge [color="#78909c"];',
-        '',
-        f'  "{feature}" [shape=ellipse fillcolor="#c5cae9" '
-        f'fontsize=11 fontname="Helvetica Bold"];',
-        '',
+        "",
+        f'  "feat_{escape(feature)}" [label="{escape(feature)}" shape=ellipse '
+        f'fillcolor="#c5cae9" fontsize=11 fontname="Helvetica Bold"];',
+        "",
     ]
 
     for file_name, count in sorted(
@@ -146,67 +164,49 @@ def generate_dot_graph(
     ):
         width = max(1.2, min(3.5, count / 50))
         lines.append(
-            f'  "{file_name}" [label="{file_name}\\n{count} lines" '
-            f'width={width:.1f}];'
+            f'  "file_{escape(file_name)}" '
+            f'[label="{escape(file_name)}\\n{count} lines" width={width:.1f}];'
         )
-        lines.append(f'  "{feature}" -> "{file_name}";')
+        lines.append(
+            f'  "feat_{escape(feature)}" -> "file_{escape(file_name)}";'
+        )
 
-        content_list = extraction_result.file_line_content.get(file_name, [])
-        if content_list and len(content_list) <= 5:
-            snippet = "\\n".join(
-                content[:max_content_length].replace('"', '\\"')
-                for content in content_list[:5]
+        line_numbers = extraction_result.file_line_numbers.get(file_name, [])
+        contents = extraction_result.file_line_content.get(file_name, [])
+        content_by_line = dict(zip(line_numbers, contents))
+
+        ranges = extraction_result.file_line_ranges.get(file_name)
+        if not ranges:
+            ranges = merge_contiguous(line_numbers)
+
+        ordered = sorted(ranges, key=lambda item: item[1] - item[0], reverse=True)
+        if max_loc_nodes_per_file is not None:
+            ordered = ordered[:max_loc_nodes_per_file]
+
+        for start, end in sorted(ordered):
+            span = end - start + 1
+            header = f"{start}" if span == 1 else f"{start}-{end}"
+            body = "\\n".join(
+                escape(content_by_line.get(line, "")[:max_content_length])
+                for line in range(start, end + 1)
             )
-            snippet_id = f"{file_name}_code"
+            node_id = f"loc_{escape(file_name)}:{start}-{end}"
             lines.append(
-                f'  "{snippet_id}" [label="{snippet}" shape=note '
+                f'  "{node_id}" [label="L{header}\\n{body}" shape=note '
                 f'fontsize=7 fillcolor="#fff9c4"];'
             )
-            lines.append(f'  "{file_name}" -> "{snippet_id}" [style=dashed];')
+            lines.append(
+                f'  "file_{escape(file_name)}" -> "{node_id}" [style=dashed];'
+            )
 
     lines.append("}")
 
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
-    with open(output_path, "w") as f:
-        f.write("\n".join(lines) + "\n")
+    with open(output_path, "w") as handle:
+        handle.write("\n".join(lines) + "\n")
 
     print(f"[+] DOT graph generated: {output_path}")
     return output_path
-
-
-def generate_html_diffs(diff_dir: str, reports_dir: str = "reports") -> bool:
-    """
-    Generate HTML-formatted diff files using pygmentize.
-    """
-    if not shutil.which("pygmentize"):
-        print("[-] pygmentize not available — skipping per-file HTML diffs")
-        return False
-
-    print("[+] Generating per-file HTML diffs...")
-    os.makedirs(reports_dir, exist_ok=True)
-
-    success = True
-    for diff_file in os.listdir(diff_dir):
-        if not os.path.isfile(os.path.join(diff_dir, diff_file)):
-            continue
-
-        input_path = os.path.join(diff_dir, diff_file)
-        output_file = os.path.join(reports_dir, diff_file + "-diff.html")
-
-        try:
-            subprocess.run(
-                [
-                    "pygmentize", "-l", "diff", "-f", "html",
-                    "-O", "full", "-o", output_file, input_path,
-                ],
-                check=True,
-                stderr=subprocess.PIPE,
-            )
-        except subprocess.CalledProcessError as e:
-            print(f"[-] Error generating HTML for {diff_file}: {e}")
-            success = False
-
-    return success
 
 
 def generate_json_report(

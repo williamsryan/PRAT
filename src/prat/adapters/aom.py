@@ -6,7 +6,8 @@ Build system: CMake
 Features: CONFIG_AV1_ENCODER, CONFIG_AV1_DECODER, CONFIG_AV1_HIGHBITDEPTH, etc.
 """
 
-from typing import Optional
+
+from __future__ import annotations
 
 from ..compilation import BuildSystem
 from .base import ProjectAdapter
@@ -71,7 +72,7 @@ class AomAdapter(ProjectAdapter):
     def get_clean_command(self) -> list[str]:
         return ["rm", "-rf", self.cmake_build_dir]
 
-    def get_test_command(self) -> Optional[list[str]]:
+    def get_test_command(self) -> list[str] | None:
         # AOM test suite is heavy; use the testdata runner if available
         return None
 

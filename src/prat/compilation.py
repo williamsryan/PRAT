@@ -6,13 +6,16 @@ This module handles project compilation with feature flags enabled/disabled,
 supporting multiple build systems (Make, CMake, Autotools, Cargo).
 """
 
+
+from __future__ import annotations
+
 import os
 import subprocess
 import time
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 
 class BuildSystem(Enum):
@@ -28,8 +31,8 @@ class BuildSystem(Enum):
 class CompilationResult:
     """Result of a compilation operation."""
     success: bool
-    binary_path: Optional[str]
-    error_message: Optional[str]
+    binary_path: str | None
+    error_message: str | None
     compilation_time: float
     coverage_enabled: bool
     build_system: BuildSystem
@@ -71,7 +74,7 @@ def compile_project(
     feature: str,
     enabled: bool,
     run_tests: bool = False,
-    build_system: Optional[BuildSystem] = None
+    build_system: BuildSystem | None = None
 ) -> CompilationResult:
     """
     Compile project with specified feature flag.
@@ -429,7 +432,8 @@ def compile_with_adapter(
     adapter: Any,
     feature: str,
     enabled: bool,
-    run_tests: bool = False
+    run_tests: bool = False,
+    feature_states: dict[str, bool] | None = None,
 ) -> CompilationResult:
     """
     Compile a project using a ProjectAdapter.
@@ -443,6 +447,10 @@ def compile_with_adapter(
         feature: Feature name to enable/disable
         enabled: True for feature enabled, False for disabled
         run_tests: Whether to run test suite after compilation
+        feature_states: Explicit state for every known feature. When given, this
+            takes precedence over ``feature``/``enabled`` and produces the
+            Algorithm 1 builds: B_all with all features on, and B_i with all on
+            except f_i.
 
     Returns:
         CompilationResult with status, binary path, and error messages
@@ -465,7 +473,12 @@ def compile_with_adapter(
         )
 
         # Step 2: Compile (adapters may require multiple commands, e.g. configure + make)
-        build_cmds = adapter.get_build_commands(feature, enabled, with_coverage=True)
+        if feature_states:
+            build_cmds = adapter.get_build_commands_for_set(
+                feature_states, with_coverage=True
+            )
+        else:
+            build_cmds = adapter.get_build_commands(feature, enabled, with_coverage=True)
         for build_cmd in build_cmds:
             compile_proc = subprocess.run(
                 build_cmd,

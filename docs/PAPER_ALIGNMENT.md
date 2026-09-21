@@ -1,351 +1,279 @@
 # Paper Alignment — PRAT Implementation vs. Paper Claims
 
-**Paper**: Williams et al., "Guided Feature Identification and Removal for Resource-constrained Firmware," ACM Transactions on Software Engineering and Methodology (TOSEM), 2021.  
+**Paper**: Williams et al., "Guided Feature Identification and Removal for Resource-constrained Firmware," ACM Transactions on Software Engineering and Methodology (TOSEM), 2021.
 **DOI**: [10.1145/3487568](https://doi.org/10.1145/3487568)
 
-This document maps paper sections, contributions, and evaluation targets to specific code modules, CLI commands, and Docker demos so reviewers can verify each claim.
+This document maps the paper's claims to the code that implements them and the tests that pin them, so a reader can check each claim rather than take it on trust.
+
+Every number quoted as a paper value in this repository is traceable to a specific table or data file under `paper/`. Where the paper reports no value for something this repo measures, that is stated explicitly rather than filled in with an estimate. See `paper_expected_results.json` for the provenance of each figure.
 
 ---
 
-## Paper Contributions → Code Mapping
+## C1: Feature-to-code mapping by differential coverage
 
-### C1: Differential Dynamic Coverage Analysis (§5.1–5.2)
+**Paper, Algorithm 1**:
 
-**Paper claim**: Compile project with/without each feature flag, execute test suite for dynamic coverage, diff `.gcov` outputs to identify feature-specific code.
+```
+S     <- SymbolicTestGeneration(P)
+T     <- U u S
+B_all <- Compile(P)
+L_all <- CoverageAnalysis(B_all, T)
+for each f in F:
+    P_f <- DisableFeature(P, f)
+    B_f <- Compile(P_f)
+    L_f <- CoverageAnalysis(B_f, T)
+    D_f <- L_all \ L_f
+```
 
-| Paper concept | Code module | Key function |
+**Paper, Correctness**: "removing only those LOCs that are executed when the relevant feature is active, but not when the same feature is disabled. The algorithm **does not remove** LOCs that are never executed regardless of whether the feature is active or not. … This design purposely strives for soundness over completeness."
+
+| Paper concept | Code | Key function |
 |---|---|---|
-| Algorithm 1: Build n+1 variants | `src/prat/batch.py` | `run_batch_analysis()` |
-| Feature flag discovery (Make/CMake/Autotools/Cargo) | `src/prat/discovery.py` | `discover_features()`, `discover_features_make()`, etc. |
-| Compile with coverage flags | `src/prat/compilation.py` | `compile_with_adapter()`, `compile_project()` |
-| Execute binary for dynamic coverage (.gcda generation) | `src/prat/coverage.py` | `execute_for_coverage()` |
-| Run gcov/llvm-cov to produce .gcov files | `src/prat/coverage.py` | `generate_coverage()`, `generate_coverage_with_adapter()` |
-| Diff coverage outputs | `src/prat/diff.py` | `diff_coverage_files()` |
-| Extract feature-specific lines (##### markers) | `src/prat/extraction.py` | `extract_features()` |
-| End-to-end orchestration | `src/prat/workflow.py` | `run_complete_workflow()` |
+| Parse gcov execution counts into line sets | `src/prat/gcov.py` | `parse_gcov()`, `load_coverage_dir()` |
+| `D_f = L_all \ L_f` | `src/prat/mapping.py` | `map_feature_from_coverage()` |
+| Algorithm 1 over all features (n+1 builds) | `src/prat/batch.py` | `run_batch_analysis()` |
+| Single-feature pipeline | `src/prat/workflow.py` | `run_complete_workflow()` |
+| Compile with a given feature set | `src/prat/compilation.py` | `compile_with_adapter(feature_states=...)` |
+| Execute T for dynamic coverage | `src/prat/coverage.py` | `execute_for_coverage()` |
+| Package D_f for reporting/removal | `src/prat/extraction.py` | `extract_from_mapping()` |
+
+The mapping is a **set difference over executed lines**, not a textual diff of gcov files. This matters: gcov marks a line that is compiled but never run as `#####`, and marks a line the preprocessor removed as `-`. A line that is feature code in the paper's sense appears as a *count* in the feature-enabled build and as `-` or `#####` in the disabled build, so it produces no `#####` marker of its own. Selecting `#####` lines would therefore both miss the code the paper targets and remove code the paper explicitly excludes.
+
+**Tests**: `src/tests/test_mapping.py` pins all three line classes — executed-only-when-enabled (removed), executed-when-disabled (kept, it is shared), and never-executed-in-either (kept, per the conservatism claim). `src/tests/test_gcov.py` pins the gcov parsing. `src/tests/test_batch.py::TestAlgorithmOneBuildCount` asserts the build count is n+1 and that each build leaves exactly one feature off.
 
 **Reproduce**:
 ```bash
-# Single feature:
-prat App/mosquitto TLS --tests
+prat App/mosquitto TLS          # one feature
+prat App/mosquitto --batch      # Algorithm 1 over every discovered feature
+```
 
-# All features (Algorithm 1):
-prat App/mosquitto --batch
+### n+1 builds, and what the baseline is
+
+`run_batch_analysis` compiles `B_all` once, collects `L_all` once, and reuses it for every feature — n+1 builds for n features, as the paper specifies. `BatchResult.builds_performed` records the count so it can be checked.
+
+`B_all` enables **every discovered feature**, and `B_i` enables all but `f_i`. When the all-features build does not compile (mutually exclusive options make this possible; the paper reports discarding five such options), the baseline falls back to the project's default configuration and `BatchResult.baseline_note` says so. That fallback changes what `D_f` isolates against, so it is reported rather than applied silently.
+
+Build options whose feature-disabled build fails are discarded, as the paper describes, and listed in `BatchResult.discarded_options`.
+
+### Sum vs. union
+
+`BatchResult.total_removable_lines` is the sum of `|D_f|`. `BatchResult.union_removable_lines` is `|union of D_f|` — the right quantity to compare against Table 4's "No features (PRAT)" column, because a line attributable to two features must be counted once.
+
+---
+
+## C2: Feature identification from build configurations
+
+**Paper definition**: "A feature is a set of lines of code which can be selectively activated or deactivated by operating on a single build configuration option."
+
+| Paper claim | Code | Notes |
+|---|---|---|
+| cMake: `cmake -LA \| grep BOOL` | `discovery.py::_cmake_features_from_cache()` | Configures into a scratch build dir first, because `cmake -LA -N` only prints an existing cache and reports nothing on a clean tree |
+| cMake (supplement) | `discovery.py::_cmake_features_from_sources()` | Also parses `option()`, `set(... CACHE BOOL ...)` and `*_config_var()` macros, for descriptions and for projects that declare options through a macro (libaom declares every `CONFIG_*` toggle via `set_aom_config_var`) |
+| Autoconf: `configure --help`, retain descriptions containing "feature" or "optional" | `discovery.py::discover_features_autotools()` | Runs the script with its own interpreter (OpenDDS's `configure` is Perl, so forcing `bash` fails). Value placeholders are stripped, so no `decoder=NAME` names |
+| Cargo: non-default features from `Cargo.toml` | `discovery.py::discover_features_cargo()` | Excludes features that are *members* of the `default` array, transitively, not just the `default` key. Reads workspace members |
+| Make: `WITH_*` toggles | `discovery.py::discover_features_make()` | Mosquitto declares BRIDGE, PERSISTENCE, WEBSOCKETS, SYS_TREE and MEMORY_TRACKING only in `config.mk` |
+| Discard spurious options; hide debug/developer options | `discovery.py::filter_features()` | Denylist of standard options plus naming heuristics; also drops the build system's own variables (`CMAKE_*`) |
+
+`discover_features()` runs **every** analyzer whose build system is present and merges the results. Mosquitto ships both `CMakeLists.txt` and `config.mk` and exposes different features through each, so taking only the first matching build system loses features — including BRIDGE, which this repo ships a demo for.
+
+Discovery reports the build option verbatim in `Feature.raw_name`; turning that into a flag is the adapter's job, since the same option is `WITH_TLS=yes` for Make and `-DWITH_TLS=ON` for CMake. Adapters that re-add a prefix implement `normalize_feature_name()`.
+
+**Tests**: `src/tests/test_discovery.py`.
+
+**Reproduce**:
+```bash
+prat App/mosquitto --list            # candidate features
+prat App/mosquitto --list --verbose  # also reports how many options were filtered
 ```
 
 ---
 
-### C2: Feature Graphs for Analyst Decision Support (§6)
+## C3: Feature graphs
 
-**Paper claim**: Interactive feature graphs show features → files → shared dependencies, enabling informed removal decisions.
+**Paper**: "A feature graph is a directed acyclic graph (DAG) F = {V, E}. The set of vertices V includes nodes representing features, source files, and sets of lines of code. … for each line of code of interest `l_i`, we establish an edge `(s, l_i)`. In practice, contiguous lines of code are merged in a single node. … the roots are features, intermediate nodes are source files, and leaves are lines within source files."
 
-| Paper concept | Code module | Key function |
+| Paper concept | Code | Key function |
 |---|---|---|
-| Graph construction from batch results | `src/prat/feature_graph.py` | `build_feature_graph()` |
-| Cross-feature file overlap | `src/prat/batch.py` | `CrossFeatureMap` dataclass |
-| Self-contained interactive HTML (D3.js) | `src/prat/feature_graph.py` | `generate_feature_graph_html()` |
-| DOT graph export | `src/prat/reporting.py` | `generate_dot_graph()` |
+| Three-tier DAG construction | `src/prat/feature_graph.py` | `build_feature_graph()`, `build_feature_graph_from_single()` |
+| LOC leaves, one per contiguous run | `src/prat/feature_graph.py` | `_add_loc_nodes()` |
+| Contiguous-line merging | `src/prat/gcov.py` | `merge_contiguous()`, `format_ranges()` |
+| DAG invariant checking | `src/prat/feature_graph.py` | `_validate_graph()` |
+| Interactive HTML | `src/prat/feature_graph.py` | `generate_feature_graph_html()` |
+| Graphviz export | `src/prat/reporting.py` | `generate_dot_graph()` |
+| Cross-feature file overlap | `src/prat/batch.py` | `CrossFeatureMap` |
+
+All three tiers are emitted. Leaves are *sets* of lines: a feature spanning lines 12–14, 44 and 91–92 contributes three leaves, not six. `_validate_graph()` runs on every built graph and checks unique vertex ids, resolvable edge endpoints, no self-loops, the feature → file → loc tier order, and acyclicity.
+
+A line range attributed to two features is one vertex with both features recorded, so `V` stays a set.
+
+**Tests**: `src/tests/test_feature_graph.py`, including `TestGraphInvariants`.
 
 **Reproduce**:
 ```bash
 prat App/mosquitto --batch --output results/batch/
-# → results/batch/feature_graph.html (interactive)
-# → results/batch/FDG.dot (Graphviz)
+# → results/batch/feature_graph.html   (interactive, all three tiers)
+# → results/batch/FDG.dot              (Graphviz)
 ```
 
 ---
 
-### C3: Automated Feature Code Removal (§7)
+## C4: Feature removal
 
-**Paper claim**: PRAT removes identified feature-specific lines from the source tree. Two modes: line-level removal (shared files) and file-level removal (feature-only files).
+**Paper**: "It then performs feature removal by removing from the source the lines in the union of `D_i`, and rebuilds the program binary." and "removing a feature without removing dependent features would result in breaking the build, which would still prevent an incorrect implementation from being generated."
 
-| Paper concept | Code module | Key function |
+| Paper concept | Code | Key function |
 |---|---|---|
-| Line-level removal (remove specific lines) | `src/prat/removal.py` | `remove_feature_code()` |
-| File-level removal (delete feature-only files) | `src/prat/removal.py` | `remove_feature_code(feature_only_files=...)` |
-| Backup/restore for safety | `src/prat/removal.py` | `backup=True` parameter |
-| Post-removal rebuild | `src/prat/removal.py` | `rebuild=True` parameter |
+| Remove the mapped lines | `src/prat/removal.py` | `remove_feature_code()` |
+| Delimiter-balance guard | `src/prat/removal.py` | `plan_removal()`, `compute_line_deltas()` |
+| Rebuild as a gate | `src/prat/removal.py` | `remove_feature_code(rebuild=True)` |
+| Backup / restore | `src/prat/removal.py` | `restore_from_backup()` |
+
+Two things the paper's argument requires:
+
+**The build is a gate.** A failed rebuild makes the removal fail (`RemovalResult.success is False`) and restores the tree from backup. The paper's safety net only holds if a broken build stops the process rather than being logged.
+
+**Delimiter balance is preserved.** `D_f` contains only lines gcov attributes executable code to; a closing brace is never such a line. So `if (x) {` can enter `D_f` while its matching `}` cannot, and blanking the opener alone closes the enclosing function early. The guard joins runs separated only by non-executable structural lines (gcov puts a function's entry block on its *signature* line and the opening brace on the next), absorbs the delimiters needed to close a run, and declines any run it cannot balance. Declined runs are reported in `RemovalResult.skipped_unbalanced`.
+
+Lines are blanked rather than deleted, so line numbering stays valid for later gcov runs and for the stored mapping.
+
+**Tests**: `src/tests/test_removal.py` — including a pair that compiles the result and shows the guard is load-bearing (unguarded removal of the same lines fails to compile). `src/tests/test_integration.py` does this against a real compiler and real gcov end to end.
 
 **Reproduce**:
 ```bash
-prat App/mosquitto TLS --remove
-# → Modifies source, rebuilds, reports success/failure
-# → Backup saved to App/mosquitto/_backup_before_remove_TLS/
+prat App/mosquitto TLS --remove    # removes, rebuilds, then verifies
 ```
 
 ---
 
-### C4: Post-Removal Correctness Verification (§8.7)
+## C5: Post-removal correctness
 
-**Paper claim**: After removal, verify debloated binary by replaying unit tests and checking compilation correctness.
+**Paper**: "the system then re-runs the test suite, `T`, generated during feature-to-code-mapping and monitors the program's output for crashes and unexpected behavior."
 
-| Paper concept | Code module | Key function |
+| Paper concept | Code | Key function |
 |---|---|---|
-| Rebuild debloated project | `src/prat/verification.py` | `verify_correctness()` |
-| Test suite replay | `src/prat/verification.py` | `verify_correctness(test_commands=...)` |
-| KLEE test replay (if available) | `src/prat/verification.py` | `verify_correctness(symbolic_result=...)` |
+| Rebuild the debloated tree | `src/prat/verification.py` | `verify_correctness()` |
+| Re-run U | `src/prat/verification.py` | `_discover_test_commands()`, `_run_test_suite()` |
+| Replay S (KLEE tests) | `src/prat/verification.py` | `verify_correctness(symbolic_result=...)` |
+| Crash detection | `src/prat/verification.py` | `_signal_name()` |
+| Unexpected-behaviour oracle | `src/prat/verification.py` | `capture_reference_outputs()` |
+| Side-by-side comparison reports | `src/prat/diff.py` | `generate_comparison_reports()` |
+
+Verification runs by default after `--remove`; `--no-verify` opts out. A test that exits non-zero *failed*; a test killed by a signal *crashed*, and the signal is named. Divergence from pre-removal behaviour is only reported when a reference was captured beforehand — otherwise the result says the check was not performed rather than implying it passed.
+
+A run that compiles but finds **no tests** is reported as `INCONCLUSIVE`, not as a pass: compiling is necessary but not sufficient evidence of correctness.
+
+The paper's "code comparison reports which display, side-by-side, the original code and the code post-debloating, highlighting feature-relevant code" are produced by `prat.diff` in two forms: a coverage comparison (per line, its state in both builds, with `D_f` marked) for auditing the *mapping*, and a source comparison (original against post-removal) for auditing the *removal*.
+
+**Tests**: `src/tests/test_verification.py`, `src/tests/test_diff.py`.
+
+---
+
+## C6: Symbolic test generation (KLEE)
+
+**Paper Table 3** parameters, and: "We run KLEE against our target protocols for **60 minutes** and, on average, generate 4,369 tests."
+
+| Paper concept | Code | Key function |
+|---|---|---|
+| Table 3 parameters | `src/prat/symbolic.py` | `KleeConfig` |
+| Compile to one LLVM module | `src/prat/symbolic.py` | `compile_to_bytecode()` |
+| Run KLEE | `src/prat/symbolic.py` | `run_klee()` |
+| Replay via `klee-replay` | `src/prat/symbolic.py` | `replay_tests()` |
+| Include S in T | `src/prat/coverage.py` | `execute_for_coverage(symbolic_tests=...)` |
+
+`max_time` is stored as **minutes** (`KleeConfig.max_time_minutes = 60`) and converted to the seconds KLEE's flag expects. Configuring 60 *seconds* would generate a small fraction of the paper's test count, and since the mapping is bounded by the coverage `T` achieves, it would understate every feature.
+
+`compile_to_bytecode()` compiles each source separately and links with `llvm-link`: `clang -emit-llvm -c a.c b.c -o out.bc` is an error, so a single invocation cannot produce the whole-program module KLEE needs.
+
+Generated tests are passed into coverage collection and replayed against each instrumented build, so `T = U u S` holds in the runs that produce `D_f`.
+
+**Status**: the module runs end to end when KLEE is available (local or the `klee/klee` Docker image) and is skipped with a message when it is not. `--symbolic` opts in; without it, `T = U`.
+
+**Tests**: `src/tests/test_symbolic.py`.
+
+---
+
+## C7: Cumulative variants and fuzzing
+
+**Paper**: "we generated 8 variants of Mosquitto. … variant *i* is obtained from variant *i-1* by selecting and deactivating a feature that was active in variant *i*", fuzzed with "a custom MQTT fuzzing engine based on the popular Boofuzz fuzzer", reporting per-variant line coverage, function coverage and session time.
+
+| Paper concept | Code | Key function |
+|---|---|---|
+| Cumulative variant chain | `src/prat/variants.py` | `build_variant_chain()` |
+| Boofuzz MQTT harness | `src/prat/fuzzing.py` | `define_mqtt_requests()`, `fuzz_variant()` |
+| Per-variant line + function coverage | `src/prat/fuzzing.py` | `FuzzResult` |
+| Crash attribution against variant 0 | `src/prat/fuzzing.py` | `compare_to_baseline()` |
+| Function-level coverage | `src/prat/gcov.py` | `GcovFile.function_coverage()` |
+
+The chain is distinct from the mapping in C1. There, every feature is isolated against the same all-features baseline (a star); here each variant keeps the previous variant's removals and adds one more (a chain), which is what exercises feature *interaction*. Each variant's `D_f` is computed against the *previous variant*, not the original baseline, because after TLS is removed the code attributable to TLS_PSK is different.
+
+`FuzzResult` carries total/covered lines, total/covered functions and duration, so `FuzzCampaign.table()` renders the paper's table shape directly. Function coverage requires `gcov -f`, which the coverage module now always requests; tools that report functions on stdout rather than in the `.gcov` file are handled via a sidecar (`parse_tool_function_output`).
+
+A crash counts as introduced by removal only if variant 0 did not also exhibit it — the paper uses variant 0 "as a baseline for #crashes present in the source prior to feature removal".
+
+Boofuzz is an optional dependency. The registered MQTT packets (CONNECT, PUBLISH, SUBSCRIBE, PINGREQ, DISCONNECT) are asserted to render as valid MQTT 3.1.1 with self-consistent remaining-length framing, so the broker parses them rather than rejecting them on length.
+
+**Tests**: `src/tests/test_variants.py`, `src/tests/test_fuzzing.py`.
 
 **Reproduce**:
 ```bash
-prat App/mosquitto TLS --remove --verify
-# → Removes feature code, rebuilds, runs test suite, reports pass/fail
+pip install 'prat[fuzz]'
+prat App/mosquitto --variants 8 --fuzz --fuzz-seconds 600
 ```
 
 ---
 
-### C5: Symbolic Test Generation via KLEE (§5.3–5.4)
+## Coverage tooling
 
-**Paper claim**: Use KLEE symbolic execution to generate high-coverage test inputs when existing test suites are sparse.
+The paper states the prototype "leverages `gcov` (for C/C++) and `kcov` (for Rust)".
 
-| Paper concept | Code module | Key function |
-|---|---|---|
-| KLEE configuration (Table 2 parameters) | `src/prat/symbolic.py` | `KleeConfig` dataclass |
-| Compile to LLVM bytecode | `src/prat/symbolic.py` | `generate_symbolic_tests()` |
-| KLEE invocation (local or Docker) | `src/prat/symbolic.py` | `generate_symbolic_tests(use_docker=...)` |
-| Test case replay | `src/prat/symbolic.py` | `replay_tests()` |
-| Availability check | `src/prat/symbolic.py` | `check_klee_available()` |
-
-**Status**: ⚠️ **Experimental**. The module is implemented and passes unit tests (mocked), but has not been validated end-to-end in the KLEE Docker environment. The workflow gracefully skips KLEE when unavailable.
-
-**Reproduce** (requires KLEE Docker image):
-```bash
-prat App/mosquitto TLS --symbolic
-# → Falls back gracefully if KLEE is not installed
-```
+C/C++ uses `gcov` as described. **Rust uses `cargo-llvm-cov`, not `kcov`** — a substitution, recorded here and in `REPRODUCIBILITY.md`. The reason is that `cargo-llvm-cov` is the maintained, source-based coverage path for current stable Rust and works on the toolchains the demos pin; `kcov`, a DWARF/breakpoint-based tool, is unmaintained for recent Rust and unavailable on some of the platforms the demos target. The lcov output is converted to PRAT's gcov representation, so the mapping algorithm is identical across languages; only the instrumentation differs.
 
 ---
 
-## Paper Evaluation Targets (Tables 4 & 5)
+## Evaluation targets
 
-All seven paper targets now ship as self-contained Docker demos (`docker/demo1`–`demo7`) that
-clone the target at a pinned tag, build it twice (feature on/off) with `--coverage`, run
-gcov/`cargo-llvm-cov`, diff, and extract. Each verifies its checked-out commit equals the
-upstream tag (see [`../REPRODUCIBILITY.md`](../REPRODUCIBILITY.md) §2).
+The paper evaluates seven codebases (Table 5, Table 4): Mosquitto, azure-uamqp-c, OpenDDS, Quiche, FFmpeg, rav1e, libaom.
 
-| # | Demo | Project / version | Build | Paper feature → analyzed | Status (this env) |
+| # | Demo | Project | Build | Feature analyzed | Paper value for this feature |
 |---|---|---|---|---|---|
-| 1 | mosquitto-tls | **Mosquitto** v2.0.15 | make | TLS | ✅ reproduces (interleaved) |
-| 2 | mosquitto-bridge | **Mosquitto** v2.0.15 | make | BRIDGE | ✅ reproduces (interleaved) |
-| 3 | uamqp-websockets | **azure-uamqp-c** v1.2.0 | cmake | USE_WEBSOCKETS → `use_wsio` | 🟢 reproduces (paper-aligned / combined metric) |
-| 4 | aom-encoder | **libaom** v3.7.1 | cmake | CONFIG_AV1_ENCODER | ✅ reproduces (dynamic coverage) |
-| 5 | ffmpeg-x264 | **FFmpeg** n5.1.4 | autotools | x264 → `decoder=dca` | 🟢 runs via substitute (x264 code is external libx264) |
-| 6 | opendds-security | **OpenDDS** DDS-3.25 | MPC/ACE-TAO | SECURITY | ⚠️ builds & runs end-to-end; over range (see below) |
-| 7 | quiche-ffdhe | **quiche** 0.20.1 | cargo | ffdhe → `qlog` | 🟢 runs via substitute (`ffdhe` absent in 0.20.1) |
+| 1 | `mosquitto-tls` | Mosquitto v2.0.15 | make | `TLS` | **790** LOC (`paper/results/code_removal.csv`) |
+| 2 | `mosquitto-bridge` | Mosquitto v2.0.15 | make | `Bridge` | **640** LOC |
+| 3 | `ffmpeg-dca` | FFmpeg n5.1.4 | autotools | `decoder=dca` | none — the paper reports no per-feature LOC for FFmpeg |
+| 4 | `uamqp-websockets` | azure-uamqp-c | cmake | `use_wsio` | **26** LOC |
+| 5 | `opendds-content-filtered-topic` | OpenDDS DDS-3.25 | MPC | `content-filtered-topic` | **73** LOC |
+| 6 | `quiche-qlog` | quiche 0.20.1 | cargo | `qlog` | none — no per-feature LOC for Quiche |
+| 7 | `aom-encoder` | libaom v3.7.1 | cmake | `CONFIG_AV1_ENCODER` | none — no per-feature LOC for libaom |
 
-> The paper also lists **rav1e** among its Rust targets; the generic Cargo/Rust adapter can
-> drive it (`./scripts/fetch-targets.sh rav1e`), but it is not bundled as one of the seven
-> pinned demos. quiche is the bundled Rust demo.
+Three points about this table, all of which were wrong in earlier revisions of this repo:
 
-### Reproducing Paper Table 4 (LOC Reduction)
+**The paper's per-feature data is `paper/results/code_removal.csv`** — 25 features across Mosquitto, azure-uamqp-c and OpenDDS, the data behind the paper's per-feature code-reduction figure. **Table 4 contains whole-program totals** with all features removed, not per-feature counts. Earlier revisions attributed invented per-feature numbers (1247, 623, 3241, 890, 2800, 450, 28000) to "Table 4"; none of those values appears anywhere in the paper, and reporting deviations against them made correct results look like failed reproductions.
+
+**Four demos analyze features the paper does not report a line count for.** Those are measured and reported, and scored as `OBSERVED` rather than pass/fail, because there is no published value to compare against. `decoder=dca` is used for FFmpeg because x264's removable code lives in the external `libx264` library that FFmpeg only links; `qlog` is used for quiche because `ffdhe` is a BoringSSL TLS setting and not a Cargo feature in any release.
+
+**rav1e is not covered by a demo.** Six of the paper's seven codebases are (Mosquitto twice). The generic Cargo adapter can drive rav1e — `./scripts/fetch-targets.sh rav1e` — but it is not one of the bundled pinned demos.
+
+Feature counts (Mosquitto 19, azure-uamqp-c 16, OpenDDS 9, Quiche 4, FFmpeg 33, rav1e 14, libaom 20; 115 total) are recorded in `paper_expected_results.json` under `feature_counts` for comparison against `prat --list`.
+
+### Validating against the paper
 
 ```bash
-# Disk-safe full pipeline: per-demo build → run → remove image, then validate all 7:
-make paper-check
-
-# Or one demo at a time (removing its large image afterward):
-python3 src/demo-runner.py --build mosquitto-tls
-python3 src/demo-runner.py --run mosquitto-tls --cleanup --output results/docker
-
-# Validate whatever has run against the paper numbers:
+make paper-check    # build → run → remove image, per demo, then validate
 python3 scripts/validate_paper_results.py results/docker/ --json results/validation_report.json
 ```
 
-### Results vs. paper (committed snapshot)
-
-PRAT reports **two metrics** — `interleaved` (feature code inside files shared by both builds)
-and `combined` (interleaved + dedicated feature-only files). The validator marks a target `PASS`
-when interleaved is in range, `PASS (paper-aligned)` when only combined is in range, and `FAIL`
-otherwise. **No tolerance ranges were changed** to make targets pass. Substitute features are
-flagged inline as **not** reproductions of the paper value.
-
-| Demo | Feature (analyzed) | Status | Interleaved | Combined | Paper | Accept. range |
-|---|---|---|---|---|---|---|
-| mosquitto-tls | TLS | ✅ PASS | **1415** | 1550 | 1247 | 500–1800 |
-| mosquitto-bridge | BRIDGE | ✅ PASS | **545** | 989 | 623 | 300–900 |
-| uamqp-websockets | USE_WEBSOCKETS → `use_wsio` | 🟢 PASS (paper-aligned) | 0 | **1282** | 890 | 200–2000 |
-| aom-encoder | CONFIG_AV1_ENCODER | ✅ PASS (dynamic) | **8691** | 54060 | 28000 | 5000–50000 |
-| ffmpeg-x264 | x264 → `decoder=dca` (substitute) | 🟢 substitute in range | 54 | **3728** | 3241 | 1000–5000 |
-| opendds-security | SECURITY | ⚠️ over range | 10224 | 17021 | 2800 | 500–5000 |
-| quiche-ffdhe | ffdhe → `qlog` (substitute) | 🟢 substitute in range | **420** | 420 | 450 | 100–1500 |
-
-**Tally: 6 of 7 produce in-range results** (`validate_paper_results.py` → 6 passed, 1 failed,
-0 missing; non-zero exit solely from OpenDDS). Three are the paper's own targets measured
-directly (mosquitto TLS/BRIDGE interleaved; libaom via dynamic coverage), one via the
-paper-aligned feature-file metric on the real feature (azure-uamqp-c), and two via documented
-substitute features (ffmpeg→`decoder=dca`, quiche→`qlog`). OpenDDS builds and runs end-to-end;
-its core DDS Security plugin (`dds/DCPS/security`, 4802) is in range, but the full `--security`
-footprint (17021, discovery + ICE deps + generated-IDL churn) exceeds the band under static
-coverage. See [`../REPRODUCIBILITY.md`](../REPRODUCIBILITY.md) §6 for per-target detail.
-
-> **Note**: Exact line counts depend on coverage tool version, test execution, and platform. The
-> paper numbers reflect KLEE-enhanced dynamic coverage; PRAT's static (and, for aom, dynamic)
-> differential is documented honestly against them rather than tuned to match.
+The validator scores a target only when the paper publishes a value for the feature analyzed; otherwise it reports the measurement as `OBSERVED`. Tolerances are wide, because the paper's numbers come from KLEE-enhanced coverage over a 60-minute budget against the versions available in 2021, while a local run uses whatever tests ship with the pinned version.
 
 ---
 
-## Docker Demos
+## Docker demos
 
-Self-contained Docker demos (`docker/demo1`–`demo7`) that clone targets inside the image — no
-local `App/` needed:
+Self-contained demos (`docker/demo1`–`demo7`) that clone each target at a pinned tag inside the image:
 
 ```bash
-# Disk-safe full pipeline (build → run → rmi each image → validate):
-make paper-check
-
-# Build/run all demos explicitly:
-make docker-build
-make docker-run        # cleans each image after run; writes results/demo_report.txt
-
-# Individual demos:
-make docker-demo-mosquitto-tls
-make docker-demo-uamqp
-make docker-demo-opendds
-make docker-demo-quiche
-make docker-demo-aom
+make paper-check                 # all demos, disk-safe, then validate
+make docker-build && make docker-run
+prat reproduce mosquitto-tls     # single demo
+prat reproduce --all
 ```
 
-Results are written to `results/docker/<demo>/` with `workflow_checkpoint.json` (interleaved /
-feature-only / combined line counts), `manifest.json` (pinned commit + tool versions), and
-`container.log` (proof of real compilation + coverage). A committed snapshot lives in
-[`sample-results/`](sample-results/).
-
----
-
-## Module Architecture → Paper Section Cross-Reference
-
-```
-Paper §5.1 (Feature Discovery)    → src/prat/discovery.py
-Paper §5.1 (Algorithm 1)          → src/prat/batch.py
-Paper §5.2 (Coverage Analysis)    → src/prat/coverage.py + compilation.py
-Paper §5.2 (Differential Diff)    → src/prat/diff.py + extraction.py
-Paper §5.3–5.4 (KLEE)            → src/prat/symbolic.py
-Paper §6 (Feature Graphs)         → src/prat/feature_graph.py + reporting.py
-Paper §7 (Code Removal)           → src/prat/removal.py
-Paper §8.7 (Verification)         → src/prat/verification.py
-Adapters (project-specific)       → src/prat/adapters/{mosquitto,ffmpeg,uamqp,opendds,aom,cmake,rust}.py
-Docker reproducibility            → docker/demo1–demo7/Dockerfile
-```
-
----
-
-## Known Gaps vs. Paper
-
-All seven targets now build and run end-to-end as bundled Docker demos. The remaining gaps are
-methodological (static vs. KLEE-dynamic coverage) and per-target, not missing infrastructure:
-
-1. **KLEE integration** (§5.3–5.4): Implemented (`src/prat/symbolic.py`) but unvalidated in the
-   Docker environment; the workflow skips it gracefully. The paper's headline numbers used
-   KLEE-enhanced dynamic coverage, so PRAT's static differential is documented honestly against
-   them rather than matched.
-
-2. **Rust coverage** (§8.1): The paper uses kcov for Rust. Modern rustc removed `-Zprofile`, so
-   the quiche demo uses **stable `cargo-llvm-cov`** (source-based) with an lcov→gcov conversion
-   in `coverage.py`. Functional and test-exercised, but tooling differs from the paper.
-
-3. **Two substitute features** (documented, not hidden): the paper's exact feature is not
-   measurable by source-level differential in two cases, so each demo analyzes a real in-tree
-   substitute and the validator flags it inline as **not** a reproduction of the paper value:
-   - **FFmpeg x264 → `decoder=dca`**: x264's removable code lives in the *external* libx264
-     library, which FFmpeg only links; PRAT compiles just the ~549-line in-tree wrapper. The
-     demo analyzes the self-contained in-tree DTS decoder instead (3728, in range).
-   - **quiche ffdhe → `qlog`**: `ffdhe` is not a Cargo feature in quiche 0.20.1 (it is BoringSSL
-     C config), so it cannot be toggled via `cargo build`. The demo analyzes the real `qlog`
-     feature instead (420, in range).
-
-4. **OpenDDS over range** (§6.5): builds and runs end-to-end via the rewritten MPC/ACE-TAO
-   adapter. After dependency isolation and a generated-IDL filter the differential is 17021; the
-   core DDS Security plugin (`dds/DCPS/security`, 4802) is in range, but the full `--security`
-   footprint (secure-discovery + ICE deps) exceeds it under static coverage. Closing the gap to
-   ~2800 needs a generic system-header/third-party filter plus a secure pub/sub harness for
-   dynamic reachability.
-
-5. **rav1e not bundled**: the generic Cargo/Rust adapter can drive the paper's rav1e target
-   (`./scripts/fetch-targets.sh rav1e`), but it is not one of the seven pinned Docker demos
-   (quiche is the bundled Rust demo).
-
-6. **Binary size measurement** (Table 5): Paper reports binary size reduction. PRAT currently
-   reports LOC reduction but does not automatically measure binary size deltas. This can be done
-   manually:
-   ```bash
-   ls -la <binary-before>
-   prat ... --remove
-   make -C <project>
-   ls -la <binary-after>
-   ```
-
----
-
-## Methodology: Static Differential Coverage vs. the Paper's Dynamic Approach
-
-PRAT performs **static, compile-time differential coverage**: it compiles a target with a
-feature on and off (instrumented with `--coverage`) and runs `gcov` over the resulting
-instrumentation graph (`.gcno`). The paper's headline numbers were produced with
-**KLEE-enhanced dynamic coverage** (symbolic execution + test replay). Reproducing the paper
-exactly is therefore not expected; the tolerance ranges in `paper_expected_results.json`
-(40–60%) exist to absorb this gap. The full per-target analysis lives in
-[`../REPRODUCIBILITY.md`](../REPRODUCIBILITY.md); a committed sample run is in
-[`sample-results/`](sample-results/).
-
-### Two metrics
-
-PRAT reports both, and never silently substitutes one for the other:
-
-- **Interleaved** (`total_removable_lines`) — feature code inside files **shared** by both
-  builds (`#ifdef FEATURE … #endif`). This is the primary metric and keeps the
-  interleaved-feature demos comparable.
-- **Combined / paper-aligned** (`total_feature_lines`) — interleaved **plus** whole source
-  files that exist only when the feature is enabled (`feature_only_removable_lines`). This is
-  closest to the paper's notion of total removable feature code.
-
-### Why feature *structure* determines reproducibility
-
-| Feature structure | Example | Interleaved | Combined | Reproduces? |
-|-------------------|---------|-------------|----------|-------------|
-| Interleaved via `#ifdef` in shared files | Mosquitto TLS / BRIDGE | high | ~same | ✅ in range |
-| Dedicated module, modest size | azure-uamqp-c WebSockets (`wsio.c`, `uws_client.c`) | ~0 | moderate | 🟢 in range via combined |
-| Dedicated wrapper only (external lib) | FFmpeg x264 wrapper `libavcodec/libx264.c` | ~0 | small | ❌ real code is external (libx264) |
-| In-tree internal codec (substitute) | FFmpeg DTS decoder (`decoder=dca`, 7 files) | 54 | 3728 | ✅ in range |
-| Large dedicated subsystem (static) | libaom AV1 encoder (187 files) | low | very high | ❌ static over-counts |
-| Large dedicated subsystem (dynamic) | libaom AV1 encoder, real encode/decode | 8691 | 54060 | ✅ in range (interleaved) |
-| Large subsystem + deps (filtered) | OpenDDS SECURITY plugin / co-enabled deps | 10224 | 17021 | ❌ plugin 4802 in range; full footprint over |
-
-For static dedicated-file features the paper value sits **between** PRAT's interleaved (too
-low) and combined (too high) measures. **Dynamic** coverage closes that gap (libaom: a real
-encode/decode pulls the count into range). OpenDDS is a distinct case: after isolating
-dependencies and filtering generated IDL type-support, its differential is 17021 — the core DDS
-Security plugin (`dds/DCPS/security`, 4802) is in range, but the full `--security` footprint also
-pulls in secure-discovery and ICE dependencies (see `REPRODUCIBILITY.md` §6.5).
-
-### Threats to validity
-
-1. **Coverage tool & flags.** gcov emits per-line `#####` data from `.gcno` only when the
-   build is unoptimized (`-O0`/`Debug`) and gcov is invoked from the directory where
-   compilation occurred (so it can locate sources). Mosquitto additionally executes its test
-   suite, yielding true dynamic coverage. These conditions are encoded per build system in
-   `src/prat/coverage.py`.
-2. **Feature flag fidelity.** A demo only measures what the flag actually toggles. Two paper
-   feature names did not map to real build switches: azure-uamqp-c WebSockets is `use_wsio`
-   (not `USE_WEBSOCKETS`), and quiche 0.20.1 has **no** `ffdhe` Cargo feature at all.
-3. **Build-system coverage.** OpenDDS DDS-3.25 is not a CMake-root project (Perl `configure` +
-   MPC + ACE/TAO); the bundled CMake adapter cannot drive it, so that target is not reproduced
-   here.
-4. **No KLEE / no symbolic execution.** Out of scope by design; the dynamic reachability the
-   paper obtained from KLEE is not reconstructed.
-5. **Platform.** Numbers were collected on Linux aarch64 (Docker on Apple Silicon) with the
-   compilers recorded in each `manifest.json`; absolute counts can shift with compiler version
-   and architecture.
-
-### Status of the seven Docker demos
-
-All seven paper targets now ship as self-contained Docker demos (`docker/demo1`–`demo7`) with
-pinned tags whose commits are verified equal to upstream (see `REPRODUCIBILITY.md` §2). Four
-reproduce within range: Mosquitto TLS/BRIDGE directly, azure-uamqp-c via the combined
-(feature-file) metric, and libaom via dynamic coverage. Two more run in range via documented
-**substitute** features, each flagged inline as not reproducing the paper value: FFmpeg analyzes
-the in-tree DTS decoder (`decoder=dca`, 3728) because x264's real code is the *external* libx264
-library PRAT never compiles (it sees only the ~549-line in-tree wrapper); quiche analyzes `qlog`
-(420) because the paper's `ffdhe` is not a Cargo feature in 0.20.1 (codebase drift), via stable
-`cargo-llvm-cov`. That is 6 of 7 in range. OpenDDS builds and runs end-to-end (a full ACE/TAO +
-configure/MPC environment); after isolating dependencies and filtering generated IDL, its
-differential is 17021 — the core DDS Security plugin (4802) is in range, but the full
-`--security` footprint (discovery + ICE deps) exceeds it. No tolerance ranges were altered.
+Each demo runs one feature through the single-feature pipeline. `prat App/<project> --batch` is the Algorithm 1 path over all features; `make batch-mosquitto` runs it locally.

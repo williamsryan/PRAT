@@ -1,56 +1,62 @@
-"""Tests for prat.feature_graph module."""
+"""Tests for prat.feature_graph — the paper's three-tier feature-graph DAG."""
 
 import json
-import os
+from pathlib import Path
+
+import pytest
 
 from prat.batch import BatchResult, FeatureAnalysis
 from prat.discovery import Feature
 from prat.extraction import ExtractionResult
 from prat.feature_graph import (
+    GraphEdge,
+    GraphValidationError,
+    _validate_graph,
     build_feature_graph,
     build_feature_graph_from_single,
     generate_feature_graph_html,
 )
-from prat.workflow import WorkflowCheckpoint, WorkflowResult
+from prat.gcov import merge_contiguous
+from prat.mapping import FeatureMapping
 
 
-def _make_extraction(files, total=None):
+def _make_extraction(files, total=None, line_numbers=None):
+    """files: file -> line count. line_numbers optionally overrides the lines."""
     if total is None:
         total = sum(files.values())
+
+    numbers = line_numbers or {
+        name: list(range(1, count + 1)) for name, count in files.items()
+    }
     return ExtractionResult(
         success=True,
         file_line_counts=files,
         total_removable_lines=total,
-        file_line_numbers={f: list(range(c)) for f, c in files.items()},
-        file_line_content={f: [f"code_{i}" for i in range(c)] for f, c in files.items()},
+        file_line_numbers=numbers,
+        file_line_content={
+            name: [f"code_{i}" for i in numbers[name]] for name in files
+        },
+        file_line_ranges={name: merge_contiguous(numbers[name]) for name in files},
     )
 
 
-def _make_workflow(files, total=None):
-    ext = _make_extraction(files, total)
-    return WorkflowResult(
-        success=True, project="test", feature="TEST",
-        compilation_enabled=None, compilation_disabled=None,
-        coverage_enabled=None, coverage_disabled=None,
-        diff_result=None, extraction_result=ext,
-        total_time=1.0, checkpoint=WorkflowCheckpoint.COMPLETE,
-    )
-
-
-def _make_batch(feature_data):
-    """feature_data: dict of feat_name -> dict of file_name -> line_count"""
+def _make_batch(feature_data, line_numbers=None):
+    """feature_data: feature name -> {file name -> line count}."""
     results = {}
     total = 0
-    for feat_name, files in feature_data.items():
-        wf = _make_workflow(files)
-        fa = FeatureAnalysis(
-            feature=Feature(name=feat_name),
-            workflow_result=wf,
-            removable_lines=sum(files.values()),
-            affected_files=list(files.keys()),
+    for feature_name, files in feature_data.items():
+        extraction = _make_extraction(
+            files, line_numbers=(line_numbers or {}).get(feature_name)
         )
-        results[feat_name] = fa
-        total += fa.removable_lines
+        analysis = FeatureAnalysis(
+            feature=Feature(name=feature_name, raw_name=feature_name),
+            mapping=FeatureMapping(feature=feature_name),
+            extraction=extraction,
+            removable_lines=sum(files.values()),
+            affected_files=list(files),
+        )
+        results[feature_name] = analysis
+        total += analysis.removable_lines
 
     return BatchResult(
         success=True, project="mosquitto",
@@ -84,14 +90,69 @@ class TestBuildFeatureGraph:
         file_nodes = [n for n in graph.nodes if n.node_type == "file"]
         assert len(file_nodes) == 2
 
-    def test_creates_edges(self):
+    def test_creates_feature_to_file_edges(self):
         batch = _make_batch({
             "TLS": {"net.c": 50},
         })
         graph = build_feature_graph(batch)
 
-        assert len(graph.edges) == 1
-        assert graph.edges[0].weight == 50
+        feature_edges = [
+            e for e in graph.edges
+            if e.source.startswith("feat_") and e.target.startswith("file_")
+        ]
+        assert len(feature_edges) == 1
+        assert feature_edges[0].weight == 50
+
+    def test_creates_the_loc_leaf_tier(self):
+        """Paper: leaves are sets of lines within source files."""
+        batch = _make_batch({"TLS": {"net.c": 3}})
+        graph = build_feature_graph(batch)
+
+        loc_nodes = [n for n in graph.nodes if n.node_type == "loc"]
+        assert len(loc_nodes) == 1  # lines 1-3 are contiguous: one node
+        assert loc_nodes[0].metadata["start_line"] == 1
+        assert loc_nodes[0].metadata["end_line"] == 3
+        assert loc_nodes[0].metadata["line_count"] == 3
+
+    def test_creates_file_to_loc_edges(self):
+        batch = _make_batch({"TLS": {"net.c": 3}})
+        graph = build_feature_graph(batch)
+
+        loc_edges = [
+            e for e in graph.edges
+            if e.source.startswith("file_") and e.target.startswith("loc_")
+        ]
+        assert len(loc_edges) == 1
+        assert loc_edges[0].weight == 3
+
+    def test_merges_contiguous_lines_into_one_leaf(self):
+        """Paper: "contiguous lines of code are merged in a single node"."""
+        batch = _make_batch(
+            {"TLS": {"net.c": 6}},
+            line_numbers={"TLS": {"net.c": [12, 13, 14, 44, 91, 92]}},
+        )
+        graph = build_feature_graph(batch)
+
+        loc_nodes = [n for n in graph.nodes if n.node_type == "loc"]
+        spans = sorted(
+            (n.metadata["start_line"], n.metadata["end_line"]) for n in loc_nodes
+        )
+        assert spans == [(12, 14), (44, 44), (91, 92)]
+
+    def test_loc_tier_can_be_omitted(self):
+        batch = _make_batch({"TLS": {"net.c": 3}})
+        graph = build_feature_graph(batch, include_loc_nodes=False)
+
+        assert not [n for n in graph.nodes if n.node_type == "loc"]
+
+    def test_loc_nodes_can_be_capped_per_file(self):
+        batch = _make_batch(
+            {"TLS": {"net.c": 4}},
+            line_numbers={"TLS": {"net.c": [1, 5, 9, 13]}},
+        )
+        graph = build_feature_graph(batch, max_loc_nodes_per_file=2)
+
+        assert len([n for n in graph.nodes if n.node_type == "loc"]) == 2
 
     def test_shared_files_marked(self):
         batch = _make_batch({
@@ -144,8 +205,20 @@ class TestBuildFeatureGraph:
 
         assert len(details) == 1
         assert details[0]["feature"] == "TLS"
-        assert details[0]["line_numbers"] == [0, 1, 2]
-        assert details[0]["snippet_lines"][0]["content"] == "code_0"
+        assert details[0]["line_numbers"] == [1, 2, 3]
+        assert details[0]["snippet_lines"][0]["content"] == "code_1"
+
+    def test_line_number_preview_is_a_range_list_not_a_span(self):
+        """A first-last span would misleadingly bridge the gaps between runs."""
+        batch = _make_batch(
+            {"TLS": {"net.c": 6}},
+            line_numbers={"TLS": {"net.c": [12, 13, 14, 44, 91, 92]}},
+        )
+        graph = build_feature_graph(batch)
+
+        file_node = next(n for n in graph.nodes if n.label == "net.c")
+        preview = file_node.metadata["per_feature_details"][0]["line_number_preview"]
+        assert preview == "12-14, 44, 91-92"
 
 
 class TestBuildFromSingle:
@@ -153,10 +226,12 @@ class TestBuildFromSingle:
         ext = _make_extraction({"net.c": 50, "tls.c": 30})
         graph = build_feature_graph_from_single(ext, "TLS", "mosquitto")
 
-        assert len(graph.features) == 1
-        assert graph.features[0] == "TLS"
-        assert len(graph.nodes) == 3  # 1 feature + 2 files
-        assert len(graph.edges) == 2
+        assert graph.features == ["TLS"]
+        # 1 feature root + 2 file nodes + 1 contiguous LOC leaf per file.
+        assert len([n for n in graph.nodes if n.node_type == "feature"]) == 1
+        assert len([n for n in graph.nodes if n.node_type == "file"]) == 2
+        assert len([n for n in graph.nodes if n.node_type == "loc"]) == 2
+        assert len(graph.edges) == 4
 
 
 class TestGenerateHtml:
@@ -170,7 +245,7 @@ class TestGenerateHtml:
         path = str(tmp_path / "feature_graph.html")
         result = generate_feature_graph_html(graph, path)
 
-        assert os.path.exists(result)
+        assert Path(result).exists()
 
     def test_html_contains_d3(self, tmp_path):
         batch = _make_batch({"TLS": {"net.c": 50}})
@@ -222,3 +297,106 @@ class TestGenerateHtml:
         assert "Source LoC" in html
         assert "Interactive removal map" in html
         assert "light-mode analysis workspace" in html
+
+
+class TestGraphInvariants:
+    """The paper defines a feature graph as a DAG with an explicit tier order."""
+
+    def test_built_graph_validates(self):
+        batch = _make_batch({
+            "TLS": {"net.c": 50, "tls.c": 30},
+            "BRIDGE": {"net.c": 20, "bridge.c": 40},
+        })
+        graph = build_feature_graph(batch)
+
+        _validate_graph(graph)  # must not raise
+
+    def test_node_ids_are_unique(self):
+        batch = _make_batch({
+            "TLS": {"net.c": 5},
+            "BRIDGE": {"net.c": 5},
+        })
+        graph = build_feature_graph(batch)
+
+        ids = [n.id for n in graph.nodes]
+        assert len(ids) == len(set(ids))
+
+    def test_a_run_shared_by_two_features_is_one_vertex(self):
+        """V is a set: the same line range must not appear twice."""
+        batch = _make_batch(
+            {"TLS": {"net.c": 3}, "BRIDGE": {"net.c": 3}},
+            line_numbers={
+                "TLS": {"net.c": [1, 2, 3]},
+                "BRIDGE": {"net.c": [1, 2, 3]},
+            },
+        )
+        graph = build_feature_graph(batch)
+
+        loc_nodes = [n for n in graph.nodes if n.node_type == "loc"]
+        assert len(loc_nodes) == 1
+        assert sorted(loc_nodes[0].metadata["features"]) == ["BRIDGE", "TLS"]
+
+    def test_tiers_run_feature_then_file_then_loc(self):
+        batch = _make_batch({"TLS": {"net.c": 3}})
+        graph = build_feature_graph(batch)
+
+        tier = {"feature": 0, "file": 1, "loc": 2}
+        by_id = {n.id: tier[n.node_type] for n in graph.nodes}
+        for edge in graph.edges:
+            assert by_id[edge.target] == by_id[edge.source] + 1
+
+    def test_features_are_roots_and_loc_nodes_are_leaves(self):
+        batch = _make_batch({"TLS": {"net.c": 3}})
+        graph = build_feature_graph(batch)
+
+        targets = {e.target for e in graph.edges}
+        sources = {e.source for e in graph.edges}
+        for node in graph.nodes:
+            if node.node_type == "feature":
+                assert node.id not in targets
+            if node.node_type == "loc":
+                assert node.id not in sources
+
+    def test_validator_rejects_a_back_edge(self):
+        batch = _make_batch({"TLS": {"net.c": 3}})
+        graph = build_feature_graph(batch)
+        loc = next(n for n in graph.nodes if n.node_type == "loc")
+        graph.edges.append(GraphEdge(source=loc.id, target="feat_TLS"))
+
+        with pytest.raises(GraphValidationError):
+            _validate_graph(graph)
+
+    def test_validator_rejects_a_self_loop(self):
+        batch = _make_batch({"TLS": {"net.c": 3}})
+        graph = build_feature_graph(batch)
+        graph.edges.append(GraphEdge(source="feat_TLS", target="feat_TLS"))
+
+        with pytest.raises(GraphValidationError, match="self-loop"):
+            _validate_graph(graph)
+
+    def test_validator_rejects_a_dangling_edge(self):
+        batch = _make_batch({"TLS": {"net.c": 3}})
+        graph = build_feature_graph(batch)
+        graph.edges.append(GraphEdge(source="feat_TLS", target="file_absent.c"))
+
+        with pytest.raises(GraphValidationError, match="not a vertex"):
+            _validate_graph(graph)
+
+    def test_validator_rejects_duplicate_ids(self):
+        batch = _make_batch({"TLS": {"net.c": 3}})
+        graph = build_feature_graph(batch)
+        graph.nodes.append(graph.nodes[0])
+
+        with pytest.raises(GraphValidationError, match="duplicate"):
+            _validate_graph(graph)
+
+    def test_discarded_features_are_not_graphed(self):
+        batch = _make_batch({"TLS": {"net.c": 3}})
+        broken = FeatureAnalysis(feature=Feature(name="BROKEN", raw_name="BROKEN"))
+        broken.discarded_reason = "compilation failed"
+        batch.feature_results["BROKEN"] = broken
+
+        graph = build_feature_graph(batch)
+
+        assert graph.features == ["TLS"]
+        assert not [n for n in graph.nodes if n.label == "BROKEN"]

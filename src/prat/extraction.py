@@ -1,63 +1,78 @@
 """
 Feature extraction module for PRAT.
 
-This module handles parsing diff files to identify and count feature-specific
-lines of code that can be removed.
+Turns the feature-to-code mapping D_f (see :mod:`prat.mapping`) into the
+``ExtractionResult`` consumed by reporting, the feature graph, and removal.
+
+The mapping itself is the set difference D_f = L_all \\ L_f over *executed*
+lines, per Algorithm 1. This module only partitions and presents it:
+
+* files present in both builds contribute *interleaved* feature code — code
+  that survives simply turning the build flag off, which is the paper's central
+  observation;
+* files present only in the feature-enabled build contribute *dedicated*
+  feature code.
+
+Both partitions are part of the same D_f and are summed into the reported total;
+the split exists because the paper distinguishes them when contrasting PRAT
+against manual build-flag deactivation.
 """
 
+from __future__ import annotations
+
 import os
-import re
 from dataclasses import dataclass, field
-from typing import Optional
+
+from .gcov import load_coverage_dir
+from .mapping import FeatureMapping, map_feature_from_coverage
 
 
 @dataclass
 class ExtractionResult:
     """Result of feature extraction operation."""
+
     success: bool
-    file_line_counts: dict[str, int]  # filename -> removable line count
+    file_line_counts: dict[str, int]  # source path -> removable line count
     total_removable_lines: int
-    file_line_numbers: dict[str, list[int]]  # filename -> list of line numbers
-    file_line_content: dict[str, list[str]]  # filename -> list of line content
-    html_report_path: Optional[str] = None
-    dot_graph_path: Optional[str] = None
-    error_message: Optional[str] = None
-    # --- Paper-aligned (dedicated feature file) metric -----------------------
-    # PRAT's primary `total_removable_lines` counts feature code INTERLEAVED in
-    # files shared by both builds. The paper's "lines removed", however, also
-    # includes whole source files that exist only when the feature is enabled
-    # (e.g. libx264.c, wsio.c, the OpenDDS security/ tree). These are tracked
-    # separately here so both measures are visible without silently changing
-    # the primary metric (which keeps the interleaved-feature demos comparable).
+    file_line_numbers: dict[str, list[int]]  # source path -> line numbers
+    file_line_content: dict[str, list[str]]  # source path -> line content
+    html_report_path: str | None = None
+    dot_graph_path: str | None = None
+    error_message: str | None = None
+
+    # Partition of D_f over files that exist only in the feature-enabled build.
+    # These lines are already included in `total_removable_lines`; they are
+    # tracked separately because the paper contrasts dedicated feature files
+    # (which a build flag does exclude) against interleaved feature code in
+    # shared files (which it does not).
     feature_only_file_counts: dict[str, int] = field(default_factory=dict)
     feature_only_removable_lines: int = 0
-    total_feature_lines: int = 0  # interleaved + feature-only (paper-aligned)
-    # Real relative source paths of feature-only files, parsed from each gcov
-    # "Source:" header (e.g. "av1/encoder/rdopt.c"). Enables directory-style
-    # key_file verification that flat basenames cannot support.
     feature_only_source_paths: list[str] = field(default_factory=list)
 
+    # Lines executable with the feature enabled but executed in neither build.
+    # Algorithm 1 deliberately leaves these in place; reporting the count makes
+    # the soundness-over-completeness trade-off visible rather than silent.
+    excluded_never_executed: int = 0
 
-def _gcov_source_path(gcov_file: str) -> Optional[str]:
-    """Parse the relative source path from a gcov file's "Source:" header.
+    # Contiguous (start, end) runs per file, the LOC-node unit of a feature
+    # graph ("contiguous lines of code are merged in a single node").
+    file_line_ranges: dict[str, list[tuple[int, int]]] = field(default_factory=dict)
 
-    gcov files begin with header lines like:
-        ``        -:    0:Source:av1/encoder/rdopt.c``
-    Returns the path (e.g. "av1/encoder/rdopt.c") or None if not found.
-    """
-    try:
-        with open(gcov_file, encoding="utf-8", errors="ignore") as f:
-            for _ in range(8):  # header is at the very top
-                line = f.readline()
-                if not line:
-                    break
-                marker = ":Source:"
-                idx = line.find(marker)
-                if idx != -1:
-                    return line[idx + len(marker):].strip()
-    except Exception:
-        return None
-    return None
+    @property
+    def total_feature_lines(self) -> int:
+        """|D_f|.
+
+        Retained as an alias of ``total_removable_lines``: under the corrected
+        set-difference mapping, interleaved and dedicated feature code are two
+        partitions of the same D_f, so there is no second, larger "combined"
+        figure to report.
+        """
+        return self.total_removable_lines
+
+    @property
+    def interleaved_removable_lines(self) -> int:
+        """D_f restricted to files shared by both builds."""
+        return self.total_removable_lines - self.feature_only_removable_lines
 
 
 def _is_generated_idl(name: str) -> bool:
@@ -70,219 +85,123 @@ def _is_generated_idl(name: str) -> bool:
     not occur in the other targets (C/.rs sources), so this is a safe no-op for
     Mosquitto/FFmpeg/libaom/quiche.
     """
+    base = os.path.basename(name)
     return (
-        "TypeSupportImpl" in name
-        or "TypeSupportC" in name
-        or "TypeSupportS" in name
-        or name.endswith(("C.cpp", "S.cpp", "C.h", "S.h", "C.inl", "S.inl"))
+        "TypeSupportImpl" in base
+        or "TypeSupportC" in base
+        or "TypeSupportS" in base
+        or base.endswith(("C.cpp", "S.cpp", "C.h", "S.h", "C.inl", "S.inl"))
     )
 
 
-def count_removable_lines(diff_file: str) -> int:
-    """
-    Count lines marked with ##### in a diff file.
+def extract_from_mapping(
+    mapping: FeatureMapping,
+    skip_generated_idl: bool = True,
+) -> ExtractionResult:
+    """Build an ``ExtractionResult`` from a computed feature mapping D_f."""
+    file_line_counts: dict[str, int] = {}
+    file_line_numbers: dict[str, list[int]] = {}
+    file_line_content: dict[str, list[str]] = {}
+    file_line_ranges: dict[str, list[tuple[int, int]]] = {}
+    feature_only_counts: dict[str, int] = {}
+    feature_only_paths: list[str] = []
+    feature_only_lines = 0
+    total = 0
 
-    Args:
-        diff_file: Path to diff file
+    for source_path, file_map in sorted(mapping.files.items()):
+        if skip_generated_idl and _is_generated_idl(source_path):
+            continue
 
-    Returns:
-        Count of never-executed lines (marked with #####)
-    """
-    if not os.path.exists(diff_file):
-        return 0
+        file_line_counts[source_path] = file_map.count
+        file_line_numbers[source_path] = list(file_map.lines)
+        file_line_content[source_path] = [
+            file_map.source.get(line, "") for line in file_map.lines
+        ]
+        file_line_ranges[source_path] = file_map.ranges
+        total += file_map.count
 
-    count = 0
-    try:
-        with open(diff_file, encoding='utf-8', errors='ignore') as f:
-            for line in f:
-                # Look for ##### markers (never-executed code)
-                # Exclude /*EOF*/ markers
-                if '#####' in line and '/*EOF*/' not in line:
-                    count += 1
-    except Exception as e:
-        print(f"[-] Error reading {diff_file}: {e}")
-        return 0
+        if file_map.feature_only_file:
+            feature_only_counts[source_path] = file_map.count
+            feature_only_paths.append(source_path)
+            feature_only_lines += file_map.count
 
-    return count
+    return ExtractionResult(
+        success=True,
+        file_line_counts=file_line_counts,
+        total_removable_lines=total,
+        file_line_numbers=file_line_numbers,
+        file_line_content=file_line_content,
+        file_line_ranges=file_line_ranges,
+        feature_only_file_counts=feature_only_counts,
+        feature_only_removable_lines=feature_only_lines,
+        feature_only_source_paths=sorted(feature_only_paths),
+        excluded_never_executed=mapping.excluded_never_executed,
+    )
 
 
 def extract_features(
-    diff_dir: str,
+    enabled_coverage_dir: str,
+    disabled_coverage_dir: str,
     feature: str = "",
-    output_dir: Optional[str] = None,
-    enabled_coverage_dir: Optional[str] = None,
-    feature_only_files: Optional[list[str]] = None) -> ExtractionResult:
-    """
-    Parse diff files and extract feature-specific code.
+    skip_generated_idl: bool = True,
+) -> ExtractionResult:
+    """Compute D_f from two coverage directories and package it for reporting.
 
     Args:
-        diff_dir: Directory containing diff files
-        feature: Feature name (used for report labeling)
-        output_dir: Base directory for output reports (default: current directory)
-        enabled_coverage_dir: Coverage dir for the feature-ENABLED build. When
-            provided together with feature_only_files, the never-executed lines
-            of dedicated feature files are counted as the paper-aligned metric.
-        feature_only_files: Base names (without .gcov) of coverage files that
-            exist only in the enabled build (from DiffResult.feature_only_files).
-
-    Returns:
-        ExtractionResult with line counts and file mappings
+        enabled_coverage_dir: Coverage of the build with all features enabled.
+        disabled_coverage_dir: Coverage of the build with ``feature`` disabled.
+        feature: Feature name, for labelling.
+        skip_generated_idl: Drop IDL-generated C++ translation units.
     """
-    print(f"[+] Extract features for removal from: {diff_dir}")
+    print(f"[+] Mapping feature code: D_{feature or 'f'} = L_all \\ L_f")
 
-    def _count_feature_only() -> tuple[dict[str, int], int, list[str]]:
-        """Count never-executed (#####) lines in dedicated feature files.
-
-        Also returns the real relative source paths parsed from each gcov
-        "Source:" header (e.g. "av1/encoder/rdopt.c"), which lets downstream
-        consumers verify directory-style key files that flat basenames cannot.
-        """
-        counts: dict[str, int] = {}
-        total = 0
-        paths: list[str] = []
-        if not (enabled_coverage_dir and feature_only_files):
-            return counts, total, paths
-        for name in feature_only_files:
-            if _is_generated_idl(name):
-                continue
-            gcov_path = os.path.join(enabled_coverage_dir, f"{name}.gcov")
-            if not os.path.exists(gcov_path):
-                # Coverage files are stored without a trailing .gcov when the
-                # source already carries an extension differing from .gcov.
-                alt = os.path.join(enabled_coverage_dir, name)
-                gcov_path = alt if os.path.exists(alt) else gcov_path
-            if os.path.exists(gcov_path):
-                c = count_removable_lines(gcov_path)
-                if c > 0:
-                    counts[name] = c
-                    total += c
-                    src = _gcov_source_path(gcov_path)
-                    if src:
-                        paths.append(src)
-        return counts, total, paths
-
-    if not os.path.exists(diff_dir):
+    if not os.path.isdir(enabled_coverage_dir):
         return ExtractionResult(
             success=False,
             file_line_counts={},
             total_removable_lines=0,
             file_line_numbers={},
             file_line_content={},
-            error_message=f"Diff directory does not exist: {diff_dir}"
+            error_message=(
+                f"Enabled coverage directory does not exist: {enabled_coverage_dir}"
+            ),
         )
 
-    # Get all diff files
-    diff_files = [f for f in os.listdir(diff_dir)
-                  if os.path.isfile(os.path.join(diff_dir, f))]
-
-    if not diff_files:
-        # An empty diff set is a VALID analytical outcome: the feature toggle
-        # produced no line-level differences in files common to both builds.
-        # This happens when a feature is implemented as dedicated source files
-        # (which appear only in the enabled build and are tracked separately as
-        # feature_only_files) rather than as #ifdef-interleaved code in shared
-        # files. Report 0 removable lines rather than failing the workflow.
-        print(f"[+] No non-empty diffs in {diff_dir} — 0 interleaved removable lines")
-        fo_counts, fo_total, fo_paths = _count_feature_only()
-        if fo_total:
-            print(f"[+] Paper-aligned feature-only files: {fo_total} lines "
-                  f"across {len(fo_counts)} dedicated file(s)")
+    if not os.path.isdir(disabled_coverage_dir):
         return ExtractionResult(
-            success=True,
+            success=False,
             file_line_counts={},
             total_removable_lines=0,
             file_line_numbers={},
             file_line_content={},
-            error_message=None,
-            feature_only_file_counts=fo_counts,
-            feature_only_removable_lines=fo_total,
-            total_feature_lines=fo_total,
-            feature_only_source_paths=fo_paths,
+            error_message=(
+                f"Disabled coverage directory does not exist: {disabled_coverage_dir}"
+            ),
         )
 
-    # Data structures to store results
-    file_line_counts = {}
-    file_line_numbers = {}
-    file_line_content = {}
-    total_lines = 0
+    enabled = load_coverage_dir(enabled_coverage_dir)
+    disabled = load_coverage_dir(disabled_coverage_dir)
 
-    # Process each diff file
-    for diff_file in diff_files:
-        file_path = os.path.join(diff_dir, diff_file)
+    if not enabled:
+        return ExtractionResult(
+            success=False,
+            file_line_counts={},
+            total_removable_lines=0,
+            file_line_numbers={},
+            file_line_content={},
+            error_message=f"No parseable coverage files in {enabled_coverage_dir}",
+        )
 
-        # Extract base filename (remove .gcov extension)
-        # Format: filename.c.gcov -> filename.c
-        file_name = diff_file
-        if file_name.endswith('.gcov'):
-            file_name = file_name[:-5]  # Remove .gcov
+    mapping = map_feature_from_coverage(feature, enabled, disabled)
+    result = extract_from_mapping(mapping, skip_generated_idl=skip_generated_idl)
 
-        # Skip IDL-compiler-generated files (mechanical churn, not feature source).
-        if _is_generated_idl(file_name):
-            continue
+    print(f"[+] |D_f| = {result.total_removable_lines} lines "
+          f"across {len(result.file_line_counts)} file(s)")
+    if result.feature_only_removable_lines:
+        print(f"    of which {result.feature_only_removable_lines} lines are in "
+              f"{len(result.feature_only_file_counts)} dedicated feature file(s)")
+    if result.excluded_never_executed:
+        print(f"[+] {result.excluded_never_executed} executable line(s) never "
+              f"executed in either build — retained (soundness over completeness)")
 
-        # Parse the diff file
-        line_numbers = []
-        line_contents = []
-
-        try:
-            with open(file_path, encoding='utf-8', errors='ignore') as f:
-                for line in f:
-                    # Look for ##### markers (never-executed code)
-                    # Exclude /*EOF*/ markers
-                    if '#####' in line and '/*EOF*/' not in line:
-                        # Extract line number: format is "    #####:  123:code"
-                        match = re.search(r'(\d+):', line)
-                        if match:
-                            line_num = int(match.group(1))
-                            line_numbers.append(line_num)
-
-                        # Extract source code content
-                        # Format: "    #####:  123:source code here"
-                        match = re.search(r'\d+:(.*)', line)
-                        if match:
-                            source = match.group(1)
-                            # Escape quotes for later use
-                            source = source.replace('"', '\\"')
-                            line_contents.append(source)
-        except Exception as e:
-            print(f"[-] Error parsing {diff_file}: {e}")
-            continue
-
-        # Store results if we found removable lines
-        if line_numbers:
-            count = len(line_numbers)
-            file_line_counts[file_name] = count
-            file_line_numbers[file_name] = line_numbers
-            file_line_content[file_name] = line_contents
-            total_lines += count
-
-            print("\n------------------")
-            print(f"Lines to remove from {file_name}")
-            print("------------------")
-            print(f"Count: {count}")
-
-    print("\n------------------")
-    print(f"Total lines to remove: {total_lines}")
-    print("------------------")
-
-    # Print summary
-    for file_name, line_nums in file_line_numbers.items():
-        print(f"\t{file_name}: {line_nums}")
-
-    fo_counts, fo_total, fo_paths = _count_feature_only()
-    if fo_total:
-        print(f"[+] Paper-aligned feature-only files: {fo_total} lines "
-              f"across {len(fo_counts)} dedicated file(s)")
-
-    return ExtractionResult(
-        success=True,
-        file_line_counts=file_line_counts,
-        total_removable_lines=total_lines,
-        file_line_numbers=file_line_numbers,
-        file_line_content=file_line_content,
-        error_message=None,
-        feature_only_file_counts=fo_counts,
-        feature_only_removable_lines=fo_total,
-        total_feature_lines=total_lines + fo_total,
-        feature_only_source_paths=fo_paths,
-    )
+    return result
