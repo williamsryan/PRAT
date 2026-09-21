@@ -1,1 +1,5 @@
-# No submodules — target projects are fetched via scripts/fetch-targets.sh
+# Target projects are fetched via scripts/fetch-targets.sh, not submodules.
+# The only submodule is the paper source.
+[submodule "paper"]
+	path = paper
+	url = git@github.com:RiS3-Lab/PRAT-Paper.git
