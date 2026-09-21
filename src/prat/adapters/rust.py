@@ -7,7 +7,8 @@ Handles Cargo-based builds with --features flags. Coverage uses modern
 lcov is converted to PRAT's gcov format by the coverage module.
 """
 
-from typing import Optional
+
+from __future__ import annotations
 
 from ..compilation import BuildSystem
 from .base import ProjectAdapter
@@ -60,17 +61,53 @@ class RustAdapter(ProjectAdapter):
         cmd.extend(["--lcov", "--output-path", lcov_path])
         return cmd
 
+    def get_llvm_cov_command_for_set(
+        self,
+        feature_states: dict[str, bool],
+        lcov_path: str,
+    ) -> list[str]:
+        """`cargo llvm-cov` for an explicit feature set (Algorithm 1 baselines)."""
+        cmd = ["cargo", "llvm-cov", "--lib"]
+        enabled = sorted(
+            name.lower() for name, state in feature_states.items() if state
+        )
+        if enabled:
+            cmd.extend(["--features", ",".join(enabled)])
+        cmd.extend(["--lcov", "--output-path", lcov_path])
+        return cmd
+
+    def get_build_commands_for_set(
+        self,
+        feature_states: dict[str, bool],
+        with_coverage: bool = True,
+    ) -> list[list[str]]:
+        """Cargo takes one comma-separated ``--features`` list, not one flag each.
+
+        The base implementation would emit repeated ``--features`` arguments, so
+        this collapses the enabled set into a single list. Features left disabled
+        are simply omitted; ``--no-default-features`` is deliberately not used,
+        since dropping required defaults (e.g. quiche's vendored TLS backend)
+        breaks the build rather than isolating a feature.
+        """
+        cmd = ["cargo", "build", "--lib"]
+        enabled = sorted(
+            name.lower() for name, state in feature_states.items() if state
+        )
+        if enabled:
+            cmd.extend(["--features", ",".join(enabled)])
+        return [cmd]
+
     def get_clean_command(self) -> list[str]:
         """Remove all build + coverage artifacts (target/ incl. llvm-cov-target)."""
         return ["cargo", "clean"]
 
-    def get_test_command(self) -> Optional[list[str]]:
+    def get_test_command(self) -> list[str] | None:
         return ["cargo", "test", "--lib"]
 
     def format_feature_flag(self, feature: str, enabled: bool) -> str:
         return f"--features {feature.lower()}" if enabled else "(default features)"
 
-    def get_binary_path(self) -> Optional[str]:
+    def get_binary_path(self) -> str | None:
         target_dir = self.project_path / "target" / "debug"
         if target_dir.exists():
             return str(target_dir)

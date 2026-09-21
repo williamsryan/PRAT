@@ -59,10 +59,10 @@ _PAPER_EXPECTED_PATH = Path(__file__).resolve().parent.parent / "paper_expected_
 _FALLBACK_EXPECTED = {
     "mosquitto-tls": ExpectedResult(500, 1800, ["net.c", "tls_mosq.c"], "Mosquitto TLS feature analysis"),
     "mosquitto-bridge": ExpectedResult(300, 900, ["bridge.c"], "Mosquitto Bridge feature analysis"),
-    "ffmpeg-x264": ExpectedResult(1000, 5000, ["libavcodec/libx264.c"], "FFmpeg x264 encoder feature analysis"),
+    "ffmpeg-dca": ExpectedResult(0, 100000, ["dcadec.c"], "FFmpeg DTS (dca) decoder feature analysis"),
     "uamqp-websockets": ExpectedResult(200, 2000, ["wsio.c"], "azure-uamqp-c WebSockets feature analysis"),
-    "opendds-security": ExpectedResult(500, 5000, ["Security"], "OpenDDS Security feature analysis"),
-    "quiche-ffdhe": ExpectedResult(100, 1500, ["src/"], "Quiche FFDHE feature analysis"),
+    "opendds-content-filtered-topic": ExpectedResult(500, 5000, ["Security"], "OpenDDS Security feature analysis"),
+    "quiche-qlog": ExpectedResult(0, 100000, ["src/"], "Quiche qlog feature analysis"),
     "aom-encoder": ExpectedResult(5000, 50000, ["av1/encoder"], "AOM AV1 encoder feature analysis"),
 }
 
@@ -107,28 +107,30 @@ DEMO_CONFIGS = {
         "feature": "BRIDGE",
         "project": "mosquitto"
     },
-    "ffmpeg-x264": {
+    # The "feature" here must be the option the Dockerfile CMD actually passes,
+    # otherwise demo_manifest.json records a feature that was never analyzed.
+    "ffmpeg-dca": {
         "dockerfile": "docker/demo3/Dockerfile",
-        "image_name": "prat-demo:ffmpeg",
-        "feature": "x264",
+        "image_name": "prat-demo:ffmpeg-dca",
+        "feature": "decoder=dca",
         "project": "ffmpeg"
     },
     "uamqp-websockets": {
         "dockerfile": "docker/demo4/Dockerfile",
         "image_name": "prat-demo:uamqp-websockets",
-        "feature": "USE_WEBSOCKETS",
+        "feature": "use_wsio",
         "project": "azure-uamqp-c"
     },
-    "opendds-security": {
+    "opendds-content-filtered-topic": {
         "dockerfile": "docker/demo5/Dockerfile",
-        "image_name": "prat-demo:opendds-security",
-        "feature": "SECURITY",
+        "image_name": "prat-demo:opendds-content-filtered-topic",
+        "feature": "content-filtered-topic",
         "project": "opendds"
     },
-    "quiche-ffdhe": {
+    "quiche-qlog": {
         "dockerfile": "docker/demo6/Dockerfile",
-        "image_name": "prat-demo:quiche-ffdhe",
-        "feature": "ffdhe",
+        "image_name": "prat-demo:quiche-qlog",
+        "feature": "qlog",
         "project": "quiche"
     },
     "aom-encoder": {
@@ -268,12 +270,13 @@ def run_demo(demo_name: str, output_dir: str) -> DemoResult:
         with open(checkpoint_file) as f:
             checkpoint = json.load(f)
 
-        # Extract results
+        # Extract results. `file_line_counts` is keyed by the source path gcov
+        # recorded, and `feature_only_source_paths` lists the files that exist
+        # only in the feature-enabled build; both are partitions of D_f.
         extraction = checkpoint.get('extraction_result', {})
-        diff_result = checkpoint.get('diff_result', {})
         removable_lines = extraction.get('total_removable_lines', 0)
         file_line_counts = extraction.get('file_line_counts', {})
-        feature_only_files = diff_result.get('feature_only_files', [])
+        feature_only_files = extraction.get('feature_only_source_paths', [])
         files_analyzed = len(file_line_counts)
         execution_time = checkpoint.get('total_time', 0)
 

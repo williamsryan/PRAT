@@ -6,10 +6,12 @@ This module handles installation and verification of all required dependencies
 including build tools, coverage tools, and Python/Perl packages.
 """
 
+
+from __future__ import annotations
+
 import shutil
 import subprocess
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
@@ -18,7 +20,7 @@ class EnvironmentResult:
     success: bool
     available_tools: dict[str, bool]
     missing_tools: list[str]
-    error_message: Optional[str] = None
+    error_message: str | None = None
 
 
 def verify_dependencies() -> EnvironmentResult:

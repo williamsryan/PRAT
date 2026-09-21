@@ -16,32 +16,54 @@ KLEE requires a specific environment (LLVM 9/11, uclibc, etc.).
 This module supports both local KLEE and Docker-based execution.
 """
 
+
+from __future__ import annotations
+
 import os
 import shutil
 import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
 
 
 @dataclass
 class KleeConfig:
     """Configuration for KLEE symbolic execution.
 
-    Paper Table 2: General parameters for test case generation.
+    Defaults are the paper's Table 3 parameters:
+
+        libc        uclibc
+        runtime     posix-runtime
+        sym-args    0 3 4
+        sym-files   2 4
+        max-fail    1
+        max-time    60
+
+    The paper's ``max-time`` of 60 is in *minutes* — "We run KLEE against our
+    target protocols for 60 minutes and, on average, generate 4,369 tests" — so
+    it is stored as minutes here and converted to the seconds KLEE's
+    ``--max-time`` expects. Configuring 60 seconds instead would generate a tiny
+    fraction of those tests and, because the mapping is only as good as the
+    coverage T achieves, would understate every feature.
     """
+
     libc: str = "uclibc"
     runtime: str = "posix-runtime"
-    sym_args: str = "0 3 4"       # symbolic argument range
-    sym_files: str = "2 4"         # num symbolic files, size
+    sym_args: str = "0 3 4"        # symbolic argument count range and max length
+    sym_files: str = "2 4"         # number of symbolic files, size of each
     max_fail: int = 1
-    max_time: int = 60             # seconds per KLEE run
+    max_time_minutes: int = 60     # paper Table 3: max-time = 60 (minutes)
     solver_backend: str = "z3"
     emit_all_errors: bool = True
     only_output_states_covering_new: bool = True
     extra_flags: list[str] = field(default_factory=list)
     link_libraries: list[str] = field(default_factory=list)
+
+    @property
+    def max_time_seconds(self) -> int:
+        """Budget in seconds, as KLEE's ``--max-time`` expects."""
+        return self.max_time_minutes * 60
 
     def to_klee_args(self) -> list[str]:
         """Convert config to KLEE command-line arguments."""
@@ -53,7 +75,7 @@ class KleeConfig:
         args.extend(["--libc", self.libc])
         args.append(f"--{self.runtime}")
         args.extend(["--solver-backend", self.solver_backend])
-        args.extend(["--max-time", str(self.max_time)])
+        args.extend(["--max-time", str(self.max_time_seconds)])
         args.extend(["--max-fail", str(self.max_fail)])
 
         for lib in self.link_libraries:
@@ -77,11 +99,11 @@ class SymbolicResult:
     success: bool
     test_cases: list[str]           # paths to .ktest files
     test_count: int
-    bytecode_path: Optional[str] = None
-    klee_output_dir: Optional[str] = None
+    bytecode_path: str | None = None
+    klee_output_dir: str | None = None
     generation_time: float = 0.0
-    replay_results: Optional[dict[str, bool]] = None
-    error_message: Optional[str] = None
+    replay_results: dict[str, bool] | None = None
+    error_message: str | None = None
 
 
 def check_klee_available(use_docker: bool = False) -> bool:
@@ -102,67 +124,126 @@ def check_klee_available(use_docker: bool = False) -> bool:
 def compile_to_bytecode(
     source_files: list[str],
     output_path: str,
-    include_dirs: Optional[list[str]] = None,
+    include_dirs: list[str] | None = None,
     clang_binary: str = "clang",
-    extra_flags: Optional[list[str]] = None,
-) -> Optional[str]:
+    extra_flags: list[str] | None = None,
+    llvm_link_binary: str = "llvm-link",
+) -> str | None:
     """
-    Compile C/C++ source files to LLVM bytecode (.bc).
+    Compile C/C++ sources to a single LLVM bytecode module.
 
-    Paper §5.3 step 1: Compile source code to LLVM bytecode.
+    Paper §5.3 step 1: "Compile source code to LLVM bytecode."
+
+    Each source file is compiled separately and the results are linked with
+    ``llvm-link``. ``clang -emit-llvm -c`` rejects multiple inputs alongside a
+    single ``-o``, so compiling the whole program in one invocation fails
+    outright; KLEE needs one whole-program module, so linking is required rather
+    than optional.
 
     Args:
         source_files: List of .c/.cpp source files
         output_path: Output .bc file path
         include_dirs: Additional include directories
-        clang_binary: Path to clang (default: system clang)
+        clang_binary: Path to clang
         extra_flags: Additional compilation flags
+        llvm_link_binary: Path to llvm-link
 
     Returns:
-        Path to .bc file, or None on failure
+        Path to the linked .bc file, or None on failure
     """
-    cmd = [clang_binary, "-emit-llvm", "-c", "-g", "-O0"]
+    if not source_files:
+        print("[!] No source files given for bytecode compilation")
+        return None
 
-    if include_dirs:
-        for inc in include_dirs:
-            cmd.extend(["-I", inc])
+    base_cmd = [clang_binary, "-emit-llvm", "-c", "-g", "-O0"]
+    for include in include_dirs or ():
+        base_cmd.extend(["-I", include])
+    base_cmd.extend(extra_flags or ())
 
-    if extra_flags:
-        cmd.extend(extra_flags)
+    out_dir = os.path.dirname(output_path) or "."
+    objects_dir = os.path.join(out_dir, "bc_objects")
+    os.makedirs(objects_dir, exist_ok=True)
 
-    cmd.extend(source_files)
-    cmd.extend(["-o", output_path])
+    print(f"[+] Compiling {len(source_files)} file(s) to LLVM bytecode...")
 
-    print(f"[+] Compiling to LLVM bytecode: {' '.join(cmd[:5])}...")
+    objects: list[str] = []
+    failed: list[str] = []
 
-    try:
-        proc = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=120,
-        )
-        if proc.returncode != 0:
-            print(f"[!] Bytecode compilation failed: {proc.stderr[:500]}")
+    for index, source in enumerate(source_files):
+        stem = os.path.splitext(os.path.basename(source))[0]
+        # Prefix with the index so identically named files in different
+        # directories do not overwrite each other.
+        obj = os.path.join(objects_dir, f"{index:04d}_{stem}.bc")
+        try:
+            proc = subprocess.run(
+                [*base_cmd, source, "-o", obj],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+        except subprocess.TimeoutExpired:
+            failed.append(f"{source}: timed out")
+            continue
+        except FileNotFoundError:
+            print(f"[!] clang not found at: {clang_binary}")
             return None
 
-        if os.path.exists(output_path):
-            size = os.path.getsize(output_path)
-            print(f"[+] Bytecode generated: {output_path} ({size} bytes)")
-            return output_path
+        if proc.returncode == 0 and os.path.exists(obj):
+            objects.append(obj)
         else:
-            print("[!] Bytecode file not created")
+            detail = (proc.stderr or "").strip().splitlines()
+            failed.append(f"{source}: {detail[0] if detail else 'compile failed'}")
+
+    if failed:
+        print(f"[!] {len(failed)} file(s) did not compile to bytecode; "
+              f"continuing with the remaining {len(objects)}")
+        for entry in failed[:5]:
+            print(f"      {entry}")
+
+    if not objects:
+        print("[!] No source file compiled to bytecode")
+        return None
+
+    if len(objects) == 1:
+        try:
+            shutil.copyfile(objects[0], output_path)
+        except OSError as exc:
+            print(f"[!] Could not stage bytecode: {exc}")
+            return None
+    else:
+        try:
+            proc = subprocess.run(
+                [llvm_link_binary, *objects, "-o", output_path],
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+        except subprocess.TimeoutExpired:
+            print("[!] llvm-link timed out")
+            return None
+        except FileNotFoundError:
+            print(f"[!] {llvm_link_binary} not found — cannot link "
+                  f"{len(objects)} bytecode modules into a whole-program module")
             return None
 
-    except subprocess.TimeoutExpired:
-        print("[!] Bytecode compilation timed out")
+        if proc.returncode != 0:
+            print(f"[!] llvm-link failed: {proc.stderr[:500]}")
+            return None
+
+    if not os.path.exists(output_path):
+        print("[!] Bytecode file not created")
         return None
-    except FileNotFoundError:
-        print(f"[!] clang not found at: {clang_binary}")
-        return None
+
+    size = os.path.getsize(output_path)
+    print(f"[+] Bytecode generated: {output_path} ({size} bytes, "
+          f"{len(objects)} module(s) linked)")
+    return output_path
 
 
 def run_klee(
     bytecode_path: str,
-    config: Optional[KleeConfig] = None,
-    output_dir: Optional[str] = None,
+    config: KleeConfig | None = None,
+    output_dir: str | None = None,
     use_docker: bool = False,
     docker_image: str = "klee/klee:latest",
 ) -> SymbolicResult:
@@ -193,7 +274,8 @@ def run_klee(
         output_dir = str(Path(bytecode_path).parent / "klee-out")
 
     print(f"[+] Running KLEE on {bytecode_path}")
-    print(f"    Config: max_time={config.max_time}s, solver={config.solver_backend}")
+    print(f"    Config: max-time={config.max_time_minutes}min "
+          f"({config.max_time_seconds}s), solver={config.solver_backend}")
 
     try:
         if use_docker:
@@ -235,7 +317,8 @@ def _run_klee_local(
     cmd.extend(config.to_replay_sym_args())
 
     proc = subprocess.run(
-        cmd, capture_output=True, text=True, timeout=config.max_time + 30,
+        cmd, capture_output=True, text=True,
+        timeout=config.max_time_seconds + 120,
     )
 
     return _collect_klee_results(output_dir, bytecode_path, proc)
@@ -266,7 +349,7 @@ def _run_klee_docker(
 
     proc = subprocess.run(
         cmd, capture_output=True, text=True,
-        timeout=config.max_time + 60,
+        timeout=config.max_time_seconds + 180,
     )
 
     return _collect_klee_results(output_dir, bytecode_path, proc)
@@ -350,10 +433,10 @@ def replay_tests(
 
 def generate_symbolic_tests(
     project_path: str,
-    source_files: Optional[list[str]] = None,
-    binary_path: Optional[str] = None,
-    config: Optional[KleeConfig] = None,
-    output_dir: Optional[str] = None,
+    source_files: list[str] | None = None,
+    binary_path: str | None = None,
+    config: KleeConfig | None = None,
+    output_dir: str | None = None,
     use_docker: bool = False,
     replay: bool = True,
 ) -> SymbolicResult:
@@ -389,12 +472,20 @@ def generate_symbolic_tests(
 
     # Step 1: Find source files if not specified
     if source_files is None:
+        # Recurse: a flat glob of src/, lib/ and the root misses most of a real
+        # codebase, and KLEE needs the whole program in one module.
         source_files = []
-        for ext in ("*.c", "*.cpp"):
-            for src_dir in ["src", "lib", "."]:
-                d = project / src_dir
-                if d.exists():
-                    source_files.extend(str(f) for f in d.glob(ext))
+        seen: set[str] = set()
+        for src_dir in ("src", "lib", "."):
+            directory = project / src_dir
+            if not directory.exists():
+                continue
+            for ext in ("*.c", "*.cpp", "*.cc"):
+                for found in sorted(directory.rglob(ext)):
+                    resolved = str(found.resolve())
+                    if resolved not in seen:
+                        seen.add(resolved)
+                        source_files.append(str(found))
         if not source_files:
             return SymbolicResult(
                 success=False, test_cases=[], test_count=0,
@@ -417,7 +508,8 @@ def generate_symbolic_tests(
         )
 
     # Step 3: Run KLEE
-    print(f"\n[2/3] Running KLEE symbolic execution (max {config.max_time}s)...")
+    print(f"\n[2/3] Running KLEE symbolic execution "
+          f"(max {config.max_time_minutes}min)...")
     klee_out = os.path.join(output_dir, "klee-out")
     result = run_klee(bc_path, config, klee_out, use_docker)
 

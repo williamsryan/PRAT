@@ -1,13 +1,25 @@
 """
 Feature graph module for PRAT.
 
-Paper §6: Feature graphs represent the relationship between program features,
-source files, and shared code dependencies. They serve as an interactive
-decision-support tool for the analyst selecting features for removal.
+Paper, Feature selection: "A feature graph is a directed acyclic graph (DAG)
+F = {V, E}. The set of vertices V includes nodes representing features, source
+files, and sets of lines of code ... Informally, this results in a DAG where the
+roots are features, intermediate nodes are source files, and leaves are lines
+within source files."
 
-This module builds the graph data structure from batch analysis results
-and generates a self-contained interactive HTML visualization.
+The graph is built with all three tiers. Leaves are *sets* of lines: contiguous
+runs are merged into one vertex, as the paper specifies, so a feature spanning
+lines 12-18 and 44 contributes two leaves rather than eight. Invariants (unique
+vertices, tier ordering, acyclicity) are checked by :func:`_validate_graph`
+whenever a graph is built.
+
+Its purpose is decision support: the analyst identifies the available features,
+assesses how much code each carries, and descends from a feature into the files
+and the specific lines implementing it before choosing what to remove.
 """
+
+
+from __future__ import annotations
 
 import json
 import os
@@ -15,6 +27,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from .extraction import ExtractionResult
+from .gcov import format_ranges, merge_contiguous
 
 if TYPE_CHECKING:
     from .batch import BatchResult
@@ -26,7 +39,10 @@ class GraphNode:
 
     id: str
     label: str
-    node_type: str  # "feature" | "file" | "snippet"
+    #: "feature" (root), "file" (intermediate), or "loc" (leaf: a contiguous
+    #: run of lines). The tiers must be linked in that order; see
+    #: :func:`_validate_graph`.
+    node_type: str
     size: float = 1.0
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -86,6 +102,81 @@ class FeatureGraph:
         return output_path
 
 
+class GraphValidationError(ValueError):
+    """Raised when a built graph violates the paper's DAG invariants."""
+
+
+def _validate_graph(graph: FeatureGraph) -> None:
+    """Check the invariants the paper's definition of a feature graph implies.
+
+    "A feature graph is a directed acyclic graph (DAG) F = {V, E} ... Informally,
+    this results in a DAG where the roots are features, intermediate nodes are
+    source files, and leaves are lines within source files."
+
+    Checked here: unique vertex ids, every edge endpoint resolvable, no
+    self-loops, the feature -> file -> loc tier ordering, and acyclicity. The
+    tier ordering makes acyclicity structural, so a cycle indicates a
+    construction bug rather than unusual input.
+    """
+    tier = {"feature": 0, "file": 1, "loc": 2}
+
+    seen: set[str] = set()
+    for node in graph.nodes:
+        if node.id in seen:
+            raise GraphValidationError(f"duplicate vertex id: {node.id}")
+        seen.add(node.id)
+        if node.node_type not in tier:
+            raise GraphValidationError(
+                f"unknown node type {node.node_type!r} on {node.id}"
+            )
+
+    node_tier = {node.id: tier[node.node_type] for node in graph.nodes}
+
+    for edge in graph.edges:
+        if edge.source not in node_tier:
+            raise GraphValidationError(f"edge source not a vertex: {edge.source}")
+        if edge.target not in node_tier:
+            raise GraphValidationError(f"edge target not a vertex: {edge.target}")
+        if edge.source == edge.target:
+            raise GraphValidationError(f"self-loop on {edge.source}")
+        if node_tier[edge.target] != node_tier[edge.source] + 1:
+            raise GraphValidationError(
+                f"edge {edge.source} -> {edge.target} does not go "
+                f"feature -> file -> loc"
+            )
+
+    # Kahn's algorithm: an acyclic graph fully drains.
+    indegree = dict.fromkeys(node_tier, 0)
+    adjacency: dict[str, list[str]] = {node_id: [] for node_id in node_tier}
+    for edge in graph.edges:
+        indegree[edge.target] += 1
+        adjacency[edge.source].append(edge.target)
+
+    queue = [node_id for node_id, degree in indegree.items() if degree == 0]
+    visited = 0
+    while queue:
+        current = queue.pop()
+        visited += 1
+        for neighbour in adjacency[current]:
+            indegree[neighbour] -= 1
+            if indegree[neighbour] == 0:
+                queue.append(neighbour)
+
+    if visited != len(node_tier):
+        raise GraphValidationError("graph contains a cycle")
+
+
+def _line_ranges(
+    extraction_result: ExtractionResult,
+    file_name: str,
+) -> list[tuple[int, int]]:
+    """Contiguous (start, end) runs of the removable lines in a file."""
+    cached = extraction_result.file_line_ranges.get(file_name)
+    if cached:
+        return cached
+    return merge_contiguous(extraction_result.file_line_numbers.get(file_name, []))
+
+
 def _build_file_detail(
     extraction_result: ExtractionResult,
     file_name: str,
@@ -103,24 +194,119 @@ def _build_file_detail(
             "content": content,
         })
 
-    line_preview = f"{line_numbers[0]}-{line_numbers[-1]}" if line_numbers else "n/a"
+    ranges = _line_ranges(extraction_result, file_name)
 
     return {
         "feature": feature_name,
         "line_count": extraction_result.file_line_counts.get(file_name, 0),
         "line_numbers": line_numbers,
-        "line_number_preview": line_preview,
+        # Compact range list (e.g. "12-18, 44, 91-95") rather than a first-last
+        # span, which would misleadingly bridge the gaps between runs.
+        "line_number_preview": format_ranges(line_numbers) if line_numbers else "n/a",
+        "line_ranges": [list(item) for item in ranges],
         "snippet_lines": snippet_lines,
     }
 
 
-def build_feature_graph(batch_result: "BatchResult") -> FeatureGraph:
+def _loc_node_id(file_name: str, start: int, end: int) -> str:
+    return f"loc_{file_name}:{start}-{end}"
+
+
+def _add_loc_nodes(
+    graph: FeatureGraph,
+    extraction_result: ExtractionResult,
+    file_name: str,
+    feature_name: str,
+    emitted: set[str],
+    max_per_file: int | None = None,
+) -> None:
+    """Add the LOC tier for one file and the (file, loc) edges.
+
+    Paper, Feature selection: "for each line of code of interest l_i, we
+    establish an edge (s, l_i). In practice, contiguous lines of code are merged
+    in a single node to limit the complexity of the graph." One vertex is
+    therefore emitted per contiguous run, not per line.
+
+    Args:
+        max_per_file: Optional cap on runs emitted per file, largest first, to
+            bound graph size on very large features. None emits every run.
+    """
+    ranges = _line_ranges(extraction_result, file_name)
+    if not ranges:
+        return
+
+    line_numbers = extraction_result.file_line_numbers.get(file_name, [])
+    line_content = extraction_result.file_line_content.get(file_name, [])
+    content_by_line = dict(zip(line_numbers, line_content))
+
+    ordered = sorted(ranges, key=lambda item: item[1] - item[0], reverse=True)
+    if max_per_file is not None:
+        ordered = ordered[:max_per_file]
+
+    for start, end in sorted(ordered):
+        node_id = _loc_node_id(file_name, start, end)
+        span = end - start + 1
+
+        if node_id not in emitted:
+            emitted.add(node_id)
+            snippet = [
+                {"line_number": line, "content": content_by_line.get(line, "")}
+                for line in range(start, end + 1)
+            ]
+            graph.nodes.append(
+                GraphNode(
+                    id=node_id,
+                    label=(f"{file_name}:{start}" if span == 1
+                           else f"{file_name}:{start}-{end}"),
+                    node_type="loc",
+                    size=max(0.3, span / 10),
+                    metadata={
+                        "file": file_name,
+                        "start_line": start,
+                        "end_line": end,
+                        "line_count": span,
+                        "features": [feature_name],
+                        "snippet_lines": snippet,
+                    },
+                )
+            )
+            graph.edges.append(
+                GraphEdge(
+                    source=f"file_{file_name}",
+                    target=node_id,
+                    weight=span,
+                    metadata={"lines": span},
+                )
+            )
+        else:
+            # A run already emitted for another feature: record the attribution
+            # rather than duplicating the vertex, keeping V a set.
+            for node in graph.nodes:
+                if node.id == node_id:
+                    features = node.metadata.setdefault("features", [])
+                    if feature_name not in features:
+                        features.append(feature_name)
+                    break
+
+
+def build_feature_graph(
+    batch_result: BatchResult,
+    include_loc_nodes: bool = True,
+    max_loc_nodes_per_file: int | None = None,
+) -> FeatureGraph:
     """
     Build a feature graph from batch analysis results.
 
-    Creates nodes for each feature and each affected source file,
-    with edges connecting features to the files they affect.
-    Shared files (affected by multiple features) are highlighted.
+    Produces the paper's three tiers: feature vertices as roots, source-file
+    vertices as intermediates, and one vertex per contiguous run of removable
+    lines as leaves. Files attributed to more than one feature are flagged so
+    the analyst can see shared code before removing anything.
+
+    Args:
+        batch_result: Result of :func:`prat.batch.run_batch_analysis`.
+        include_loc_nodes: Emit the LOC tier. Disable for a features-to-files
+            overview of a very large codebase.
+        max_loc_nodes_per_file: Cap LOC vertices per file, largest runs first.
     """
     graph = FeatureGraph(
         project=batch_result.project,
@@ -130,16 +316,14 @@ def build_feature_graph(batch_result: "BatchResult") -> FeatureGraph:
     file_features: dict[str, set[str]] = {}
     file_lines: dict[str, dict[str, int]] = {}
     file_details: dict[str, list[dict[str, Any]]] = {}
+    extractions: dict[str, ExtractionResult] = {}
 
     for feat_name, feature_analysis in batch_result.feature_results.items():
-        if (
-            not feature_analysis.workflow_result
-            or not feature_analysis.workflow_result.success
-            or not feature_analysis.workflow_result.extraction_result
-        ):
+        extraction_result = feature_analysis.extraction
+        if extraction_result is None or not feature_analysis.analyzed:
             continue
 
-        extraction_result = feature_analysis.workflow_result.extraction_result
+        extractions[feat_name] = extraction_result
         graph.features.append(feat_name)
 
         graph.nodes.append(
@@ -167,6 +351,8 @@ def build_feature_graph(batch_result: "BatchResult") -> FeatureGraph:
             file_details[file_name].append(
                 _build_file_detail(extraction_result, file_name, feat_name)
             )
+
+    emitted_loc: set[str] = set()
 
     for file_name, features in file_features.items():
         total_lines = sum(file_lines[file_name].values())
@@ -204,6 +390,17 @@ def build_feature_graph(batch_result: "BatchResult") -> FeatureGraph:
                 )
             )
 
+            if include_loc_nodes:
+                _add_loc_nodes(
+                    graph,
+                    extractions[feat_name],
+                    file_name,
+                    feat_name,
+                    emitted_loc,
+                    max_loc_nodes_per_file,
+                )
+
+    _validate_graph(graph)
     return graph
 
 
@@ -211,6 +408,8 @@ def build_feature_graph_from_single(
     extraction_result: ExtractionResult,
     feature: str,
     project: str = "project",
+    include_loc_nodes: bool = True,
+    max_loc_nodes_per_file: int | None = None,
 ) -> FeatureGraph:
     """Build a feature graph from a single-feature analysis."""
     graph = FeatureGraph(
@@ -232,6 +431,8 @@ def build_feature_graph_from_single(
             },
         )
     )
+
+    emitted_loc: set[str] = set()
 
     for file_name, count in extraction_result.file_line_counts.items():
         graph.nodes.append(
@@ -261,8 +462,18 @@ def build_feature_graph_from_single(
             )
         )
 
-    return graph
+        if include_loc_nodes:
+            _add_loc_nodes(
+                graph,
+                extraction_result,
+                file_name,
+                feature,
+                emitted_loc,
+                max_loc_nodes_per_file,
+            )
 
+    _validate_graph(graph)
+    return graph
 
 _GRAPH_HTML_TEMPLATE = """\
 <!DOCTYPE html>

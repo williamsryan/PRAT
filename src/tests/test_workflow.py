@@ -1,209 +1,276 @@
-"""Tests for prat.workflow module — integration-level with mocked externals."""
+"""Tests for prat.workflow — the single-feature pipeline orchestration."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
+
+import pytest
 
 from prat.compilation import BuildSystem, CompilationResult
 from prat.coverage import CoverageResult
-from prat.diff import DiffResult
 from prat.environment import EnvironmentResult
-from prat.extraction import ExtractionResult
-from prat.workflow import (
-    WorkflowCheckpoint,
-    WorkflowResult,
-    run_complete_workflow,
-)
+from prat.removal import RemovalResult
+from prat.verification import VerificationResult, VerificationStatus
+from prat.workflow import WorkflowCheckpoint, WorkflowResult, run_complete_workflow
+
+from .test_mapping import write_gcov
 
 
-def _make_env_result(success=True, missing=None):
-    return EnvironmentResult(
-        success=success,
-        available_tools={"gcc": True, "make": True},
-        missing_tools=missing or [],
-        error_message=None if success else "Missing deps",
-    )
+@pytest.fixture
+def coverage_dirs(tmp_path):
+    """An enabled/disabled coverage pair with one feature line (line 10)."""
+    enabled = tmp_path / "cov_on"
+    disabled = tmp_path / "cov_off"
+    write_gcov(enabled, "src/net.c", {10: "4", 14: "9"})
+    write_gcov(disabled, "src/net.c", {14: "9"})
+    return enabled, disabled
 
 
-def _make_comp_result(success=True, bs=BuildSystem.MAKE):
-    return CompilationResult(
-        success=success,
-        binary_path="/fake/binary" if success else None,
-        error_message=None if success else "compile error",
-        compilation_time=1.5,
+@pytest.fixture
+def happy_path(coverage_dirs, tmp_path):
+    """Patch out every external step so the mapping logic can be exercised."""
+    enabled, disabled = coverage_dirs
+
+    def fake_coverage(*_args, **kwargs):
+        target = enabled if kwargs.get("enabled", True) else disabled
+        return CoverageResult(
+            success=True,
+            coverage_files=[str(p) for p in target.iterdir()],
+            coverage_dir=str(target),
+            missing_files=[],
+        )
+
+    compilation = CompilationResult(
+        success=True,
+        binary_path=str(tmp_path / "bin"),
+        error_message=None,
+        compilation_time=0.1,
         coverage_enabled=True,
-        build_system=bs,
+        build_system=BuildSystem.MAKE,
     )
 
-
-def _make_cov_result(success=True):
-    return CoverageResult(
-        success=success,
-        coverage_files=["a.gcov", "b.gcov"] if success else [],
-        coverage_dir="/fake/cov_dir",
-        missing_files=[],
-        error_message=None if success else "no coverage",
-    )
-
-
-def _make_diff_result(success=True):
-    return DiffResult(
-        success=success,
-        diff_dir="/fake/diff_dir",
-        diff_files=["a.gcov", "b.gcov"] if success else [],
-        feature_only_files=["tls.c"],
-        total_diffs=2 if success else 0,
-        error_message=None if success else "diff error",
-    )
-
-
-def _make_ext_result(success=True):
-    return ExtractionResult(
-        success=success,
-        file_line_counts={"net.c": 10, "tls.c": 25} if success else {},
-        total_removable_lines=35 if success else 0,
-        file_line_numbers={"net.c": [1, 2], "tls.c": [10]} if success else {},
-        file_line_content={"net.c": ["code1", "code2"], "tls.c": ["code3"]} if success else {},
-        error_message=None if success else "extract error",
-    )
+    with (
+        patch("prat.workflow.verify_dependencies",
+              return_value=EnvironmentResult(success=True, available_tools={}, missing_tools=[])),
+        patch("prat.workflow.get_adapter", return_value=None),
+        patch("prat.workflow.compile_project", return_value=compilation),
+        patch("prat.workflow.generate_coverage", side_effect=fake_coverage),
+        patch("prat.workflow.generate_html_report", return_value="report.html"),
+        patch("prat.workflow.generate_dot_graph", return_value="FDG.dot"),
+        patch("prat.workflow.generate_json_report", return_value="report.json"),
+    ):
+        yield
 
 
 class TestRunCompleteWorkflow:
-    """Tests for run_complete_workflow()."""
-
-    @patch("prat.workflow.generate_html_diffs")
-    @patch("prat.workflow.generate_dot_graph")
-    @patch("prat.workflow.generate_html_report")
-    @patch("prat.workflow.extract_features")
-    @patch("prat.workflow.diff_coverage_files")
-    @patch("prat.workflow.generate_coverage")
-    @patch("prat.workflow.compile_project")
-    @patch("prat.workflow.get_adapter", return_value=None)
-    @patch("prat.workflow.verify_dependencies")
-    def test_successful_workflow(
-        self, mock_deps, mock_adapter, mock_compile, mock_cov,
-        mock_diff, mock_extract, mock_html, mock_dot, mock_diffs,
-        tmp_path,
-    ):
-        mock_deps.return_value = _make_env_result()
-        mock_compile.return_value = _make_comp_result()
-        mock_cov.return_value = _make_cov_result()
-        mock_diff.return_value = _make_diff_result()
-        mock_extract.return_value = _make_ext_result()
-
+    def test_succeeds_and_maps_the_feature(self, happy_path, tmp_path):
         result = run_complete_workflow(
-            project_path=str(tmp_path),
-            feature="TLS",
-            output_dir=str(tmp_path),
+            str(tmp_path), "TLS", output_dir=str(tmp_path / "out")
         )
 
         assert result.success is True
-        assert result.checkpoint == WorkflowCheckpoint.COMPLETE
-        assert result.extraction_result.total_removable_lines == 35
-        assert result.total_time > 0
+        assert result.checkpoint is WorkflowCheckpoint.COMPLETE
+        assert result.extraction_result.total_removable_lines == 1
+        assert result.extraction_result.file_line_numbers == {"src/net.c": [10]}
 
-    @patch("prat.workflow.get_adapter", return_value=None)
-    @patch("prat.workflow.verify_dependencies")
-    def test_stops_on_missing_deps(self, mock_deps, mock_adapter, tmp_path):
-        mock_deps.return_value = _make_env_result(
-            success=False, missing=["gcc", "gcov"]
-        )
-
+    def test_reports_coverage_percentage(self, happy_path, tmp_path):
         result = run_complete_workflow(
-            project_path=str(tmp_path),
-            feature="TLS",
-            output_dir=str(tmp_path),
+            str(tmp_path), "TLS", output_dir=str(tmp_path / "out")
         )
+
+        assert result.coverage_percent_enabled == pytest.approx(100.0)
+
+    def test_writes_a_checkpoint(self, happy_path, tmp_path):
+        output = tmp_path / "out"
+        run_complete_workflow(str(tmp_path), "TLS", output_dir=str(output))
+
+        assert (output / "workflow_checkpoint.json").exists()
+
+    def test_does_not_remove_unless_asked(self, happy_path, tmp_path):
+        result = run_complete_workflow(
+            str(tmp_path), "TLS", output_dir=str(tmp_path / "out")
+        )
+
+        assert result.removal_result is None
+        assert result.verification_result is None
+
+    def test_missing_dependencies_fails_early(self, tmp_path):
+        with patch(
+            "prat.workflow.verify_dependencies",
+            return_value=EnvironmentResult(success=False, available_tools={}, missing_tools=["gcov"]),
+        ):
+            result = run_complete_workflow(str(tmp_path), "TLS",
+                                           output_dir=str(tmp_path / "out"))
 
         assert result.success is False
-        assert result.checkpoint == WorkflowCheckpoint.START
-        assert "gcc" in result.error_message
+        assert result.checkpoint is WorkflowCheckpoint.START
+        assert "gcov" in result.error_message
 
-    @patch("prat.workflow.generate_coverage")
-    @patch("prat.workflow.compile_project")
-    @patch("prat.workflow.get_adapter", return_value=None)
-    @patch("prat.workflow.verify_dependencies")
-    def test_stops_on_compile_failure(
-        self, mock_deps, mock_adapter, mock_compile, mock_cov, tmp_path
-    ):
-        mock_deps.return_value = _make_env_result()
-        mock_compile.return_value = _make_comp_result(success=False)
-
-        result = run_complete_workflow(
-            project_path=str(tmp_path),
-            feature="TLS",
-            output_dir=str(tmp_path),
+    def test_failed_enabled_compilation_stops_the_pipeline(self, tmp_path):
+        failure = CompilationResult(
+            success=False, binary_path=None, error_message="boom",
+            compilation_time=0.0, coverage_enabled=True,
+            build_system=BuildSystem.MAKE,
         )
+        with (
+            patch("prat.workflow.verify_dependencies",
+                  return_value=EnvironmentResult(success=True, available_tools={}, missing_tools=[])),
+            patch("prat.workflow.get_adapter", return_value=None),
+            patch("prat.workflow.compile_project", return_value=failure),
+        ):
+            result = run_complete_workflow(str(tmp_path), "TLS",
+                                           output_dir=str(tmp_path / "out"))
 
         assert result.success is False
-        assert result.checkpoint == WorkflowCheckpoint.COMPILE_ENABLED
+        assert result.checkpoint is WorkflowCheckpoint.COMPILE_ENABLED
 
-    @patch("prat.workflow.generate_html_diffs")
-    @patch("prat.workflow.generate_dot_graph")
-    @patch("prat.workflow.generate_html_report")
-    @patch("prat.workflow.extract_features")
-    @patch("prat.workflow.diff_coverage_files")
-    @patch("prat.workflow.generate_coverage_with_adapter")
-    @patch("prat.workflow.compile_with_adapter")
-    @patch("prat.workflow.verify_dependencies")
-    def test_uses_adapter_when_provided(
-        self, mock_deps, mock_comp_adapt, mock_cov_adapt,
-        mock_diff, mock_extract, mock_html, mock_dot, mock_diffs,
-        tmp_path,
-    ):
-        mock_deps.return_value = _make_env_result()
-        mock_comp_adapt.return_value = _make_comp_result()
-        mock_cov_adapt.return_value = _make_cov_result()
-        mock_diff.return_value = _make_diff_result()
-        mock_extract.return_value = _make_ext_result()
-
-        fake_adapter = MagicMock()
-        fake_adapter.build_system = BuildSystem.MAKE
-        fake_adapter.coverage_tool = "llvm-cov-9"
-        fake_adapter.source_directories = ["src", "lib"]
-
-        result = run_complete_workflow(
-            project_path=str(tmp_path),
-            feature="TLS",
-            output_dir=str(tmp_path),
-            adapter=fake_adapter,
+    def test_failed_coverage_stops_the_pipeline(self, tmp_path):
+        compilation = CompilationResult(
+            success=True, binary_path=None, error_message=None,
+            compilation_time=0.0, coverage_enabled=True,
+            build_system=BuildSystem.MAKE,
         )
+        empty = CoverageResult(
+            success=False, coverage_files=[], coverage_dir="",
+            missing_files=[], error_message="no gcda",
+        )
+        with (
+            patch("prat.workflow.verify_dependencies",
+                  return_value=EnvironmentResult(success=True, available_tools={}, missing_tools=[])),
+            patch("prat.workflow.get_adapter", return_value=None),
+            patch("prat.workflow.compile_project", return_value=compilation),
+            patch("prat.workflow.generate_coverage", return_value=empty),
+        ):
+            result = run_complete_workflow(str(tmp_path), "TLS",
+                                           output_dir=str(tmp_path / "out"))
+
+        assert result.success is False
+        assert result.checkpoint is WorkflowCheckpoint.COVERAGE_ENABLED
+
+
+class TestRemovalAndVerification:
+    def test_removal_runs_when_requested(self, happy_path, tmp_path):
+        removal = RemovalResult(
+            success=True, lines_removed=1, files_modified=1, files_stubbed=0
+        )
+        verification = VerificationResult(
+            success=True, compiles=True, status=VerificationStatus.PASSED,
+            total_tests_run=3, total_tests_passed=3,
+        )
+        with (
+            patch("prat.workflow.remove_feature_code", return_value=removal) as remove,
+            patch("prat.workflow.verify_correctness", return_value=verification),
+        ):
+            result = run_complete_workflow(
+                str(tmp_path), "TLS", output_dir=str(tmp_path / "out"),
+                remove=True, verify=True,
+            )
 
         assert result.success is True
-        # Should have called adapter-based functions
-        assert mock_comp_adapt.call_count == 2  # enabled + disabled
-        assert mock_cov_adapt.call_count == 2
+        assert result.removal_result.lines_removed == 1
+        assert result.verification_result.status is VerificationStatus.PASSED
+        # Shared lines must be passed through so the guard cannot absorb them.
+        assert remove.call_args.kwargs["protected_lines"] == {"src/net.c": {14}}
 
-    @patch("prat.workflow.generate_html_diffs")
-    @patch("prat.workflow.generate_dot_graph")
-    @patch("prat.workflow.generate_html_report")
-    @patch("prat.workflow.extract_features")
-    @patch("prat.workflow.diff_coverage_files")
-    @patch("prat.workflow.generate_coverage")
-    @patch("prat.workflow.compile_project")
-    @patch("prat.workflow.get_adapter", return_value=None)
-    @patch("prat.workflow.verify_dependencies")
-    def test_result_contains_all_fields(
-        self, mock_deps, mock_adapter, mock_compile, mock_cov,
-        mock_diff, mock_extract, mock_html, mock_dot, mock_diffs,
-        tmp_path,
+    def test_failed_removal_fails_the_workflow(self, happy_path, tmp_path):
+        removal = RemovalResult(
+            success=False, lines_removed=0, files_modified=0, files_stubbed=0,
+            error_message="rebuild failed", rebuild_success=False,
+        )
+        with patch("prat.workflow.remove_feature_code", return_value=removal):
+            result = run_complete_workflow(
+                str(tmp_path), "TLS", output_dir=str(tmp_path / "out"),
+                remove=True,
+            )
+
+        assert result.success is False
+        assert result.checkpoint is WorkflowCheckpoint.REMOVE
+
+    def test_failed_verification_fails_the_workflow(self, happy_path, tmp_path):
+        removal = RemovalResult(
+            success=True, lines_removed=1, files_modified=1, files_stubbed=0
+        )
+        verification = VerificationResult(
+            success=False, compiles=True, status=VerificationStatus.CRASHED,
+            crashes=["cargo-test: SIGSEGV"], total_tests_run=1,
+        )
+        with (
+            patch("prat.workflow.remove_feature_code", return_value=removal),
+            patch("prat.workflow.verify_correctness", return_value=verification),
+        ):
+            result = run_complete_workflow(
+                str(tmp_path), "TLS", output_dir=str(tmp_path / "out"),
+                remove=True, verify=True,
+            )
+
+        assert result.success is False
+        assert result.checkpoint is WorkflowCheckpoint.VERIFY
+
+    def test_verification_skipped_when_disabled(self, happy_path, tmp_path):
+        removal = RemovalResult(
+            success=True, lines_removed=1, files_modified=1, files_stubbed=0
+        )
+        with (
+            patch("prat.workflow.remove_feature_code", return_value=removal),
+            patch("prat.workflow.verify_correctness") as verify,
+        ):
+            run_complete_workflow(
+                str(tmp_path), "TLS", output_dir=str(tmp_path / "out"),
+                remove=True, verify=False,
+            )
+
+        verify.assert_not_called()
+
+
+class TestBaselineReuse:
+    def test_reuses_a_supplied_baseline_instead_of_rebuilding(
+        self, coverage_dirs, tmp_path
     ):
-        mock_deps.return_value = _make_env_result()
-        mock_compile.return_value = _make_comp_result()
-        mock_cov.return_value = _make_cov_result()
-        mock_diff.return_value = _make_diff_result()
-        mock_extract.return_value = _make_ext_result()
-
-        result = run_complete_workflow(
-            project_path=str(tmp_path),
-            feature="TLS",
-            output_dir=str(tmp_path),
+        """This is how batch analysis achieves Algorithm 1's n+1 builds."""
+        enabled, disabled = coverage_dirs
+        compilation = CompilationResult(
+            success=True, binary_path=None, error_message=None,
+            compilation_time=0.0, coverage_enabled=True,
+            build_system=BuildSystem.MAKE,
+        )
+        disabled_cov = CoverageResult(
+            success=True,
+            coverage_files=[str(p) for p in disabled.iterdir()],
+            coverage_dir=str(disabled),
+            missing_files=[],
         )
 
-        assert isinstance(result, WorkflowResult)
-        assert result.project is not None
-        assert result.feature == "TLS"
-        assert result.compilation_enabled is not None
-        assert result.compilation_disabled is not None
-        assert result.coverage_enabled is not None
-        assert result.coverage_disabled is not None
-        assert result.diff_result is not None
-        assert result.extraction_result is not None
+        with (
+            patch("prat.workflow.verify_dependencies",
+                  return_value=EnvironmentResult(success=True, available_tools={}, missing_tools=[])),
+            patch("prat.workflow.get_adapter", return_value=None),
+            patch("prat.workflow.compile_project",
+                  return_value=compilation) as compile_mock,
+            patch("prat.workflow.generate_coverage", return_value=disabled_cov),
+            patch("prat.workflow.generate_html_report"),
+            patch("prat.workflow.generate_dot_graph"),
+            patch("prat.workflow.generate_json_report"),
+        ):
+            result = run_complete_workflow(
+                str(tmp_path), "TLS", output_dir=str(tmp_path / "out"),
+                baseline_coverage_dir=str(enabled), reuse_baseline=True,
+            )
+
+        assert result.success is True
+        # Only the feature-disabled build is compiled; the baseline is reused.
+        assert compile_mock.call_count == 1
+        assert result.extraction_result.file_line_numbers == {"src/net.c": [10]}
+
+
+def test_workflow_result_excludes_mapping_from_serialization(tmp_path):
+    """The mapping carries full source text and must not bloat the checkpoint."""
+    result = WorkflowResult(
+        success=True, project="p", feature="TLS",
+        compilation_enabled=None, compilation_disabled=None,
+        coverage_enabled=None, coverage_disabled=None,
+        extraction_result=None, total_time=0.0,
+        checkpoint=WorkflowCheckpoint.COMPLETE,
+    )
+
+    serialized = result.to_dict()
+
+    assert "mapping" not in serialized
+    assert serialized["checkpoint"] == "complete"

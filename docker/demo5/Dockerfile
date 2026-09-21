@@ -32,11 +32,15 @@ RUN git clone --depth 1 --branch DDS-3.25 \
     https://github.com/OpenDDS/OpenDDS.git /prat/App/OpenDDS
 
 ENV PROJECT_PATH=/prat/App/OpenDDS
-ENV FEATURE=SECURITY
+ENV FEATURE=content-filtered-topic
 
 RUN mkdir -p /prat/output
 
+# "content-filtered-topic" is one of the five OpenDDS features the paper
+# actually analyzes (paper/results/code_removal.csv) and is a real DDS-3.25
+# ./configure switch. The previous target, "SECURITY", is not a feature the
+# paper reports, so there was no published value to compare its result against.
 CMD ["python3", "/prat/src/demo_workflow.py", \
      "--project", "/prat/App/OpenDDS", \
-     "--feature", "SECURITY", \
+     "--feature", "content-filtered-topic", \
      "--output", "/prat/output"]

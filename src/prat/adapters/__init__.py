@@ -5,8 +5,10 @@ This module provides project-specific adapters that handle build system
 differences and project-specific configurations.
 """
 
+
+from __future__ import annotations
+
 from pathlib import Path
-from typing import Optional
 
 from .aom import AomAdapter
 from .base import ProjectAdapter
@@ -30,7 +32,7 @@ __all__ = [
 ]
 
 
-def get_adapter(project_path: str) -> Optional[ProjectAdapter]:
+def get_adapter(project_path: str) -> ProjectAdapter | None:
     """
     Auto-detect and return the appropriate adapter for a project.
 

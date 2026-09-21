@@ -47,6 +47,11 @@ class TargetValidation:
     combined_within_range: bool = False
     metric_used: Optional[str] = None  # which measure satisfied the range
     analyzed_feature: Optional[str] = None  # set when a substitute feature was analyzed
+    # False when the paper never analyzed this feature, so there is no value to
+    # reproduce and the measurement is reported for information only.
+    paper_feature: bool = True
+    paper_source: Optional[str] = None
+    paper_lines_manual: Optional[int] = None
     key_files_found: list = field(default_factory=list)
     key_files_missing: list = field(default_factory=list)
     error_message: Optional[str] = None
@@ -61,7 +66,15 @@ class ValidationReport:
     passed: int
     failed: int
     missing: int
+    #: Targets measured but not scored, because the paper publishes no value for
+    #: the feature they analyze.
+    observed: int = 0
     targets: list = field(default_factory=list)
+
+    @property
+    def comparable_targets(self) -> int:
+        """Targets that have a published paper value to compare against."""
+        return self.passed + self.failed
 
     @property
     def success(self) -> bool:
@@ -69,10 +82,12 @@ class ValidationReport:
 
 
 def load_expected_results(path: Path) -> dict:
-    """Load paper expected results."""
+    """Load the demo targets, skipping the file's metadata keys."""
     with open(path) as f:
         data = json.load(f)
-    return data["targets"]
+    targets = data["targets"]
+    return {name: spec for name, spec in targets.items()
+            if not name.startswith("_")}
 
 
 def load_checkpoint(results_dir: Path, demo_name: str) -> Optional[dict]:
@@ -124,77 +139,61 @@ def validate_target(
     expected: dict,
     checkpoint: Optional[dict],
 ) -> TargetValidation:
-    """Validate a single target against expected results."""
+    """Validate a single target against the paper.
 
+    A target with ``paper_lines_removed: null`` has no published value for the
+    feature it analyzes. Such a target is reported as OBSERVED: the measurement
+    is printed, but it is neither a pass nor a failure against the paper, because
+    there is nothing to compare it to. Inventing a range for those targets is
+    what made earlier reports look like failed reproductions.
+    """
     result = TargetValidation(
         name=demo_name,
         project=expected["project"],
         feature=expected["feature"],
-        paper_lines=expected["paper_lines_removed"],
-        min_acceptable=expected["min_acceptable"],
-        max_acceptable=expected["max_acceptable"],
+        paper_lines=expected.get("paper_lines_removed"),
+        paper_lines_manual=expected.get("paper_lines_manual"),
+        min_acceptable=expected.get("min_acceptable"),
+        max_acceptable=expected.get("max_acceptable"),
+        paper_feature=bool(expected.get("paper_feature", True)),
+        paper_source=expected.get("paper_source"),
     )
-    # A target may analyze a SUBSTITUTE feature when the paper's feature no
-    # longer exists in the pinned version (codebase drift).
-    sub = expected.get("analyzed_feature")
-    if sub and sub != expected["feature"]:
-        result.analyzed_feature = sub
+
+    analyzed = expected.get("analyzed_feature")
+    if analyzed and analyzed != expected["feature"]:
+        result.analyzed_feature = analyzed
 
     if checkpoint is None:
         result.status = "MISSING"
         result.error_message = "No workflow_checkpoint.json found"
         return result
 
-    # Check if workflow succeeded
     if not checkpoint.get("success", False):
         result.status = "ERROR"
-        result.error_message = checkpoint.get("error_message", "Workflow did not succeed")
+        result.error_message = checkpoint.get(
+            "error_message", "Workflow did not succeed"
+        )
         return result
 
-    # Extract actual line count
-    extraction = checkpoint.get("extraction_result", {})
+    extraction = checkpoint.get("extraction_result") or {}
     if not extraction:
         result.status = "ERROR"
         result.error_message = "No extraction_result in checkpoint"
         return result
 
+    # |D_f| is a single figure now: interleaved and dedicated-feature-file lines
+    # are two partitions of the same set difference, not two competing metrics.
     actual_lines = extraction.get("total_removable_lines", 0)
-    result.actual_lines = actual_lines
-
-    # Paper-aligned combined metric (interleaved + dedicated feature-only files)
     feature_only = extraction.get("feature_only_removable_lines", 0)
-    combined = extraction.get("total_feature_lines", actual_lines + feature_only)
+    result.actual_lines = actual_lines
     result.feature_only_lines = feature_only
-    result.combined_lines = combined
+    result.combined_lines = actual_lines
+    result.metric_used = "|D_f|"
 
-    # Check range
-    min_ok = expected["min_acceptable"]
-    max_ok = expected["max_acceptable"]
-    result.within_range = min_ok <= actual_lines <= max_ok
-    result.combined_within_range = min_ok <= combined <= max_ok
-
-    # Compute deviation from paper value (use whichever metric is in range, else
-    # the combined/paper-aligned measure which is the closest to the paper's
-    # definition of total removable feature code).
-    paper_lines = expected["paper_lines_removed"]
-    metric_value = actual_lines if result.within_range else combined
-    if paper_lines > 0:
-        result.deviation_pct = round(
-            ((metric_value - paper_lines) / paper_lines) * 100, 1
-        )
-
-    # Check key files.
-    # Coverage files are tracked by flat basename (e.g. "libx264.c"), while the
-    # paper's key_files are sometimes path-qualified ("libavcodec/libx264.c") or
-    # directory-style ("av1/encoder"). We therefore match against the union of:
-    #   - analyzed/interleaved file names (basenames)
-    #   - feature-only file names (basenames)
-    #   - feature-only source paths captured from each gcov "Source:" header
-    #     (full relative paths, when available) — enables directory-key matching.
+    # Key files.
     file_line_counts = extraction.get("file_line_counts", {})
-    feature_only_files = checkpoint.get("diff_result", {}).get("feature_only_files", [])
     feature_only_paths = extraction.get("feature_only_source_paths", [])
-    all_files = list(file_line_counts.keys()) + list(feature_only_files) + list(feature_only_paths)
+    all_files = list(file_line_counts.keys()) + list(feature_only_paths)
 
     for key_file in expected.get("key_files", []):
         if _key_file_matches(key_file, all_files):
@@ -202,28 +201,41 @@ def validate_target(
         else:
             result.key_files_missing.append(key_file)
 
-    # Set status
+    paper_lines = result.paper_lines
+
+    if paper_lines is None:
+        # No published value for this feature. Report the measurement; do not
+        # score it against a number the paper never gave.
+        result.status = "OBSERVED"
+        result.within_range = True
+        result.combined_within_range = True
+        return result
+
+    min_ok = result.min_acceptable
+    max_ok = result.max_acceptable
+    if min_ok is None or max_ok is None:
+        result.status = "OBSERVED"
+        result.within_range = True
+        result.combined_within_range = True
+        return result
+
+    result.within_range = min_ok <= actual_lines <= max_ok
+    result.combined_within_range = result.within_range
+
+    if paper_lines > 0:
+        result.deviation_pct = round(
+            ((actual_lines - paper_lines) / paper_lines) * 100, 1
+        )
+
     if result.within_range:
         result.status = "PASS"
-        result.metric_used = "interleaved"
-    elif result.combined_within_range:
-        # Reproduced once dedicated feature-only files are counted (the paper's
-        # definition of removable feature code). Flagged distinctly for honesty.
-        result.status = "PASS_PAPER_ALIGNED"
-        result.metric_used = "combined (interleaved + feature-only files)"
     else:
         result.status = "FAIL"
-        result.metric_used = "none"
-        if combined < min_ok:
-            result.error_message = (
-                f"Below minimum under both metrics: interleaved={actual_lines}, "
-                f"combined={combined} < {min_ok} (paper: {paper_lines})"
-            )
-        else:
-            result.error_message = (
-                f"Out of range: interleaved={actual_lines}, combined={combined} "
-                f"vs [{min_ok}-{max_ok}] (paper: {paper_lines})"
-            )
+        direction = "below" if actual_lines < min_ok else "above"
+        result.error_message = (
+            f"|D_f|={actual_lines} is {direction} the accepted range "
+            f"[{min_ok}-{max_ok}] for paper value {paper_lines}"
+        )
 
     return result
 
@@ -247,8 +259,10 @@ def run_validation(results_dir: Path, expected_path: Path, strict: bool = False)
         validation = validate_target(demo_name, expected, checkpoint)
         report.targets.append(validation)
 
-        if validation.status in ("PASS", "PASS_PAPER_ALIGNED"):
+        if validation.status == "PASS":
             report.passed += 1
+        elif validation.status == "OBSERVED":
+            report.observed += 1
         elif validation.status == "MISSING":
             report.missing += 1
         else:
@@ -270,47 +284,51 @@ def print_report(report: ValidationReport) -> None:
 
     for t in report.targets:
         icon = {
-            "PASS": "✅",
-            "PASS_PAPER_ALIGNED": "🟢",
-            "FAIL": "❌",
-            "MISSING": "⬜",
-            "ERROR": "⚠️",
-        }.get(t.status, "?")
-        print(f"{icon} {t.name:<22} ", end="")
+            "PASS": "[PASS]",
+            "OBSERVED": "[OBS ]",
+            "FAIL": "[FAIL]",
+            "MISSING": "[    ]",
+            "ERROR": "[ERR ]",
+        }.get(t.status, "[  ? ]")
+        print(f"{icon} {t.name:<32} ", end="")
 
         if t.status == "PASS":
-            print(
-                f"actual={t.actual_lines:>6} lines  "
-                f"paper={t.paper_lines:>6}  "
-                f"deviation={t.deviation_pct:>+6.1f}%"
-            )
-        elif t.status == "PASS_PAPER_ALIGNED":
-            print(
-                f"interleaved={t.actual_lines:>5}  +feature-files={t.feature_only_lines:>5}  "
-                f"=combined={t.combined_lines:>6}  paper={t.paper_lines:>6}  "
-                f"(paper-aligned metric)"
-            )
+            manual = ""
+            if t.paper_lines_manual is not None:
+                manual = f"  paper-manual={t.paper_lines_manual}"
+            print(f"|D_f|={t.actual_lines:>6}  paper={t.paper_lines:>6}"
+                  f"  deviation={t.deviation_pct:>+7.1f}%{manual}")
+        elif t.status == "OBSERVED":
+            print(f"|D_f|={t.actual_lines:>6}  (no paper value for this feature)")
         elif t.status == "MISSING":
             print("(no results found)")
         elif t.status == "ERROR":
             print(f"ERROR: {t.error_message}")
         else:
-            print(
-                f"interleaved={t.actual_lines}  combined={t.combined_lines}  "
-                f"range=[{t.min_acceptable}–{t.max_acceptable}]  {t.error_message}"
-            )
+            print(f"|D_f|={t.actual_lines}  {t.error_message}")
 
+        if t.status == "OBSERVED" and t.paper_source:
+            print(f"        note: {t.paper_source}")
+        if t.feature_only_lines:
+            print(f"        of which {t.feature_only_lines} line(s) are in "
+                  f"dedicated feature file(s)")
         if t.key_files_missing:
-            print(f"       ⚠️  Missing key files: {', '.join(t.key_files_missing)}")
+            print(f"        missing key files: {', '.join(t.key_files_missing)}")
         if t.analyzed_feature:
-            print(f"       ⓘ  SUBSTITUTE feature analyzed: '{t.analyzed_feature}' "
-                  f"(paper feature '{t.feature}' not directly measurable here — see notes; "
-                  f"NOT a reproduction of the paper value)")
+            print(f"        analyzed '{t.analyzed_feature}' rather than "
+                  f"'{t.feature}' — see notes in paper_expected_results.json")
 
     print()
     print("-" * 78)
-    print(f"Summary: {report.passed} passed, {report.failed} failed, {report.missing} missing")
-    print(f"Result:  {'PASS ✅' if report.success else 'FAIL ❌'}")
+    print(f"Scored against the paper: {report.passed} passed, "
+          f"{report.failed} failed  (of {report.comparable_targets} with a "
+          f"published per-feature value)")
+    if report.observed:
+        print(f"Measured, not scored:     {report.observed} target(s) analyze a "
+              f"feature the paper reports no line count for")
+    if report.missing:
+        print(f"Missing results:          {report.missing}")
+    print(f"Result:  {'PASS' if report.success else 'FAIL'}")
     print("=" * 78)
     print()
 

@@ -53,11 +53,11 @@ ENV FEATURE=use_wsio
 
 RUN mkdir -p /prat/output
 
-# NOTE: The real CMake toggle for WebSocket support in azure-uamqp-c is
-# `use_wsio` (azure-c-shared-utility CMakeLists.txt). The paper's
-# "USE_WEBSOCKETS" is NOT a recognized CMake variable — passing it produces
-# CMake's "Manually-specified variables were not used by the project" warning
-# and an identical enabled/disabled build. We use the real `use_wsio` flag.
+# `use_wsio` is the CMake toggle for WebSocket support in azure-uamqp-c, and is
+# the option the paper reports for this feature (paper/results/code_removal.csv
+# lists "use_wsio", 26 lines). "USE_WEBSOCKETS" appeared in earlier revisions of
+# this repo but is not a recognized CMake variable and is not the paper's name
+# for the option either.
 CMD ["python3", "/prat/src/demo_workflow.py", \
      "--project", "/prat/App/azure-uamqp-c", \
      "--feature", "use_wsio", \

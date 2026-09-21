@@ -85,15 +85,15 @@ demo-mosquitto-bridge: $(RESULTS)  ## Analyze Mosquitto BRIDGE feature (local)
 	@echo ""
 	@echo "✓ Reports in $(RESULTS)/mosquitto-bridge/"
 
-.PHONY: demo-ffmpeg-x264
-demo-ffmpeg-x264: $(RESULTS)  ## Analyze FFmpeg x264 feature (local)
+.PHONY: demo-ffmpeg-dca
+demo-ffmpeg-dca: $(RESULTS)  ## Analyze FFmpeg DTS (dca) decoder feature (local)
 	@test -d $(APP)/FFmpeg || (echo "✗ App/FFmpeg not found — run: make fetch-ffmpeg" && exit 1)
-	$(PRAT) $(APP)/FFmpeg x264 --output $(RESULTS)/ffmpeg-x264
+	$(PRAT) $(APP)/FFmpeg decoder=dca --output $(RESULTS)/ffmpeg-dca
 	@echo ""
-	@echo "✓ Reports in $(RESULTS)/ffmpeg-x264/"
+	@echo "✓ Reports in $(RESULTS)/ffmpeg-dca/"
 
 .PHONY: demo-all
-demo-all: demo-mosquitto-tls demo-mosquitto-bridge demo-ffmpeg-x264  ## Run all three analyses
+demo-all: demo-mosquitto-tls demo-mosquitto-bridge demo-ffmpeg-dca  ## Run the local single-feature analyses
 
 # ── Batch / Graphs ──────────────────────────────────────────────────────────
 
@@ -101,6 +101,27 @@ demo-all: demo-mosquitto-tls demo-mosquitto-bridge demo-ffmpeg-x264  ## Run all 
 batch-mosquitto: $(RESULTS)  ## Batch-analyze ALL Mosquitto features
 	@test -d $(APP)/mosquitto || (echo "✗ App/mosquitto not found — run: make fetch-mosquitto" && exit 1)
 	$(PRAT) $(APP)/mosquitto --batch --output $(RESULTS)/mosquitto-batch
+
+.PHONY: list-features-all
+list-features-all: $(RESULTS)  ## List discovered features for every fetched target
+	@for d in $(APP)/*/; do \
+	  [ -d "$$d" ] || continue; \
+	  echo ""; echo "=== $$d ==="; \
+	  $(PRAT) "$$d" --list --verbose || true; \
+	done
+
+.PHONY: variants-mosquitto
+variants-mosquitto: $(RESULTS)  ## Build the paper's 8-variant cumulative Mosquitto chain
+	@test -d $(APP)/mosquitto || (echo "✗ App/mosquitto not found — run: make fetch-mosquitto" && exit 1)
+	$(PRAT) $(APP)/mosquitto --variants 8 --output $(RESULTS)/mosquitto-variants
+
+.PHONY: fuzz-mosquitto
+fuzz-mosquitto: $(RESULTS)  ## Build the 8-variant chain and fuzz each variant over MQTT
+	@test -d $(APP)/mosquitto || (echo "✗ App/mosquitto not found — run: make fetch-mosquitto" && exit 1)
+	@$(VENV)/bin/python -c "import boofuzz" 2>/dev/null || \
+	  (echo "✗ boofuzz not installed — run: $(VENV)/bin/pip install 'prat[fuzz]'" && exit 1)
+	$(PRAT) $(APP)/mosquitto --variants 8 --fuzz --fuzz-seconds $${FUZZ_SECONDS:-600} \
+	  --output $(RESULTS)/mosquitto-fuzz
 
 .PHONY: graph
 graph: $(RESULTS)  ## Open feature graph HTML (requires prior analysis run)
@@ -147,9 +168,9 @@ demo-release:  ## Committee-safe Docker demo: Mosquitto TLS with manifest/logs
 	@echo "  - container.log"
 
 .PHONY: docker-demo-ffmpeg
-docker-demo-ffmpeg:  ## Docker: build + run FFmpeg x264 demo
-	$(PYTHON) src/demo-runner.py --build ffmpeg-x264
-	$(PYTHON) src/demo-runner.py --run ffmpeg-x264 --output $(RESULTS)/docker
+docker-demo-ffmpeg:  ## Docker: build + run FFmpeg dca decoder demo
+	$(PYTHON) src/demo-runner.py --build ffmpeg-dca
+	$(PYTHON) src/demo-runner.py --run ffmpeg-dca --output $(RESULTS)/docker
 
 .PHONY: docker-demo-uamqp
 docker-demo-uamqp:  ## Docker: build + run azure-uamqp-c WebSockets demo
@@ -157,14 +178,14 @@ docker-demo-uamqp:  ## Docker: build + run azure-uamqp-c WebSockets demo
 	$(PYTHON) src/demo-runner.py --run uamqp-websockets --output $(RESULTS)/docker
 
 .PHONY: docker-demo-opendds
-docker-demo-opendds:  ## Docker: build + run OpenDDS Security demo
-	$(PYTHON) src/demo-runner.py --build opendds-security
-	$(PYTHON) src/demo-runner.py --run opendds-security --output $(RESULTS)/docker
+docker-demo-opendds:  ## Docker: build + run OpenDDS content-filtered-topic demo
+	$(PYTHON) src/demo-runner.py --build opendds-content-filtered-topic
+	$(PYTHON) src/demo-runner.py --run opendds-content-filtered-topic --output $(RESULTS)/docker
 
 .PHONY: docker-demo-quiche
-docker-demo-quiche:  ## Docker: build + run Quiche FFDHE demo
-	$(PYTHON) src/demo-runner.py --build quiche-ffdhe
-	$(PYTHON) src/demo-runner.py --run quiche-ffdhe --output $(RESULTS)/docker
+docker-demo-quiche:  ## Docker: build + run Quiche qlog demo
+	$(PYTHON) src/demo-runner.py --build quiche-qlog
+	$(PYTHON) src/demo-runner.py --run quiche-qlog --output $(RESULTS)/docker
 
 .PHONY: docker-demo-aom
 docker-demo-aom:  ## Docker: build + run AOM encoder demo
@@ -181,7 +202,7 @@ validate:  ## Validate demo results against paper-reported numbers
 .PHONY: paper-check
 paper-check:  ## Disk-safe full pipeline: per-demo build → run → rmi, then validate
 	@mkdir -p $(RESULTS)/docker
-	@for d in mosquitto-tls mosquitto-bridge ffmpeg-x264 uamqp-websockets opendds-security quiche-ffdhe aom-encoder; do \
+	@for d in mosquitto-tls mosquitto-bridge ffmpeg-dca uamqp-websockets opendds-content-filtered-topic quiche-qlog aom-encoder; do \
 	  echo "=== $$d ==="; \
 	  $(PYTHON) src/demo-runner.py --build $$d || echo "[!] build failed: $$d (continuing)"; \
 	  $(PYTHON) src/demo-runner.py --run $$d --cleanup --output $(RESULTS)/docker || echo "[!] run failed: $$d (continuing)"; \

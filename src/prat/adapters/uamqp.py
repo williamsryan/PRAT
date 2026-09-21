@@ -3,10 +3,13 @@ Adapter for azure-uamqp-c (CMake-based AMQP library).
 
 Project: https://github.com/Azure/azure-uamqp-c
 Build system: CMake
-Features: USE_WEBSOCKETS, USE_OPENSSL, USE_WOLFSSL, etc.
+Features are lowercase CMake options: use_wsio, use_openssl, use_wolfssl,
+use_http, memory_trace, no_logging, use_condition, use_mbedtls,
+use_default_uuid, use_builtin_httpapi — the nine the paper reports.
 """
 
-from typing import Optional
+
+from __future__ import annotations
 
 from ..compilation import BuildSystem
 from .base import ProjectAdapter
@@ -73,7 +76,7 @@ class UamqpAdapter(ProjectAdapter):
     def get_clean_command(self) -> list[str]:
         return ["rm", "-rf", "build"]
 
-    def get_test_command(self) -> Optional[list[str]]:
+    def get_test_command(self) -> list[str] | None:
         return ["cmake", "--build", "build", "--target", "test"]
 
     def format_feature_flag(self, feature: str, enabled: bool) -> str:
@@ -90,7 +93,7 @@ class UamqpAdapter(ProjectAdapter):
         return [["ctest", "--test-dir", "build", "--output-on-failure"]]
 """
 Known features for azure-uamqp-c:
-  - USE_WEBSOCKETS: WebSocket transport layer
+  - use_wsio: WebSocket transport layer
   - USE_OPENSSL: OpenSSL TLS backend
   - USE_WOLFSSL: WolfSSL TLS backend
   - ENABLE_MOCKS: Test mock layer

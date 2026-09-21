@@ -26,10 +26,10 @@ make docker-demo-aom
 |---|---|---|---|---|---|---|
 | 1 | `mosquitto-tls` | Mosquitto v2.0.15 | TLS | Make | 500–1500 | 2–5 min |
 | 2 | `mosquitto-bridge` | Mosquitto v2.0.15 | Bridge | Make | 300–800 | 2–5 min |
-| 3 | `ffmpeg-x264` | FFmpeg n5.1.4 | x264 | Autotools | 1000–5000 | 10–20 min |
-| 4 | `uamqp-websockets` | azure-uamqp-c | USE_WEBSOCKETS | CMake | 200–2000 | 5–10 min |
-| 5 | `opendds-security` | OpenDDS DDS-3.25 | SECURITY | CMake | 500–5000 | 10–20 min |
-| 6 | `quiche-ffdhe` | Quiche 0.20.1 | ffdhe | Cargo | 100–1500 | 5–15 min |
+| 3 | `ffmpeg-dca` | FFmpeg n5.1.4 | `decoder=dca` | Autotools | no paper value | 10–20 min |
+| 4 | `uamqp-websockets` | azure-uamqp-c | `use_wsio` | CMake | paper: 26 | 5–10 min |
+| 5 | `opendds-content-filtered-topic` | OpenDDS DDS-3.25 | `content-filtered-topic` | MPC | paper: 73 | 10–20 min |
+| 6 | `quiche-qlog` | Quiche 0.20.1 | qlog | Cargo | 100–1500 | 5–15 min |
 | 7 | `aom-encoder` | AOM v3.7.1 | CONFIG_AV1_ENCODER | CMake | 5000–50000 | 15–30 min |
 
 ## Prerequisites

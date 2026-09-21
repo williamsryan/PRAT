@@ -9,26 +9,21 @@ Features:
 - Dry-run mode to preview operations
 """
 
+
+from __future__ import annotations
+
 import argparse
 import platform
 import shutil
 import sys
 from pathlib import Path
-from typing import Optional
 
 from .adapters import get_adapter
 from .batch import run_batch_analysis
-from .compilation import BuildSystem, detect_build_system
-from .discovery import (
-    discover_features_autotools,
-    discover_features_cargo,
-    discover_features_cmake,
-    discover_features_make,
-)
+from .compilation import detect_build_system
+from .discovery import discover_features
 from .docker_runner import check_docker_available
 from .environment import verify_dependencies
-from .removal import remove_feature_code
-from .verification import verify_correctness
 from .workflow import WorkflowCheckpoint, run_complete_workflow
 
 
@@ -91,19 +86,13 @@ def list_features(project_path: str, verbose: bool = False) -> int:
         print("   (Makefile, CMakeLists.txt, configure, or Cargo.toml)")
         return 1
 
-    # Discover features based on build system
+    # Discovery runs every analyzer that applies, since a project can expose
+    # different features through different build systems.
     try:
-        if build_system == BuildSystem.MAKE:
-            features = discover_features_make(project_path)
-        elif build_system == BuildSystem.CMAKE:
-            features = discover_features_cmake(project_path)
-        elif build_system == BuildSystem.AUTOTOOLS:
-            features = discover_features_autotools(project_path)
-        elif build_system == BuildSystem.CARGO:
-            features = discover_features_cargo(project_path)
-        else:
-            progress.error(f"Unsupported build system: {build_system.value}")
-            return 1
+        from .adapters import get_adapter
+
+        adapter = get_adapter(project_path)
+        features = discover_features(project_path, adapter=adapter)
 
         if not features:
             progress.warning("No features found")
@@ -111,16 +100,31 @@ def list_features(project_path: str, verbose: bool = False) -> int:
             print("   or the build system is not fully supported")
             return 0
 
-        print(f"\n✓ Found {len(features)} features:\n")
+        print(f"\n✓ Found {len(features)} candidate feature(s):\n")
         for i, feature in enumerate(features, 1):
             desc = f" — {feature.description}" if feature.description else ""
             default = ""
             if feature.default_enabled is not None:
                 default = f" [default: {'on' if feature.default_enabled else 'off'}]"
-            print(f"  {i}. {feature.name}{desc}{default}")
+            option = ""
+            if feature.raw_name and feature.raw_name != feature.name:
+                option = f" (option: {feature.raw_name})"
+            source = f" [{feature.source}]" if verbose and feature.source else ""
+            print(f"  {i}. {feature.name}{option}{default}{source}{desc}")
+
+        if verbose:
+            unfiltered = discover_features(
+                project_path, adapter=adapter, apply_filters=False
+            )
+            discarded = len(unfiltered) - len(features)
+            if discarded > 0:
+                print(f"\n  {discarded} build option(s) filtered as spurious or "
+                      f"developer-specific")
 
         print("\n💡 To analyze a feature, run:")
         print(f"   prat {project_path} {features[0].name}")
+        print("   To analyze every feature (Algorithm 1):")
+        print(f"   prat {project_path} --batch")
 
         return 0
 
@@ -180,7 +184,7 @@ def dry_run_analysis(
     return 0
 
 
-def run_doctor(project_path: Optional[str] = None) -> int:
+def run_doctor(project_path: str | None = None) -> int:
     """
     Print local environment readiness for PRAT demos and standalone use.
 
@@ -240,7 +244,7 @@ def run_analysis(
     run_tests: bool = False,
     extract: bool = False,
     verbose: bool = False,
-    output_dir: Optional[str] = None,
+    output_dir: str | None = None,
     symbolic: bool = False,
     remove: bool = False,
     verify: bool = False,
@@ -282,30 +286,41 @@ def run_analysis(
             output_dir=output_dir,
             symbolic=symbolic,
             adapter=adapter,
+            remove=remove,
+            verify=verify,
         )
 
         if not result.success:
             progress.error(f"Workflow failed at {result.checkpoint.value}")
             print(f"\n💡 Error: {result.error_message}")
 
-            # Provide specific suggestions based on checkpoint
             if result.checkpoint == WorkflowCheckpoint.COMPILE_ENABLED:
                 print("\n💡 Suggestion: Check that the project compiles normally:")
                 print(f"   cd {project_path} && make clean && make")
-            elif result.checkpoint == WorkflowCheckpoint.COVERAGE_ENABLED:
-                print("\n💡 Suggestion: Ensure coverage files were generated:")
+            elif result.checkpoint in (
+                WorkflowCheckpoint.COVERAGE_ENABLED,
+                WorkflowCheckpoint.COVERAGE_DISABLED,
+            ):
+                print("\n💡 Suggestion: Coverage needs the binary to actually run.")
                 print(f"   find {project_path} -name '*.gcda'")
-            elif result.checkpoint == WorkflowCheckpoint.DIFF:
-                print("\n💡 Suggestion: Check coverage directories exist:")
-                print(f"   ls coverage_files_WITH_{feature}_yes/")
-                print(f"   ls coverage_files_WITH_{feature}_no/")
+                print("   An empty result means the test suite did not execute.")
+            elif result.checkpoint == WorkflowCheckpoint.MAP:
+                print("\n💡 Suggestion: Check both coverage directories are populated:")
+                print(f"   ls {output_dir or project_path}/coverage_files_*")
+            elif result.checkpoint == WorkflowCheckpoint.REMOVE:
+                removal = result.removal_result
+                if removal and removal.restored:
+                    print("\n💡 The source tree was restored from backup.")
+                print("\n💡 A failed rebuild means the removed feature set is "
+                      "incomplete — a dependent feature likely needs removing too.")
+            elif result.checkpoint == WorkflowCheckpoint.VERIFY:
+                print("\n💡 Suggestion: Inspect the failing suite output above; "
+                      "the comparison reports show exactly which lines were removed.")
 
-            print(f"\n💡 Checkpoint saved to: {project_path}/workflow_checkpoint.json")
-            print("   You can inspect this file for detailed error information")
-
+            print(f"\n💡 Checkpoint saved to: {output_dir or project_path}/"
+                  f"workflow_checkpoint.json")
             return 1
 
-        # Success!
         extraction = result.extraction_result
         if extraction is None:
             progress.error("Workflow succeeded but extraction result is missing")
@@ -314,58 +329,54 @@ def run_analysis(
         print(f"\n{'='*70}")
         print("✓ Analysis Complete")
         print(f"{'='*70}")
-        print(f"Removable lines: {extraction.total_removable_lines}")
+        print(f"Feature lines (|D_f|): {extraction.total_removable_lines}")
         print(f"Files analyzed: {len(extraction.file_line_counts)}")
+        if extraction.excluded_never_executed:
+            print(f"Retained (never executed in either build): "
+                  f"{extraction.excluded_never_executed}")
+        if result.coverage_percent_enabled is not None:
+            print(f"Line coverage under T: {result.coverage_percent_enabled:.1f}%")
         print(f"Execution time: {result.total_time:.2f}s")
 
         if extraction.html_report_path:
             print(f"\n📄 HTML report: {extraction.html_report_path}")
-
         if extraction.dot_graph_path:
             print(f"📊 DOT graph: {extraction.dot_graph_path}")
+        if result.comparison_result and result.comparison_result.index_path:
+            print(f"🔍 Comparison reports: {result.comparison_result.index_path}")
 
-        # Show top files
         if extraction.file_line_counts:
             sorted_files = sorted(
                 extraction.file_line_counts.items(),
-                key=lambda x: x[1],
-                reverse=True
+                key=lambda item: item[1],
+                reverse=True,
             )
-
-            print("\nTop files with removable code:")
+            print("\nTop files with feature code:")
             for filename, lines in sorted_files[:5]:
                 print(f"  {filename}: {lines} lines")
 
-        # Optional: Remove feature code
-        if remove and result.extraction_result:
-            print(f"\n{'='*70}")
-            print(f"Feature Removal: {feature}")
-            print(f"{'='*70}")
-            diff_r = result.diff_result
-            removal_result = remove_feature_code(
-                result.extraction_result,
-                project_path,
-                feature,
-                feature_only_files=diff_r.feature_only_files if diff_r else None,
-                rebuild=True,
-            )
-            if removal_result.success:
-                print(f"✓ Removed {removal_result.lines_removed} lines")
-            else:
-                print(f"✗ Removal failed: {removal_result.error_message}")
+        if result.removal_result:
+            removal = result.removal_result
+            print(f"\n✓ Removed {removal.lines_removed} line(s) from "
+                  f"{removal.files_modified} file(s)")
+            if removal.files_stubbed:
+                print(f"  {removal.files_stubbed} dedicated feature file(s) stubbed")
+            if removal.skipped_unbalanced:
+                print(f"  Balance guard declined {removal.skipped_line_count} line(s) "
+                      f"that could not be removed without unbalancing delimiters")
+            if removal.backup_dir:
+                print(f"  Backup: {removal.backup_dir}")
 
-        # Optional: Post-removal verification
-        if verify:
-            ver_result = verify_correctness(project_path, adapter=adapter)
-            if not ver_result.success:
-                print(f"⚠ Verification: {ver_result.total_tests_failed} test(s) failed")
-                return 1
+        if result.verification_result:
+            ver = result.verification_result
+            print(f"\n✓ Verification: {ver.status.value} "
+                  f"({ver.total_tests_passed}/{ver.total_tests_run} tests passed)")
 
         if not remove:
             print("\n💡 Next steps:")
-            print("   - Review HTML report for detailed analysis")
-            print("   - Run with --remove to strip feature code")
-            print("   - Run with --verify to test after removal")
+            print("   - Review the HTML report and comparison reports")
+            print("   - Run with --remove to strip the feature's code and rebuild")
+            print("   - Run with --batch to analyze every feature (Algorithm 1)")
 
         return 0
 
@@ -384,6 +395,110 @@ def run_analysis(
         return 1
 
 
+def run_variant_chain(
+    project_path: str,
+    variant_count: int,
+    output_dir: str | None = None,
+    run_tests: bool = False,
+    fuzz: bool = False,
+    fuzz_seconds: int = 600,
+    verbose: bool = False,
+) -> int:
+    """Build the paper's cumulative variant chain, optionally fuzzing each variant.
+
+    Returns:
+        Exit code: 0 when every variant built and no crash was introduced.
+    """
+    from .fuzzing import (
+        FuzzCampaign,
+        check_boofuzz_available,
+        compare_to_baseline,
+        fuzz_variant,
+    )
+    from .variants import build_variant_chain
+
+    progress = ProgressIndicator(verbose)
+    adapter = get_adapter(project_path)
+
+    if fuzz and not check_boofuzz_available():
+        progress.error("Fuzzing requested but boofuzz is not installed")
+        print("\n💡 Install it with: pip install 'prat[fuzz]'")
+        return 1
+
+    chain = build_variant_chain(
+        project_path,
+        variant_count=variant_count,
+        output_dir=output_dir,
+        adapter=adapter,
+        run_tests=run_tests,
+        apply_removal=True,
+    )
+
+    if not chain.variants:
+        progress.error(chain.error_message or "Variant chain produced nothing")
+        return 1
+
+    if not fuzz:
+        if not chain.success:
+            print(f"\n⚠ Chain stopped early: {chain.error_message or 'see above'}")
+            return 1
+        print("\n💡 Re-run with --fuzz to measure per-variant coverage and "
+              "crashes (the paper's correctness table)")
+        return 0
+
+    # --- Fuzz each variant --------------------------------------------------
+    print(f"\n{'=' * 70}")
+    print(f"Fuzzing {len(chain.variants)} variant(s), "
+          f"{fuzz_seconds}s each")
+    print(f"{'=' * 70}")
+
+    campaign = FuzzCampaign()
+    for variant in chain.variants:
+        if not variant.success or not variant.binary_path:
+            print(f"\n[{variant.label}] skipped — variant did not build")
+            continue
+
+        print(f"\n[{variant.label}] fuzzing "
+              f"({len(variant.removed_features)} feature(s) removed)...")
+        result = fuzz_variant(
+            broker_binary=variant.binary_path,
+            project_path=project_path,
+            variant=variant.label,
+            removed_features=variant.removed_features,
+            duration_seconds=fuzz_seconds,
+            coverage_tool=adapter.coverage_tool if adapter else "gcov",
+            source_directories=tuple(
+                adapter.source_directories if adapter else ("src", "lib")
+            ),
+            work_dir=str(Path(output_dir or project_path) / f"fuzz_{variant.label}"),
+        )
+        campaign.results.append(result)
+
+        if result.error_message:
+            print(f"    [!] {result.error_message}")
+
+    compare_to_baseline(campaign)
+
+    print(f"\n{'=' * 70}")
+    print("FUZZING RESULTS (paper correctness table)")
+    print(f"{'=' * 70}")
+    print(campaign.table())
+    print()
+
+    if campaign.baseline_crashes:
+        print(f"Crashes already present in variant 0 (pre-existing): "
+              f"{', '.join(campaign.baseline_crashes)}")
+
+    if campaign.any_introduced_crash:
+        print("\n✗ Crashes introduced by feature removal:")
+        for variant_label, crashes in campaign.introduced_crashes.items():
+            print(f"    {variant_label}: {', '.join(crashes)}")
+        return 1
+
+    print("\n✓ No crash was introduced by feature removal")
+    return 0
+
+
 def _package_version() -> str:
     try:
         from importlib import metadata
@@ -396,10 +511,10 @@ def _package_version() -> str:
 _REPRODUCE_DEMOS = [
     "mosquitto-tls",
     "mosquitto-bridge",
-    "ffmpeg-x264",
+    "ffmpeg-dca",
     "uamqp-websockets",
-    "opendds-security",
-    "quiche-ffdhe",
+    "opendds-content-filtered-topic",
+    "quiche-qlog",
     "aom-encoder",
 ]
 
@@ -494,6 +609,18 @@ Examples:
   prat reproduce mosquitto-tls
   prat reproduce --all
 
+  # Remove the feature's code, rebuild, and re-run the tests
+  prat App/mosquitto TLS --remove
+
+  # Analyze every discovered feature (Algorithm 1: n+1 builds)
+  prat App/mosquitto --batch
+
+  # Include KLEE-generated tests in T (paper Table 3 parameters)
+  prat App/mosquitto TLS --symbolic
+
+  # Build the paper's 8-variant chain and fuzz each one over MQTT
+  prat App/mosquitto --variants 8 --fuzz
+
   # Verbose output for debugging
   prat App/mosquitto TLS --verbose
 
@@ -584,6 +711,39 @@ For more information, see docs/API.md
         action="store_true",
         help="Run post-removal verification (rebuild + test replay)"
     )
+    parser.add_argument(
+        "--no-verify",
+        action="store_true",
+        help="Skip post-removal verification (it runs by default with --remove)"
+    )
+    parser.add_argument(
+        "--variants",
+        type=int,
+        metavar="N",
+        default=None,
+        help="Build the paper's cumulative variant chain: N variants, where "
+             "variant 0 has all features and variant i removes one more than "
+             "variant i-1 (the paper uses 8)"
+    )
+    parser.add_argument(
+        "--fuzz",
+        action="store_true",
+        help="Fuzz each variant over MQTT with Boofuzz and report line/function "
+             "coverage per variant (requires 'pip install prat[fuzz]')"
+    )
+    parser.add_argument(
+        "--fuzz-seconds",
+        type=int,
+        default=600,
+        metavar="S",
+        help="Per-variant fuzzing budget in seconds (default: 600)"
+    )
+    parser.add_argument(
+        "--default-baseline",
+        action="store_true",
+        help="In --batch mode, use the project's default configuration as the "
+             "baseline instead of enabling all discovered features"
+    )
 
     args = parser.parse_args()
 
@@ -608,19 +768,37 @@ For more information, see docs/API.md
     if args.list:
         return list_features(str(project_path), args.verbose)
 
-    # Batch mode
+    # Batch mode — Algorithm 1 over every discovered feature
     if args.batch:
         batch_result = run_batch_analysis(
             project_path=str(project_path),
             output_dir=args.output,
             run_tests=args.tests,
+            symbolic=getattr(args, "symbolic", False),
+            all_features_baseline=not getattr(args, "default_baseline", False),
         )
         if batch_result.success:
-            print(f"\n✓ Batch analysis complete: {batch_result.features_analyzed} features analyzed")
+            print(f"\n✓ Batch analysis complete: "
+                  f"{batch_result.features_analyzed} feature(s) analyzed, "
+                  f"{batch_result.builds_performed} build(s)")
             if batch_result.feature_graph_path:
                 print(f"📈 Feature graph: {batch_result.feature_graph_path}")
             return 0
+        if batch_result.error_message:
+            print(f"\n✗ Batch analysis failed: {batch_result.error_message}")
         return 1
+
+    # Variant chain mode — the paper's correctness evaluation
+    if args.variants:
+        return run_variant_chain(
+            str(project_path),
+            variant_count=args.variants,
+            output_dir=args.output,
+            run_tests=args.tests,
+            fuzz=args.fuzz,
+            fuzz_seconds=args.fuzz_seconds,
+            verbose=args.verbose,
+        )
 
     # Dry run mode
     if args.dry_run:
@@ -639,9 +817,11 @@ For more information, see docs/API.md
         extract=args.extract,
         verbose=args.verbose,
         output_dir=args.output,
-        symbolic=getattr(args, 'symbolic', False),
-        remove=getattr(args, 'remove', False),
-        verify=getattr(args, 'verify', False),
+        symbolic=getattr(args, "symbolic", False),
+        remove=getattr(args, "remove", False),
+        # Verification is part of the paper's removal step, so it runs by
+        # default once anything has been removed; --no-verify opts out.
+        verify=not getattr(args, "no_verify", False),
     )
 
 

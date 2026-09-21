@@ -22,7 +22,8 @@ the `.shobj/`/`.obj/` object dirs. We therefore report `build_system = CMAKE`
 purely to route coverage through that rglob path and point it at `dds/`.
 """
 
-from typing import Optional
+
+from __future__ import annotations
 
 from ..compilation import BuildSystem
 from .base import ProjectAdapter
@@ -100,7 +101,7 @@ class OpenDDSAdapter(ProjectAdapter):
         # the next ./configure starts clean. The clone keeps its .git.
         return ["bash", "-lc", "git clean -fdxq -e .git 2>/dev/null || true"]
 
-    def get_test_command(self) -> Optional[list[str]]:
+    def get_test_command(self) -> list[str] | None:
         return None
 
     def format_feature_flag(self, feature: str, enabled: bool) -> str:

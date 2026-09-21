@@ -4,9 +4,11 @@ Base project adapter for PRAT.
 Defines the common interface that all project adapters must implement.
 """
 
+
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Optional
 
 from ..compilation import BuildSystem
 
@@ -87,7 +89,7 @@ class ProjectAdapter(ABC):
         pass
 
     @abstractmethod
-    def get_test_command(self) -> Optional[list[str]]:
+    def get_test_command(self) -> list[str] | None:
         """
         Get test command to run test suite.
 
@@ -110,7 +112,7 @@ class ProjectAdapter(ABC):
         """
         pass
 
-    def get_binary_path(self) -> Optional[str]:
+    def get_binary_path(self) -> str | None:
         """
         Get path to compiled binary.
 
@@ -153,6 +155,70 @@ class ProjectAdapter(ABC):
             Ordered list of commands; each command is a list of strings.
         """
         return [self.get_compile_command(feature, enabled, with_coverage)]
+
+    def format_feature_flags(self, feature_states: dict[str, bool]) -> list[str]:
+        """Format a whole set of feature states as build flags."""
+        return [
+            self.format_feature_flag(name, enabled)
+            for name, enabled in sorted(feature_states.items())
+        ]
+
+    def supports_feature_sets(self) -> bool:
+        """Whether this adapter can build an arbitrary set of feature states.
+
+        Algorithm 1's baseline B_all has *all* features enabled and each B_i has
+        all features enabled except f_i, which requires passing many flags in
+        one build. Adapters whose build system takes flags as independent
+        arguments get this for free from
+        :meth:`get_build_commands_for_set`; those needing a different encoding
+        (Cargo's single ``--features`` list, for instance) must override both.
+        """
+        return True
+
+    def get_build_commands_for_set(
+        self,
+        feature_states: dict[str, bool],
+        with_coverage: bool = True,
+    ) -> list[list[str]]:
+        """Build commands for an explicit set of feature states.
+
+        The default splices every formatted flag into the single-feature command
+        shape, which is correct for build systems that accept one independent
+        argument per option (CMake ``-DX=ON``, autoconf ``--enable-x``, Make
+        ``WITH_X=yes``).
+
+        Args:
+            feature_states: Feature name -> enabled. Must be non-empty.
+            with_coverage: Whether to enable coverage instrumentation.
+        """
+        if not feature_states:
+            raise ValueError("feature_states must not be empty")
+
+        ordered = sorted(feature_states.items())
+        anchor_name, anchor_enabled = ordered[0]
+
+        commands = self.get_build_commands(anchor_name, anchor_enabled, with_coverage)
+        if len(ordered) == 1:
+            return commands
+
+        extra = self.format_feature_flags(dict(ordered[1:]))
+        anchor_flag = self.format_feature_flag(anchor_name, anchor_enabled)
+
+        # Append the remaining flags to whichever command carries the anchor
+        # flag, so configure-then-make pipelines put them on configure.
+        spliced: list[list[str]] = []
+        placed = False
+        for command in commands:
+            if not placed and anchor_flag in command:
+                spliced.append(list(command) + extra)
+                placed = True
+            else:
+                spliced.append(list(command))
+
+        if not placed:
+            spliced[0] = list(spliced[0]) + extra
+
+        return spliced
 
     def get_execution_commands(self, feature: str, enabled: bool) -> list[list[str]]:
         """

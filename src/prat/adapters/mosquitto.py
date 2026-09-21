@@ -5,9 +5,11 @@ On Linux: Make-based build with WITH_FEATURE=yes/no flags.
 On macOS: CMake-based build (Makefile requires CMake on Mac OS X).
 """
 
+
+from __future__ import annotations
+
 import platform
 from pathlib import Path
-from typing import Optional
 
 from ..compilation import BuildSystem
 from .base import ProjectAdapter
@@ -36,6 +38,16 @@ class MosquittoAdapter(ProjectAdapter):
     @property
     def source_directories(self) -> list[str]:
         return ["src", "lib"]
+
+    def normalize_feature_name(self, raw_option: str) -> str:
+        """Strip the ``WITH_`` prefix that :meth:`format_feature_flag` re-adds.
+
+        Discovery reports build options verbatim (``WITH_TLS``), while this
+        adapter's flag formatter builds ``WITH_<name>``, so passing the raw
+        option straight through would produce ``WITH_WITH_TLS``.
+        """
+        upper = raw_option.upper()
+        return upper[len("WITH_"):] if upper.startswith("WITH_") else upper
 
     def _build_dir(self) -> Path:
         d = self.project_path / "build"
@@ -86,7 +98,7 @@ class MosquittoAdapter(ProjectAdapter):
             return ["bash", "-c", "cmake --build build --target clean 2>/dev/null; find build -name '*.gcda' -delete 2>/dev/null; true"]
         return ["make", "clean"]
 
-    def get_test_command(self) -> Optional[list[str]]:
+    def get_test_command(self) -> list[str] | None:
         if _is_macos():
             return ["ctest", "--output-on-failure"]
         return ["make", "utest", "-j", "WITH_COVERAGE=yes"]
@@ -98,7 +110,7 @@ class MosquittoAdapter(ProjectAdapter):
         flag_value = "yes" if enabled else "no"
         return f"WITH_{feature.upper()}={flag_value}"
 
-    def get_binary_path(self) -> Optional[str]:
+    def get_binary_path(self) -> str | None:
         """Get path to mosquitto binary."""
         candidates = [
             self.project_path / "build" / "src" / "mosquitto",

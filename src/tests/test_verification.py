@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 from prat.verification import (
     SuiteResult,
+    VerificationStatus,
     _discover_test_commands,
     _parse_test_output,
     _run_test_suite,
@@ -16,43 +17,38 @@ class TestParseTestOutput:
 
     def test_cargo_format(self):
         output = "test result: ok. 42 passed; 0 failed; 0 ignored"
-        run, passed, failed = _parse_test_output(output, 0)
-        assert passed == 42
-        assert failed == 0
-        assert run == 42
+        run, passed, failed, inferred = _parse_test_output(output, 0)
+        assert (run, passed, failed) == (42, 42, 0)
+        assert inferred is False
 
     def test_cargo_with_failures(self):
         output = "test result: FAILED. 38 passed; 4 failed; 0 ignored"
-        run, passed, failed = _parse_test_output(output, 1)
-        assert passed == 38
-        assert failed == 4
-        assert run == 42
+        run, passed, failed, inferred = _parse_test_output(output, 1)
+        assert (run, passed, failed) == (42, 38, 4)
+        assert inferred is False
 
     def test_generic_format(self):
         output = "15 tests passed\n2 tests failed\n"
-        run, passed, failed = _parse_test_output(output, 1)
-        assert passed == 15
-        assert failed == 2
-        assert run == 17
+        run, passed, failed, inferred = _parse_test_output(output, 1)
+        assert (run, passed, failed) == (17, 15, 2)
+        assert inferred is False
 
     def test_ran_format(self):
         output = "Ran 10 tests\nOK\n"
-        run, passed, failed = _parse_test_output(output, 0)
+        run, _passed, _failed, inferred = _parse_test_output(output, 0)
         assert run == 10
+        assert inferred is False
 
-    def test_fallback_on_no_info(self):
-        output = "some random output"
-        run, passed, failed = _parse_test_output(output, 0)
-        assert run == 1
-        assert passed == 1
-        assert failed == 0
+    def test_unparseable_output_is_flagged_as_inferred(self):
+        """"1 test passed" must not be presented as a counted suite result."""
+        run, passed, failed, inferred = _parse_test_output("some random output", 0)
+        assert (run, passed, failed) == (1, 1, 0)
+        assert inferred is True
 
-    def test_fallback_failure(self):
-        output = "error!"
-        run, passed, failed = _parse_test_output(output, 1)
-        assert run == 1
-        assert passed == 0
-        assert failed == 1
+    def test_unparseable_failure_is_flagged_as_inferred(self):
+        run, passed, failed, inferred = _parse_test_output("error!", 1)
+        assert (run, passed, failed) == (1, 0, 1)
+        assert inferred is True
 
 
 class TestDiscoverTestCommands:
@@ -158,21 +154,35 @@ class TestVerifyCorrectness:
 
     @patch("prat.verification._discover_test_commands")
     @patch("prat.verification._rebuild")
-    def test_no_tests_still_passes(self, mock_rebuild, mock_discover):
-        """If no tests found, verification passes on compilation alone."""
+    def test_no_tests_is_inconclusive_not_a_pass(self, mock_rebuild, mock_discover):
+        """Compiling is necessary but not sufficient evidence of correctness."""
         mock_rebuild.return_value = True
         mock_discover.return_value = []
 
         result = verify_correctness("/fake/project")
 
-        assert result.success is True
+        assert result.status is VerificationStatus.INCONCLUSIVE
+        assert result.success is False
         assert result.compiles is True
         assert result.total_tests_run == 0
+        assert "unverified" in (result.error_message or "")
+
+    @patch("prat.verification._discover_test_commands")
+    @patch("prat.verification._rebuild")
+    def test_no_tests_can_be_accepted_explicitly(self, mock_rebuild, mock_discover):
+        mock_rebuild.return_value = True
+        mock_discover.return_value = []
+
+        result = verify_correctness("/fake/project", require_tests=False)
+
+        assert result.status is VerificationStatus.INCONCLUSIVE
+        assert result.success is True
 
     @patch("prat.verification.replay_tests")
     @patch("prat.verification._discover_test_commands")
     @patch("prat.verification._rebuild")
-    def test_klee_replay_integration(self, mock_rebuild, mock_discover, mock_replay):
+    def test_klee_replay_integration(self, mock_rebuild, mock_discover, mock_replay,
+                                     tmp_path):
         from prat.symbolic import SymbolicResult
 
         mock_rebuild.return_value = True
@@ -188,11 +198,15 @@ class TestVerifyCorrectness:
             test_cases=["/tmp/test001.ktest", "/tmp/test002.ktest", "/tmp/test003.ktest"],
             test_count=3,
         )
+        # The binary must exist: replaying against a missing target would report
+        # passes for tests that never ran.
+        binary = tmp_path / "broker"
+        binary.write_bytes(b"\x7fELF")
 
         result = verify_correctness(
             "/fake/project",
             symbolic_result=sym_result,
-            binary_path="/fake/binary",
+            binary_path=str(binary),
         )
 
         assert result.total_tests_run == 3

@@ -6,16 +6,19 @@ This module handles generation and organization of gcov/llvm-cov coverage files
 from compiled binaries with instrumentation.
 """
 
+
+from __future__ import annotations
+
 import contextlib
 import os
 import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 from .adapters import ProjectAdapter
 from .compilation import BuildSystem
+from .gcov import parse_tool_function_output, write_function_sidecar
 
 
 @dataclass
@@ -25,7 +28,7 @@ class CoverageResult:
     coverage_files: list[str]
     coverage_dir: str
     missing_files: list[str]
-    error_message: Optional[str] = None
+    error_message: str | None = None
 
 
 def generate_coverage(
@@ -117,7 +120,8 @@ def organize_coverage_files(
     coverage_files: list[str],
     feature: str,
     enabled: bool,
-    output_dir: str
+    output_dir: str,
+    label: str | None = None,
 ) -> str:
     """
     Move coverage files to organized directory structure.
@@ -127,12 +131,17 @@ def organize_coverage_files(
         feature: Feature name
         enabled: Whether feature was enabled
         output_dir: Base output directory
+        label: Explicit directory label, overriding the feature/enabled pair.
+            Batch analysis uses this for the shared ``all_features`` baseline.
 
     Returns:
         Path to coverage directory
     """
-    flag = "yes" if enabled else "no"
-    coverage_dir_name = f"coverage_files_WITH_{feature.upper()}_{flag}"
+    if label:
+        coverage_dir_name = f"coverage_files_{label}"
+    else:
+        flag = "yes" if enabled else "no"
+        coverage_dir_name = f"coverage_files_WITH_{feature.upper()}_{flag}"
     coverage_dir = Path(output_dir) / coverage_dir_name
 
     # Create coverage directory
@@ -155,14 +164,28 @@ def organize_coverage_files(
     return str(coverage_dir)
 
 
+def _gcov_command(coverage_tool: str, args: str) -> str:
+    """Build a gcov invocation, always requesting per-function summaries.
+
+    ``-f`` makes gcov interleave "function <name> called N ..." lines into the
+    .gcov output, which is the only way to obtain the function-level coverage the
+    paper reports alongside line coverage. It does not change line counts.
+    """
+    base = f"{coverage_tool} gcov" if "llvm-cov" in coverage_tool else coverage_tool
+    return f"{base} -f {args}"
+
+
 def _detect_coverage_tool() -> str:
     """Detect which coverage tool is available."""
-    if shutil.which("llvm-cov-9"):
-        return "llvm-cov-9"
-    elif shutil.which("gcov"):
+    if shutil.which("gcov"):
         return "gcov"
-    else:
-        raise RuntimeError("No coverage tool found (gcov or llvm-cov-9)")
+    # Prefer an unversioned llvm-cov, then fall back to versioned names for
+    # distributions that only ship those.
+    for candidate in ("llvm-cov", "llvm-cov-18", "llvm-cov-15", "llvm-cov-14",
+                      "llvm-cov-11", "llvm-cov-9"):
+        if shutil.which(candidate):
+            return candidate
+    raise RuntimeError("No coverage tool found (gcov or llvm-cov)")
 
 
 def _generate_coverage_make(
@@ -182,7 +205,7 @@ def _generate_coverage_make(
             continue
 
         # Run coverage tool
-        cmd = "llvm-cov-9 gcov *" if coverage_tool == "llvm-cov-9" else "gcov *"
+        cmd = _gcov_command(coverage_tool, "*")
 
         subprocess.run(
             cmd,
@@ -235,7 +258,7 @@ def _generate_coverage_cmake(
 
     seen: set[str] = set()
     for parent_dir in sorted(gcno_dirs):
-        cmd = "llvm-cov-9 gcov *.gcno" if coverage_tool == "llvm-cov-9" else "gcov *.gcno"
+        cmd = _gcov_command(coverage_tool, "*.gcno")
 
         subprocess.run(
             cmd,
@@ -275,10 +298,7 @@ def _generate_coverage_autotools(
             continue
 
         # Run coverage tool
-        if coverage_tool == "llvm-cov-9":
-            cmd = f"llvm-cov-9 gcov {lib_dir}/*"
-        else:
-            cmd = f"gcov {lib_dir}/*"
+        cmd = _gcov_command(coverage_tool, f"{lib_dir}/*")
 
         subprocess.run(
             cmd,
@@ -308,7 +328,7 @@ def _lcov_to_gcov(lcov_path: str, out_dir: str) -> list[str]:
     """
     os.makedirs(out_dir, exist_ok=True)
     files: list[str] = []
-    cur_sf: Optional[str] = None
+    cur_sf: str | None = None
     da: list[tuple[int, int]] = []
 
     def flush() -> None:
@@ -378,34 +398,41 @@ def execute_for_coverage(
     feature: str,
     enabled: bool,
     timeout: int = 300,
+    symbolic_tests: list[str] | None = None,
+    binary_path: str | None = None,
 ) -> bool:
     """
-    Execute the compiled binary / test suite to generate .gcda profile data.
+    Execute the test suite T to generate .gcda profile data.
 
-    This is the critical step that makes coverage *dynamic* rather than
-    compile-time only. After compilation with coverage flags, .gcno files
-    exist but .gcda files are only created when the binary actually runs.
-    gcov needs both .gcno and .gcda to produce accurate .gcov files.
+    Algorithm 1 line 3 defines T = U u S: the unit tests U shipped with the
+    project, plus the set S generated by symbolic execution. Both are run here,
+    against the *same* instrumented build, because coverage is only dynamic once
+    the binary has actually executed — compilation alone produces .gcno but no
+    .gcda, and gcov needs both.
 
     Args:
-        adapter: A ProjectAdapter instance
-        feature: Feature name being analyzed
-        enabled: Whether the feature is enabled in this build
-        timeout: Max seconds for execution (default 300 = 5 min)
+        adapter: A ProjectAdapter instance.
+        feature: Feature name being analyzed.
+        enabled: Whether the feature is enabled in this build.
+        timeout: Max seconds per execution command.
+        symbolic_tests: Paths to KLEE ``.ktest`` files (the set S), replayed via
+            klee-replay against ``binary_path``.
+        binary_path: Instrumented binary to replay symbolic tests against.
 
     Returns:
-        True if execution completed (even with test failures), False on error
+        True if at least one execution completed (test failures are fine — a
+        failing test still produces coverage), False if nothing ran.
     """
     project_path = str(adapter.project_path)
     env = os.environ.copy()
     env.update(adapter.get_coverage_environment())
 
+    ran_anything = False
+
+    # --- U: unit tests shipped with the project -----------------------------
     exec_cmds = adapter.get_execution_commands(feature, enabled)
     if not exec_cmds:
-        print("[!] No execution commands available — coverage will be compile-time only")
-        return False
-
-    success = False
+        print("    [!] Adapter provided no execution commands (U is empty)")
     for cmd in exec_cmds:
         try:
             print(f"    Running: {' '.join(cmd)}")
@@ -417,22 +444,45 @@ def execute_for_coverage(
                 env=env,
                 timeout=timeout,
             )
-            # Test failures are OK — we still get coverage data
-            success = True
+            ran_anything = True
         except subprocess.TimeoutExpired:
-            print(f"[!] Execution timed out after {timeout}s (continuing with partial coverage)")
-            success = True  # Partial coverage is still useful
-        except Exception as e:
-            print(f"[!] Execution failed: {e}")
+            print(f"    [!] Execution timed out after {timeout}s "
+                  f"(continuing with partial coverage)")
+            ran_anything = True  # partial coverage is still coverage
+        except (OSError, subprocess.SubprocessError) as exc:
+            print(f"    [!] Execution failed: {exc}")
 
-    return success
+    # --- S: symbolically generated tests ------------------------------------
+    if symbolic_tests:
+        if binary_path is None:
+            binary_path = adapter.get_binary_path()
+
+        if binary_path and os.path.exists(binary_path):
+            from .symbolic import replay_tests
+
+            print(f"    Replaying {len(symbolic_tests)} symbolic test(s) "
+                  f"against {binary_path}")
+            replayed = replay_tests(binary_path, symbolic_tests)
+            if replayed:
+                ran_anything = True
+        else:
+            print("    [!] No instrumented binary available — cannot replay "
+                  "symbolic tests (S excluded from T)")
+
+    if not ran_anything:
+        print("    [!] Nothing executed — coverage will be compile-time only")
+
+    return ran_anything
 
 
 def generate_coverage_with_adapter(
     adapter: ProjectAdapter,
     feature: str,
     enabled: bool,
-    output_dir: Optional[str] = None,
+    output_dir: str | None = None,
+    symbolic_tests: list[str] | None = None,
+    feature_states: dict[str, bool] | None = None,
+    label: str | None = None,
 ) -> CoverageResult:
     """
     Generate coverage files using a ProjectAdapter.
@@ -444,6 +494,14 @@ def generate_coverage_with_adapter(
         adapter: A ProjectAdapter instance
         feature: Feature name
         enabled: Whether feature was enabled during compilation
+        output_dir: Base directory for organized coverage output
+        symbolic_tests: KLEE ``.ktest`` paths forming the set S of T = U u S
+        feature_states: Explicit state for every feature, for the Algorithm 1
+            baselines. Used by Cargo projects, whose coverage command carries
+            the feature list.
+        label: Directory label for the organized output. Defaults to the
+            ``feature``/``enabled`` pair; batch analysis passes an explicit
+            label such as ``all_features``.
 
     Returns:
         CoverageResult with paths to generated .gcov files
@@ -454,12 +512,17 @@ def generate_coverage_with_adapter(
 
     coverage_files: list[str] = []
     missing_files: list[str] = []
+    # gcov stdout, kept so per-function summaries survive on tools that print
+    # them rather than writing them into the .gcov files.
+    tool_output: list[str] = []
 
     try:
         # Step 1: Execute binary/tests to generate .gcda profile data
         # This is what makes coverage DYNAMIC (paper §5.2)
-        print("    Executing tests for dynamic coverage...")
-        executed = execute_for_coverage(adapter, feature, enabled)
+        print("    Executing test suite T for dynamic coverage...")
+        executed = execute_for_coverage(
+            adapter, feature, enabled, symbolic_tests=symbolic_tests
+        )
         if executed:
             print("    [+] Execution complete — .gcda profile data generated")
         else:
@@ -477,9 +540,14 @@ def generate_coverage_with_adapter(
         elif adapter.build_system == BuildSystem.CARGO and hasattr(adapter, "get_llvm_cov_command"):
             # Rust: source-based coverage via `cargo llvm-cov` (builds + runs lib
             # tests + emits lcov), then convert lcov -> PRAT .gcov files.
-            flag = "yes" if enabled else "no"
+            flag = label or ("yes" if enabled else "no")
             lcov_path = str(project_path / f".prat_cov_{flag}.lcov")
-            llvm_cmd = adapter.get_llvm_cov_command(feature, enabled, lcov_path)
+            if feature_states and hasattr(adapter, "get_llvm_cov_command_for_set"):
+                llvm_cmd = adapter.get_llvm_cov_command_for_set(
+                    feature_states, lcov_path
+                )
+            else:
+                llvm_cmd = adapter.get_llvm_cov_command(feature, enabled, lcov_path)
             print(f"    Running: {' '.join(llvm_cmd)}")
             cargo_env = os.environ.copy()
             cargo_env.update(adapter.get_coverage_environment())
@@ -504,14 +572,15 @@ def generate_coverage_with_adapter(
                 src_dir = project_path / src_dir_name
                 if not src_dir.exists():
                     continue
-                gcov_prog = coverage_tool if "llvm-cov" not in coverage_tool else f"{coverage_tool} gcov"
-                subprocess.run(
-                    f"{gcov_prog} {src_dir_name}/*.gcno",
+                proc = subprocess.run(
+                    _gcov_command(coverage_tool, f"{src_dir_name}/*.gcno"),
                     shell=True,
                     cwd=str(project_path),
                     capture_output=True,
                     text=True,
                 )
+                if isinstance(proc.stdout, str):
+                    tool_output.append(proc.stdout)
                 for item in project_path.iterdir():
                     if item.suffix == ".gcov":
                         path = str(item)
@@ -524,18 +593,17 @@ def generate_coverage_with_adapter(
                 if not src_dir.exists():
                     continue
 
-                if "llvm-cov" in coverage_tool:
-                    cmd = f"{coverage_tool} gcov *"
-                else:
-                    cmd = f"{coverage_tool} *"
+                cmd = _gcov_command(coverage_tool, "*")
 
-                subprocess.run(
+                proc = subprocess.run(
                     cmd,
                     shell=True,
                     cwd=src_dir,
                     capture_output=True,
                     text=True,
                 )
+                if isinstance(proc.stdout, str):
+                    tool_output.append(proc.stdout)
 
                 for item in src_dir.iterdir():
                     if item.suffix == ".gcov":
@@ -544,8 +612,13 @@ def generate_coverage_with_adapter(
         # Organize into standard directory structure
         base_dir = output_dir if output_dir else str(Path.cwd())
         coverage_dir = organize_coverage_files(
-            coverage_files, feature, enabled, base_dir
+            coverage_files, feature, enabled, base_dir, label=label
         )
+
+        if tool_output and coverage_dir:
+            functions = parse_tool_function_output("\n".join(tool_output))
+            if functions:
+                write_function_sidecar(coverage_dir, functions)
 
         return CoverageResult(
             success=len(coverage_files) > 0,

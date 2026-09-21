@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "prat"
-version = "1.0.0"
+version = "2.0.0"
 description = "Protocol Representation and Analysis Toolkit — identify and extract feature-specific code from C/C++/Rust projects using compile-time coverage analysis"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -34,6 +34,11 @@ dependencies = [
 Repository = "https://github.com/williamsryan/PRAT"
 
 [project.optional-dependencies]
+# Boofuzz drives the MQTT fuzzing harness used for the paper's correctness
+# evaluation. It is optional because the analysis pipeline does not need it.
+fuzz = [
+    "boofuzz>=0.4.1",
+]
 dev = [
     "build>=1.0",
     "pytest>=7.0",
@@ -41,6 +46,7 @@ dev = [
     "mypy>=1.0",
     "ruff>=0.1.0",
     "twine>=4.0",
+    "boofuzz>=0.4.1",
 ]
 
 [project.scripts]

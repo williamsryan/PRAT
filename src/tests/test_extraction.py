@@ -1,112 +1,135 @@
-"""Tests for prat.extraction module."""
+"""Tests for prat.extraction — packaging D_f for reporting and removal."""
 
+from prat.extraction import ExtractionResult, extract_features, extract_from_mapping
+from prat.mapping import map_feature
 
-from prat.extraction import ExtractionResult, count_removable_lines, extract_features
-
-
-class TestCountRemovableLines:
-    """Tests for count_removable_lines()."""
-
-    def test_counts_hash_lines(self, tmp_path):
-        diff_file = tmp_path / "net.c.gcov"
-        diff_file.write_text(
-            "    1:   1: #include <stdio.h>\n"
-            "#####:   2: tls_init();\n"
-            "#####:   3: tls_connect();\n"
-            "    1:   4: return 0;\n"
-        )
-
-        count = count_removable_lines(str(diff_file))
-        assert count == 2
-
-    def test_excludes_eof_markers(self, tmp_path):
-        diff_file = tmp_path / "net.c.gcov"
-        diff_file.write_text(
-            "#####:   1: tls_init();\n"
-            "#####:   2: /*EOF*/\n"
-        )
-
-        count = count_removable_lines(str(diff_file))
-        # Second line has /*EOF*/ so should be excluded
-        assert count == 1
-
-    def test_nonexistent_file(self):
-        count = count_removable_lines("/nonexistent/path")
-        assert count == 0
-
-    def test_empty_file(self, tmp_path):
-        diff_file = tmp_path / "empty.gcov"
-        diff_file.write_text("")
-
-        count = count_removable_lines(str(diff_file))
-        assert count == 0
+from .test_mapping import write_gcov
 
 
 class TestExtractFeatures:
-    """Tests for extract_features()."""
+    def test_reports_mapped_lines(self, tmp_path):
+        enabled = tmp_path / "on"
+        disabled = tmp_path / "off"
+        write_gcov(enabled, "src/net.c", {10: "4", 11: "4", 14: "9"})
+        write_gcov(disabled, "src/net.c", {14: "9"})
 
-    def test_nonexistent_dir(self):
-        result = extract_features("/nonexistent")
-        assert result.success is False
-        assert "does not exist" in result.error_message
-
-    def test_empty_dir(self, tmp_path):
-        # An existing-but-empty diff directory is a VALID outcome: the diff step
-        # ran but produced no non-empty diffs (e.g. a feature implemented as
-        # dedicated files rather than #ifdef-interleaved code). It reports 0
-        # removable lines, not an error.
-        result = extract_features(str(tmp_path))
-        assert result.success is True
-        assert result.total_removable_lines == 0
-
-    def test_extracts_removable_lines(self, tmp_path):
-        # Create a diff file with ##### markers
-        diff_file = tmp_path / "net.c.gcov"
-        diff_file.write_text(
-            "+#####:  10: ssl_ctx = SSL_CTX_new();\n"
-            "+#####:  11: SSL_CTX_set_options(ctx);\n"
-            " -    1:  12: return 0;\n"
-        )
-
-        result = extract_features(str(tmp_path), feature="TLS")
+        result = extract_features(str(enabled), str(disabled), "TLS")
 
         assert result.success is True
         assert result.total_removable_lines == 2
-        assert isinstance(result, ExtractionResult)
+        assert result.file_line_counts == {"src/net.c": 2}
+        assert result.file_line_numbers == {"src/net.c": [10, 11]}
 
-    def test_multiple_files(self, tmp_path):
-        (tmp_path / "net.c.gcov").write_text(
-            "+#####:  10: ssl_init();\n"
-        )
-        (tmp_path / "tls.c.gcov").write_text(
-            "+#####:  20: tls_handshake();\n"
-            "+#####:  21: tls_verify();\n"
-        )
+    def test_never_executed_lines_are_reported_not_removed(self, tmp_path):
+        enabled = tmp_path / "on"
+        disabled = tmp_path / "off"
+        write_gcov(enabled, "src/net.c", {10: "4", 12: "#####"})
+        write_gcov(disabled, "src/net.c", {})
 
-        result = extract_features(str(tmp_path), feature="TLS")
+        result = extract_features(str(enabled), str(disabled), "TLS")
+
+        assert result.total_removable_lines == 1
+        assert result.excluded_never_executed == 1
+
+    def test_partitions_dedicated_feature_files(self, tmp_path):
+        enabled = tmp_path / "on"
+        disabled = tmp_path / "off"
+        write_gcov(enabled, "src/wsio.c", {1: "2", 2: "2"})
+        write_gcov(enabled, "src/net.c", {10: "1", 14: "9"})
+        write_gcov(disabled, "src/net.c", {14: "9"})
+
+        result = extract_features(str(enabled), str(disabled), "WEBSOCKETS")
+
+        assert result.total_removable_lines == 3
+        assert result.feature_only_removable_lines == 2
+        assert result.interleaved_removable_lines == 1
+        assert result.feature_only_source_paths == ["src/wsio.c"]
+
+    def test_total_feature_lines_is_an_alias_not_a_larger_number(self, tmp_path):
+        """Interleaved and dedicated lines partition one set; they do not sum twice."""
+        enabled = tmp_path / "on"
+        disabled = tmp_path / "off"
+        write_gcov(enabled, "src/wsio.c", {1: "2"})
+        write_gcov(enabled, "src/net.c", {10: "1", 14: "9"})
+        write_gcov(disabled, "src/net.c", {14: "9"})
+
+        result = extract_features(str(enabled), str(disabled), "WEBSOCKETS")
+
+        assert result.total_feature_lines == result.total_removable_lines == 2
+
+    def test_records_contiguous_ranges(self, tmp_path):
+        enabled = tmp_path / "on"
+        disabled = tmp_path / "off"
+        write_gcov(enabled, "src/net.c", {12: "1", 13: "1", 44: "1"})
+        write_gcov(disabled, "src/net.c", {})
+
+        result = extract_features(str(enabled), str(disabled), "TLS")
+
+        assert result.file_line_ranges == {"src/net.c": [(12, 13), (44, 44)]}
+
+    def test_no_difference_is_a_valid_zero_result(self, tmp_path):
+        enabled = tmp_path / "on"
+        disabled = tmp_path / "off"
+        write_gcov(enabled, "src/net.c", {1: "3"})
+        write_gcov(disabled, "src/net.c", {1: "3"})
+
+        result = extract_features(str(enabled), str(disabled), "NOOP")
 
         assert result.success is True
-        assert result.total_removable_lines == 3
-        assert len(result.file_line_counts) == 2
+        assert result.total_removable_lines == 0
 
-    def test_gcov_extension_stripped(self, tmp_path):
-        """File names should have .gcov removed."""
-        (tmp_path / "net.c.gcov").write_text(
-            "+#####:  10: code;\n"
+    def test_missing_enabled_dir_is_an_error(self, tmp_path):
+        result = extract_features(str(tmp_path / "nope"), str(tmp_path), "TLS")
+
+        assert result.success is False
+        assert "does not exist" in (result.error_message or "")
+
+    def test_unparseable_coverage_is_an_error(self, tmp_path):
+        enabled = tmp_path / "on"
+        disabled = tmp_path / "off"
+        enabled.mkdir()
+        disabled.mkdir()
+
+        result = extract_features(str(enabled), str(disabled), "TLS")
+
+        assert result.success is False
+        assert "No parseable coverage" in (result.error_message or "")
+
+    def test_skips_idl_generated_translation_units(self, tmp_path):
+        enabled = tmp_path / "on"
+        disabled = tmp_path / "off"
+        write_gcov(enabled, "dds/TopicTypeSupportImpl.cpp", {1: "1"})
+        write_gcov(enabled, "dds/Handwritten.cpp", {1: "1"})
+        write_gcov(disabled, "dds/Handwritten.cpp", {})
+
+        result = extract_features(str(enabled), str(disabled), "SECURITY")
+
+        assert "dds/TopicTypeSupportImpl.cpp" not in result.file_line_counts
+        assert "dds/Handwritten.cpp" in result.file_line_counts
+
+    def test_keeps_idl_files_when_filter_disabled(self, tmp_path):
+        enabled = tmp_path / "on"
+        disabled = tmp_path / "off"
+        write_gcov(enabled, "dds/TopicTypeSupportImpl.cpp", {1: "1"})
+        write_gcov(disabled, "dds/other.cpp", {1: "1"})
+
+        result = extract_features(
+            str(enabled), str(disabled), "SECURITY", skip_generated_idl=False
         )
 
-        result = extract_features(str(tmp_path))
+        assert "dds/TopicTypeSupportImpl.cpp" in result.file_line_counts
 
-        assert "net.c" in result.file_line_counts
 
-    def test_result_fields(self, tmp_path):
-        (tmp_path / "test.c.gcov").write_text(
-            "+#####:  5: int x = 1;\n"
-        )
+class TestExtractFromMapping:
+    def test_builds_result_from_a_mapping(self, tmp_path):
+        enabled = tmp_path / "on"
+        disabled = tmp_path / "off"
+        write_gcov(enabled, "src/net.c", {10: "4"})
+        write_gcov(disabled, "src/net.c", {})
 
-        result = extract_features(str(tmp_path), feature="TLS", output_dir=str(tmp_path))
+        mapping = map_feature("TLS", str(enabled), str(disabled))
+        result = extract_from_mapping(mapping)
 
-        assert result.html_report_path is None  # Not set by extract_features itself
-        assert result.dot_graph_path is None
-        assert result.error_message is None
-        assert 5 in result.file_line_numbers.get("test.c", [])
+        assert isinstance(result, ExtractionResult)
+        assert result.total_removable_lines == 1
+        assert result.file_line_content == {"src/net.c": ["code_line_10();"]}

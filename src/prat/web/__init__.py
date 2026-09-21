@@ -10,6 +10,9 @@ list, the JavaScript data contract, the ``__PRAT_*__`` placeholder reference,
 theming, keyboard shortcuts, and guidance on extending the report.
 """
 
+
+from __future__ import annotations
+
 from importlib.resources import files as _files
 
 #: Filename of the report template shipped alongside this package.
