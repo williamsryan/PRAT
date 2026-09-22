@@ -192,31 +192,47 @@ docker-demo-aom:  ## Docker: build + run AOM encoder demo
 	$(PYTHON) src/demo-runner.py --build aom-encoder
 	$(PYTHON) src/demo-runner.py --run aom-encoder --output $(RESULTS)/docker
 
+.PHONY: docker-demo-rav1e
+docker-demo-rav1e:  ## Docker: build + run rav1e serialize demo
+	$(PYTHON) src/demo-runner.py --build rav1e-serialize
+	$(PYTHON) src/demo-runner.py --run rav1e-serialize --output $(RESULTS)/docker
+
 .PHONY: docker-build-all
 docker-build-all: docker-build  ## Alias for docker-build (all images)
 
 .PHONY: validate
-validate:  ## Validate demo results against paper-reported numbers
+validate:  ## Compare compatibility-demo evidence with paper-reported numbers
 	$(PYTHON) scripts/validate_paper_results.py $(RESULTS)/docker/ --json $(RESULTS)/validation_report.json
 
-.PHONY: paper-check
-paper-check:  ## Disk-safe full pipeline: per-demo build → run → rmi, then validate
+.PHONY: compatibility-check
+compatibility-check:  ## Source-pinned mapping → removal → verification corpus
 	@mkdir -p $(RESULTS)/docker
-	@for d in mosquitto-tls mosquitto-bridge ffmpeg-dca uamqp-websockets opendds-content-filtered-topic quiche-qlog aom-encoder; do \
+	@for d in mosquitto-tls mosquitto-bridge ffmpeg-dca uamqp-websockets opendds-content-filtered-topic quiche-qlog rav1e-serialize aom-encoder; do \
 	  echo "=== $$d ==="; \
-	  $(PYTHON) src/demo-runner.py --build $$d || echo "[!] build failed: $$d (continuing)"; \
-	  $(PYTHON) src/demo-runner.py --run $$d --cleanup --output $(RESULTS)/docker || echo "[!] run failed: $$d (continuing)"; \
+	  $(PYTHON) src/demo-runner.py --build $$d || exit 1; \
+	  $(PYTHON) src/demo-runner.py --run $$d --cleanup --output $(RESULTS)/docker || exit 1; \
 	done
-	$(MAKE) validate
+	$(PYTHON) scripts/validate_paper_results.py $(RESULTS)/docker/ --strict --json $(RESULTS)/validation_report.json
+
+.PHONY: paper-check
+paper-check: compatibility-check  ## Legacy alias for compatibility-check
+	@echo "paper-check is a legacy alias; these pinned modern targets are a compatibility corpus."
 
 .PHONY: paper-check-fast
-paper-check-fast:  ## Quick pipeline: only the fast Mosquitto demos, then validate
+paper-check-fast:  ## Quick compatibility check: only the Mosquitto demos
 	@mkdir -p $(RESULTS)/docker
 	@for d in mosquitto-tls mosquitto-bridge; do \
-	  $(PYTHON) src/demo-runner.py --build $$d; \
-	  $(PYTHON) src/demo-runner.py --run $$d --cleanup --output $(RESULTS)/docker; \
+	  $(PYTHON) src/demo-runner.py --build $$d || exit 1; \
+	  $(PYTHON) src/demo-runner.py --run $$d --cleanup --output $(RESULTS)/docker || exit 1; \
 	done
-	$(MAKE) validate
+	$(PYTHON) scripts/validate_paper_results.py $(RESULTS)/docker/ --strict \
+	  --target mosquitto-tls --target mosquitto-bridge \
+	  --json $(RESULTS)/mosquitto-validation-report.json
+
+.PHONY: validate-batch
+validate-batch:  ## Validate an Algorithm 1 batch checkpoint (set CHECKPOINT=...)
+	@test -n "$(CHECKPOINT)" || (echo "✗ Set CHECKPOINT=path/to/batch_checkpoint.json" && exit 1)
+	$(PYTHON) scripts/validate_batch_results.py "$(CHECKPOINT)" --strict
 
 # ── Utilities ───────────────────────────────────────────────────────────────
 
@@ -238,7 +254,7 @@ clean: clean-results  ## Clean results (keep venv and App/)
 
 .PHONY: lint
 lint:  ## Run ruff linter (src/)
-	$(VENV)/bin/ruff check src/
+	$(VENV)/bin/ruff check src scripts
 
 .PHONY: typecheck
 typecheck:  ## Run mypy type checker (src/prat/)

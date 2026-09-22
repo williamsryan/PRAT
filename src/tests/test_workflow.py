@@ -1,6 +1,6 @@
 """Tests for prat.workflow — the single-feature pipeline orchestration."""
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -29,13 +29,15 @@ def happy_path(coverage_dirs, tmp_path):
     """Patch out every external step so the mapping logic can be exercised."""
     enabled, disabled = coverage_dirs
 
-    def fake_coverage(*_args, **kwargs):
-        target = enabled if kwargs.get("enabled", True) else disabled
+    def fake_coverage(*args, **kwargs):
+        state = kwargs.get("enabled", args[2] if len(args) > 2 else True)
+        target = enabled if state else disabled
         return CoverageResult(
             success=True,
             coverage_files=[str(p) for p in target.iterdir()],
             coverage_dir=str(target),
             missing_files=[],
+            dynamic_execution=True,
         )
 
     compilation = CompilationResult(
@@ -46,13 +48,20 @@ def happy_path(coverage_dirs, tmp_path):
         coverage_enabled=True,
         build_system=BuildSystem.MAKE,
     )
+    adapter = MagicMock()
+    adapter.build_system = BuildSystem.MAKE
+    adapter.coverage_tool = "gcov"
+    adapter.source_directories = ["src"]
 
     with (
         patch("prat.workflow.verify_dependencies",
               return_value=EnvironmentResult(success=True, available_tools={}, missing_tools=[])),
-        patch("prat.workflow.get_adapter", return_value=None),
-        patch("prat.workflow.compile_project", return_value=compilation),
-        patch("prat.workflow.generate_coverage", side_effect=fake_coverage),
+        patch("prat.workflow.get_adapter", return_value=adapter),
+        patch("prat.workflow.compile_with_adapter", return_value=compilation),
+        patch(
+            "prat.workflow.generate_coverage_with_adapter",
+            side_effect=fake_coverage,
+        ),
         patch("prat.workflow.generate_html_report", return_value="report.html"),
         patch("prat.workflow.generate_dot_graph", return_value="FDG.dot"),
         patch("prat.workflow.generate_json_report", return_value="report.json"),
@@ -61,6 +70,24 @@ def happy_path(coverage_dirs, tmp_path):
 
 
 class TestRunCompleteWorkflow:
+    def test_symbolic_rust_request_fails_closed(self, tmp_path):
+        adapter = MagicMock(
+            build_system=BuildSystem.CARGO,
+            coverage_tool="cargo-llvm-cov",
+            source_directories=["src"],
+        )
+
+        result = run_complete_workflow(
+            str(tmp_path),
+            "qlog",
+            output_dir=str(tmp_path / "out"),
+            adapter=adapter,
+            symbolic=True,
+        )
+
+        assert result.success is False
+        assert "C/C++ LLVM bitcode" in (result.error_message or "")
+
     def test_succeeds_and_maps_the_feature(self, happy_path, tmp_path):
         result = run_complete_workflow(
             str(tmp_path), "TLS", output_dir=str(tmp_path / "out")
@@ -93,9 +120,21 @@ class TestRunCompleteWorkflow:
         assert result.verification_result is None
 
     def test_missing_dependencies_fails_early(self, tmp_path):
-        with patch(
-            "prat.workflow.verify_dependencies",
-            return_value=EnvironmentResult(success=False, available_tools={}, missing_tools=["gcov"]),
+        adapter = MagicMock(
+            build_system=BuildSystem.MAKE,
+            coverage_tool="gcov",
+            source_directories=["src"],
+        )
+        with (
+            patch("prat.workflow.get_adapter", return_value=adapter),
+            patch(
+                "prat.workflow.verify_dependencies",
+                return_value=EnvironmentResult(
+                    success=False,
+                    available_tools={},
+                    missing_tools=["gcov"],
+                ),
+            ),
         ):
             result = run_complete_workflow(str(tmp_path), "TLS",
                                            output_dir=str(tmp_path / "out"))
@@ -110,11 +149,16 @@ class TestRunCompleteWorkflow:
             compilation_time=0.0, coverage_enabled=True,
             build_system=BuildSystem.MAKE,
         )
+        adapter = MagicMock(
+            build_system=BuildSystem.MAKE,
+            coverage_tool="gcov",
+            source_directories=["src"],
+        )
         with (
             patch("prat.workflow.verify_dependencies",
                   return_value=EnvironmentResult(success=True, available_tools={}, missing_tools=[])),
-            patch("prat.workflow.get_adapter", return_value=None),
-            patch("prat.workflow.compile_project", return_value=failure),
+            patch("prat.workflow.get_adapter", return_value=adapter),
+            patch("prat.workflow.compile_with_adapter", return_value=failure),
         ):
             result = run_complete_workflow(str(tmp_path), "TLS",
                                            output_dir=str(tmp_path / "out"))
@@ -132,18 +176,41 @@ class TestRunCompleteWorkflow:
             success=False, coverage_files=[], coverage_dir="",
             missing_files=[], error_message="no gcda",
         )
+        adapter = MagicMock(
+            build_system=BuildSystem.MAKE,
+            coverage_tool="gcov",
+            source_directories=["src"],
+        )
         with (
             patch("prat.workflow.verify_dependencies",
                   return_value=EnvironmentResult(success=True, available_tools={}, missing_tools=[])),
-            patch("prat.workflow.get_adapter", return_value=None),
-            patch("prat.workflow.compile_project", return_value=compilation),
-            patch("prat.workflow.generate_coverage", return_value=empty),
+            patch("prat.workflow.get_adapter", return_value=adapter),
+            patch("prat.workflow.compile_with_adapter", return_value=compilation),
+            patch(
+                "prat.workflow.generate_coverage_with_adapter",
+                return_value=empty,
+            ),
         ):
             result = run_complete_workflow(str(tmp_path), "TLS",
                                            output_dir=str(tmp_path / "out"))
 
         assert result.success is False
         assert result.checkpoint is WorkflowCheckpoint.COVERAGE_ENABLED
+
+    def test_report_generation_failure_fails_the_workflow(
+        self, happy_path, tmp_path
+    ):
+        with patch(
+            "prat.workflow.generate_html_report",
+            side_effect=OSError("cannot write report"),
+        ):
+            result = run_complete_workflow(
+                str(tmp_path), "TLS", output_dir=str(tmp_path / "out")
+            )
+
+        assert result.success is False
+        assert result.checkpoint is WorkflowCheckpoint.EXTRACT
+        assert "cannot write report" in (result.error_message or "")
 
 
 class TestRemovalAndVerification:
@@ -236,15 +303,26 @@ class TestBaselineReuse:
             coverage_files=[str(p) for p in disabled.iterdir()],
             coverage_dir=str(disabled),
             missing_files=[],
+            dynamic_execution=True,
+        )
+        adapter = MagicMock(
+            build_system=BuildSystem.MAKE,
+            coverage_tool="gcov",
+            source_directories=["src"],
         )
 
         with (
             patch("prat.workflow.verify_dependencies",
                   return_value=EnvironmentResult(success=True, available_tools={}, missing_tools=[])),
-            patch("prat.workflow.get_adapter", return_value=None),
-            patch("prat.workflow.compile_project",
-                  return_value=compilation) as compile_mock,
-            patch("prat.workflow.generate_coverage", return_value=disabled_cov),
+            patch("prat.workflow.get_adapter", return_value=adapter),
+            patch(
+                "prat.workflow.compile_with_adapter",
+                return_value=compilation,
+            ) as compile_mock,
+            patch(
+                "prat.workflow.generate_coverage_with_adapter",
+                return_value=disabled_cov,
+            ),
             patch("prat.workflow.generate_html_report"),
             patch("prat.workflow.generate_dot_graph"),
             patch("prat.workflow.generate_json_report"),

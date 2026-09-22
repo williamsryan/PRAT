@@ -23,24 +23,31 @@ class EnvironmentResult:
     error_message: str | None = None
 
 
-def verify_dependencies() -> EnvironmentResult:
+def verify_dependencies(
+    build_system: object | None = None,
+    coverage_tool: str | None = None,
+) -> EnvironmentResult:
     """
     Check if required tools are available on the system.
 
     Returns:
         EnvironmentResult with availability status for each tool
     """
-    required_tools = {
-        # Build tools
-        'gcc': 'gcc',
-        'make': 'make',
-
-        # Python
-        'python3': 'python3',
-
-        # Perl
-        'perl': 'perl',
-    }
+    system = getattr(build_system, "value", build_system)
+    required_tools = {"python3": "python3"}
+    if system == "cargo":
+        required_tools.update({
+            "cargo": "cargo",
+            "cargo-llvm-cov": "cargo-llvm-cov",
+        })
+    elif system == "cmake":
+        required_tools.update({"gcc": "gcc", "cmake": "cmake"})
+    elif system == "mpc":
+        required_tools.update({"gcc": "gcc", "make": "make", "perl": "perl"})
+    elif system in ("autotools", "make"):
+        required_tools.update({"gcc": "gcc", "make": "make"})
+    else:
+        required_tools.update({"gcc": "gcc", "make": "make", "perl": "perl"})
 
     optional_tools = {
         # Optional build tools
@@ -49,6 +56,7 @@ def verify_dependencies() -> EnvironmentResult:
 
         # Coverage tools (need at least one)
         'gcov': 'gcov',
+        'llvm-cov': 'llvm-cov',
         'llvm-cov-9': 'llvm-cov-9',
 
         # Report tools
@@ -68,13 +76,27 @@ def verify_dependencies() -> EnvironmentResult:
     for tool_name, command in optional_tools.items():
         available_tools[tool_name] = shutil.which(command) is not None
 
-    # Require at least one coverage tool
-    has_coverage_tool = available_tools.get('gcov') or available_tools.get('llvm-cov-9')
-    if not has_coverage_tool:
-        missing_tools.append('gcov (or llvm-cov-9)')
+    if coverage_tool == "gcov" and not available_tools.get("gcov"):
+        missing_tools.append("gcov")
+    elif coverage_tool == "llvm-cov" and system != "cargo":
+        if not (
+            available_tools.get("llvm-cov")
+            or available_tools.get("llvm-cov-9")
+        ):
+            missing_tools.append("llvm-cov")
+    elif (
+        coverage_tool is None
+        and system != "cargo"
+        and not (
+            available_tools.get("gcov")
+            or available_tools.get("llvm-cov")
+            or available_tools.get("llvm-cov-9")
+        )
+    ):
+        missing_tools.append("gcov (or llvm-cov)")
 
     # Check optional Python packages (not required for core workflow)
-    python_packages = ['toml', 'pandas']
+    python_packages = ['toml']
     for package in python_packages:
         try:
             __import__(package)

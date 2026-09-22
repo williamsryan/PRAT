@@ -1,4 +1,4 @@
-# Dockerfile for PRAT Demo 3: FFmpeg x264 Feature Analysis
+# Dockerfile for PRAT Demo 3: FFmpeg DCA Decoder Feature Analysis
 # Self-contained — clones FFmpeg inside the image (no local App/ needed)
 
 FROM python:3.11-slim-bookworm
@@ -30,8 +30,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install Python dependencies needed by demo workflow
 RUN pip3 install --no-cache-dir \
-    toml==0.10.2 \
-    pandas>=1.3.0
+    toml==0.10.2
 
 WORKDIR /prat
 
@@ -40,7 +39,9 @@ COPY src/ /prat/src/
 
 # Clone FFmpeg at pinned version (matches scripts/fetch-targets.sh)
 RUN git clone --depth 1 --branch n5.1.4 \
-    https://github.com/FFmpeg/FFmpeg.git /prat/App/FFmpeg
+    https://github.com/FFmpeg/FFmpeg.git /prat/App/FFmpeg && \
+    test "$(git -C /prat/App/FFmpeg rev-parse HEAD)" = \
+    "4729204c17f756e186d622060088371d10b34f7e"
 
 ENV PROJECT_PATH=/prat/App/FFmpeg
 ENV FEATURE=decoder=dca
@@ -57,4 +58,5 @@ RUN mkdir -p /prat/output
 CMD ["python3", "/prat/src/demo_workflow.py", \
      "--project", "/prat/App/FFmpeg", \
      "--feature", "decoder=dca", \
+     "--remove", \
      "--output", "/prat/output"]

@@ -241,3 +241,7 @@ class ProjectAdapter(ABC):
         if test_cmd:
             return [test_cmd]
         return []
+
+    def coverage_command_executes_tests(self) -> bool:
+        """Whether coverage generation itself executes and gates the tests."""
+        return False

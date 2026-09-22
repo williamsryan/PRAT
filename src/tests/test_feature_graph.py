@@ -168,6 +168,47 @@ class TestBuildFeatureGraph:
         bridge_node = next(n for n in graph.nodes if n.label == "bridge.c")
         assert bridge_node.metadata["shared"] is False
 
+    def test_shared_file_loc_edges_record_exact_feature_attribution(self):
+        batch = _make_batch(
+            {
+                "TLS": {"net.c": 2},
+                "BRIDGE": {"net.c": 2},
+            },
+            line_numbers={
+                "TLS": {"net.c": [1, 2]},
+                "BRIDGE": {"net.c": [1, 2]},
+            },
+        )
+        graph = build_feature_graph(batch)
+
+        loc_edges = [
+            edge for edge in graph.edges
+            if edge.source == "file_net.c" and edge.target.startswith("loc_")
+        ]
+        assert len(loc_edges) == 1
+        assert sorted(loc_edges[0].metadata["features"]) == ["BRIDGE", "TLS"]
+
+    def test_shared_file_distinct_ranges_do_not_cross_attribute_features(self):
+        batch = _make_batch(
+            {
+                "TLS": {"net.c": 2},
+                "BRIDGE": {"net.c": 2},
+            },
+            line_numbers={
+                "TLS": {"net.c": [1, 2]},
+                "BRIDGE": {"net.c": [10, 11]},
+            },
+        )
+        graph = build_feature_graph(batch)
+
+        attribution = {
+            edge.target: edge.metadata["features"]
+            for edge in graph.edges
+            if edge.source == "file_net.c"
+        }
+        assert attribution["loc_net.c:1-2"] == ["TLS"]
+        assert attribution["loc_net.c:10-11"] == ["BRIDGE"]
+
     def test_total_lines(self):
         batch = _make_batch({
             "TLS": {"net.c": 50},

@@ -18,8 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip3 install --no-cache-dir \
-    toml==0.10.2 \
-    pandas>=1.3.0
+    toml==0.10.2
 
 WORKDIR /prat
 
@@ -27,7 +26,9 @@ COPY src/ /prat/src/
 
 # Clone AOM at pinned version
 RUN git clone --depth 1 --branch v3.7.1 \
-    https://aomedia.googlesource.com/aom /prat/App/aom
+    https://aomedia.googlesource.com/aom /prat/App/aom && \
+    test "$(git -C /prat/App/aom rev-parse HEAD)" = \
+    "aca387522ccc0a1775716923d5489dd2d4b1e628"
 
 ENV PROJECT_PATH=/prat/App/aom
 ENV FEATURE=CONFIG_AV1_ENCODER
@@ -37,4 +38,5 @@ RUN mkdir -p /prat/output
 CMD ["python3", "/prat/src/demo_workflow.py", \
      "--project", "/prat/App/aom", \
      "--feature", "CONFIG_AV1_ENCODER", \
+     "--remove", \
      "--output", "/prat/output"]

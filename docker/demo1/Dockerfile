@@ -24,8 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install Python dependencies needed by demo workflow
 RUN pip3 install --no-cache-dir \
-    toml==0.10.2 \
-    pandas>=1.3.0
+    toml==0.10.2
 
 WORKDIR /prat
 
@@ -34,7 +33,9 @@ COPY src/ /prat/src/
 
 # Clone Mosquitto at pinned version (matches scripts/fetch-targets.sh)
 RUN git clone --depth 1 --branch v2.0.15 \
-    https://github.com/eclipse/mosquitto.git /prat/App/mosquitto
+    https://github.com/eclipse/mosquitto.git /prat/App/mosquitto && \
+    test "$(git -C /prat/App/mosquitto rev-parse HEAD)" = \
+    "b0277869d9806f6fab8e1bc11c4a4987c9a79ded"
 
 ENV PROJECT_PATH=/prat/App/mosquitto
 ENV FEATURE=TLS
@@ -45,4 +46,5 @@ RUN mkdir -p /prat/output
 CMD ["python3", "/prat/src/demo_workflow.py", \
      "--project", "/prat/App/mosquitto", \
      "--feature", "TLS", \
+     "--remove", \
      "--output", "/prat/output"]

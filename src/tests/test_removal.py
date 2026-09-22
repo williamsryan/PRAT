@@ -247,6 +247,8 @@ class TestRemoveFeatureCode:
             str(tmp_path),
             "WEBSOCKETS",
             rebuild=False,
+            stub_feature_only_files=True,
+            require_complete=False,
         )
 
         assert result.files_stubbed == 1
@@ -267,7 +269,7 @@ class TestRemoveFeatureCode:
         assert result.skipped_unbalanced == {"net.c": [(1, 1)]}
         assert result.skipped_line_count == 1
 
-    def test_missing_source_file_is_skipped_not_fatal(self, tmp_path):
+    def test_missing_source_file_fails_exact_removal(self, tmp_path):
         result = remove_feature_code(
             make_extraction({"absent.c": [1]}),
             str(tmp_path),
@@ -275,8 +277,24 @@ class TestRemoveFeatureCode:
             rebuild=False,
         )
 
-        assert result.success is True
+        assert result.success is False
         assert result.lines_removed == 0
+        assert result.missing_source_files == ["absent.c"]
+
+    def test_dedicated_file_defaults_to_exact_mapped_lines(self, tmp_path):
+        source = tmp_path / "wsio.c"
+        source.write_text("mapped();\nnever_executed();\n")
+
+        result = remove_feature_code(
+            make_extraction({"wsio.c": [1]}, feature_only=["wsio.c"]),
+            str(tmp_path),
+            "WEBSOCKETS",
+            rebuild=False,
+        )
+
+        assert result.success is True
+        assert result.files_stubbed == 0
+        assert source.read_text() == "\nnever_executed();\n"
 
 
 class TestBuildGate:

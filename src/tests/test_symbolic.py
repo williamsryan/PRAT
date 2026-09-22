@@ -160,7 +160,7 @@ class TestCompileToBytecode:
         assert len(set(object_files)) == len(object_files)
 
     @patch("prat.symbolic.subprocess.run")
-    def test_partial_failure_still_links_what_compiled(self, mock_run, tmp_path):
+    def test_partial_failure_rejects_incomplete_program(self, mock_run, tmp_path):
         bc_path = str(tmp_path / "out.bc")
 
         def fake_run(cmd, **_kwargs):
@@ -175,7 +175,7 @@ class TestCompileToBytecode:
             [str(tmp_path / "good.c"), str(tmp_path / "bad.c")], bc_path
         )
 
-        assert result == bc_path
+        assert result is None
 
     @patch("prat.symbolic.subprocess.run")
     def test_no_sources_returns_none(self, mock_run, tmp_path):
@@ -233,8 +233,7 @@ class TestRunKlee:
             output_dir=str(klee_out),
         )
 
-        # No .ktest files but exit code 0 => still "success"
-        assert result.success is True
+        assert result.success is False
         assert result.test_count == 0
 
 
@@ -244,7 +243,7 @@ class TestReplayTests:
     def test_replay_not_available(self, mock_which):
         mock_which.return_value = None
         results = replay_tests("/bin/test", ["/test.ktest"])
-        assert results == {}
+        assert results == {"test.ktest": False}
 
     @patch("prat.symbolic.subprocess.run")
     @patch("prat.symbolic.shutil.which")
@@ -257,13 +256,12 @@ class TestReplayTests:
 
     @patch("prat.symbolic.subprocess.run")
     @patch("prat.symbolic.shutil.which")
-    def test_replay_timeout_counts_as_pass(self, mock_which, mock_run):
-        """Timeouts still generate coverage data."""
+    def test_replay_timeout_counts_as_failure(self, mock_which, mock_run):
         mock_which.return_value = "/usr/bin/klee-replay"
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="test", timeout=10)
 
         results = replay_tests("/bin/test", ["/tmp/test000001.ktest"])
-        assert results["test000001.ktest"] is True
+        assert results["test000001.ktest"] is False
 
 
 class TestGenerateSymbolicTests:

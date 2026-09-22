@@ -247,36 +247,28 @@ def run_docker_container(
                     error_message="Failed to start container"
                 )
         else:
-            # Attached mode - stream output
+            # Attached mode: communicate drains stdout/stderr concurrently and
+            # applies the timeout to the whole container run.
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                bufsize=1
             )
-
-            stdout_lines = []
-            stderr_lines = []
-
-            # Stream stdout
-            assert process.stdout is not None
-            for line in process.stdout:
-                print(line, end='')
-                stdout_lines.append(line)
-
-            # Wait for completion
-            process.wait(timeout=timeout)
-
-            # Capture stderr
-            assert process.stderr is not None
-            stderr = process.stderr.read()
+            try:
+                stdout, stderr = process.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                process.terminate()
+                try:
+                    stdout, stderr = process.communicate(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    stdout, stderr = process.communicate()
+                raise
+            if stdout:
+                print(stdout, end="")
             if stderr:
-                print(stderr, end='')
-                stderr_lines.append(stderr)
-
-            stdout = ''.join(stdout_lines)
-            stderr = ''.join(stderr_lines)
+                print(stderr, end="")
 
             if process.returncode == 0:
                 print("\n[+] Container completed successfully")

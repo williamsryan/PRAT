@@ -1,0 +1,57 @@
+name: Reproducibility compatibility corpus
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Run the expensive source-pinned corpus monthly so dependency and
+    # toolchain drift is detected even when nobody starts it manually.
+    - cron: "17 3 1 * *"
+
+jobs:
+  target:
+    name: ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - mosquitto-tls
+          - mosquitto-bridge
+          - ffmpeg-dca
+          - uamqp-websockets
+          - opendds-content-filtered-topic
+          - quiche-qlog
+          - rav1e-serialize
+          - aom-encoder
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build source-pinned target image
+        run: python src/demo-runner.py --build "${{ matrix.target }}"
+
+      - name: Run mapping, removal, and verification
+        run: >-
+          python src/demo-runner.py
+          --run "${{ matrix.target }}"
+          --cleanup
+          --output results/docker
+
+      - name: Validate this target's evidence
+        run: >-
+          python scripts/validate_paper_results.py
+          results/docker
+          --strict
+          --target "${{ matrix.target }}"
+          --json "results/docker/${{ matrix.target }}/validation_report.json"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: prat-${{ matrix.target }}
+          path: results/docker/${{ matrix.target }}

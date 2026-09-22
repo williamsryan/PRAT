@@ -95,27 +95,30 @@ class TestExtractFeatures:
         assert result.success is False
         assert "No parseable coverage" in (result.error_message or "")
 
-    def test_skips_idl_generated_translation_units(self, tmp_path):
+    def test_can_explicitly_skip_idl_generated_translation_units(self, tmp_path):
         enabled = tmp_path / "on"
         disabled = tmp_path / "off"
         write_gcov(enabled, "dds/TopicTypeSupportImpl.cpp", {1: "1"})
         write_gcov(enabled, "dds/Handwritten.cpp", {1: "1"})
         write_gcov(disabled, "dds/Handwritten.cpp", {})
 
-        result = extract_features(str(enabled), str(disabled), "SECURITY")
+        result = extract_features(
+            str(enabled),
+            str(disabled),
+            "SECURITY",
+            skip_generated_idl=True,
+        )
 
         assert "dds/TopicTypeSupportImpl.cpp" not in result.file_line_counts
         assert "dds/Handwritten.cpp" in result.file_line_counts
 
-    def test_keeps_idl_files_when_filter_disabled(self, tmp_path):
+    def test_keeps_idl_files_by_default(self, tmp_path):
         enabled = tmp_path / "on"
         disabled = tmp_path / "off"
         write_gcov(enabled, "dds/TopicTypeSupportImpl.cpp", {1: "1"})
         write_gcov(disabled, "dds/other.cpp", {1: "1"})
 
-        result = extract_features(
-            str(enabled), str(disabled), "SECURITY", skip_generated_idl=False
-        )
+        result = extract_features(str(enabled), str(disabled), "SECURITY")
 
         assert "dds/TopicTypeSupportImpl.cpp" in result.file_line_counts
 

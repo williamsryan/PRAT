@@ -24,6 +24,7 @@ remove lines that are already gone.
 
 from __future__ import annotations
 
+import shutil
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -94,6 +95,24 @@ class VariantChain:
                 f"{variant.lines_removed:>8}"
             )
         return "\n".join(lines)
+
+
+def _snapshot_binary(
+    binary_path: str | None,
+    output_dir: str,
+    label: str,
+) -> str | None:
+    """Copy a variant binary to immutable per-variant storage."""
+    if not binary_path:
+        return None
+    source = Path(binary_path)
+    if not source.is_file():
+        return None
+    destination_dir = Path(output_dir) / "variant_binaries" / label
+    destination_dir.mkdir(parents=True, exist_ok=True)
+    destination = destination_dir / source.name
+    shutil.copy2(source, destination)
+    return str(destination)
 
 
 def build_variant_chain(
@@ -198,7 +217,9 @@ def build_variant_chain(
         label="variant_0",
     )
 
-    baseline.binary_path = compilation.binary_path
+    baseline.binary_path = _snapshot_binary(
+        compilation.binary_path, output_dir, baseline.label
+    )
     baseline.coverage_dir = coverage.coverage_dir if coverage.success else None
     baseline.build_time = time.time() - variant_start
     baseline.success = coverage.success
@@ -214,7 +235,6 @@ def build_variant_chain(
         chain.error_message = "Baseline coverage unavailable; cannot chain"
         chain.total_time = time.time() - start
         return chain
-
     current_coverage_dir = baseline.coverage_dir
 
     # --- Variants 1..N: cumulative removal ---------------------------------
@@ -275,7 +295,6 @@ def build_variant_chain(
         variant.mapping = mapping
         variant.extraction = extraction
         variant.lines_removed = extraction.total_removable_lines
-        variant.binary_path = compilation.binary_path
         variant.coverage_dir = coverage.coverage_dir
 
         print(f"    |D_f| = {extraction.total_removable_lines} line(s) across "
@@ -288,6 +307,9 @@ def build_variant_chain(
                 feature,
                 protected_lines=mapping_protected(mapping),
                 rebuild=True,
+                build_commands=adapter.get_build_commands_for_set(
+                    states, with_coverage=False
+                ),
             )
             if not variant.removal.success:
                 variant.error_message = variant.removal.error_message
@@ -298,6 +320,11 @@ def build_variant_chain(
                 break
             print(f"    Removed {variant.removal.lines_removed} line(s)")
 
+        variant.binary_path = _snapshot_binary(
+            adapter.get_binary_path() if apply_removal else compilation.binary_path,
+            output_dir,
+            label,
+        )
         variant.build_time = time.time() - variant_start
         variant.success = True
         chain.variants.append(variant)

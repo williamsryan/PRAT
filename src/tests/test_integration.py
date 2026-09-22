@@ -24,6 +24,9 @@ from pathlib import Path
 
 import pytest
 
+from prat.adapters.base import ProjectAdapter
+from prat.batch import run_batch_analysis
+from prat.compilation import BuildSystem
 from prat.extraction import extract_from_mapping
 from prat.gcov import (
     load_coverage_dir,
@@ -149,6 +152,114 @@ def _write_project(root: Path) -> None:
     (root / "feature.h").write_text(FEATURE_H)
     (root / "feature.c").write_text(FEATURE_C)
     (root / "Makefile").write_text(MAKEFILE)
+
+
+BATCH_MAIN_C = """\
+#include <stdio.h>
+
+int alpha(void)
+{
+    puts("alpha");
+    return 1;
+}
+
+int beta(void)
+{
+    puts("beta");
+    return 2;
+}
+
+int main(void)
+{
+    int total = 0;
+#ifdef WITH_ALPHA
+    total += alpha();
+#endif
+#ifdef WITH_BETA
+    total += beta();
+#endif
+    printf("total=%d\\n", total);
+    return 0;
+}
+"""
+
+BATCH_MAKEFILE = """\
+CC ?= cc
+CFLAGS ?= --coverage -O0
+WITH_ALPHA ?= no
+WITH_BETA ?= no
+
+DEFS :=
+ifeq ($(WITH_ALPHA),yes)
+DEFS += -DWITH_ALPHA
+endif
+ifeq ($(WITH_BETA),yes)
+DEFS += -DWITH_BETA
+endif
+
+all: src/app
+
+src/app: src/main.c
+\tcd src && $(CC) $(CFLAGS) $(DEFS) -o app main.c
+
+test: src/app
+\t./src/app
+
+clean:
+\trm -f src/app src/*.gcda src/*.gcno src/*.gcov
+
+.PHONY: all test clean
+"""
+
+
+class BatchFixtureAdapter(ProjectAdapter):
+    """Real compiler/gcov adapter for the Algorithm 1 integration fixture."""
+
+    @property
+    def build_system(self) -> BuildSystem:
+        return BuildSystem.MAKE
+
+    @property
+    def coverage_tool(self) -> str:
+        return "gcov" if shutil.which("gcov") else "llvm-cov"
+
+    @property
+    def source_directories(self) -> list[str]:
+        return ["src"]
+
+    def normalize_feature_name(self, raw_option: str) -> str:
+        return raw_option.removeprefix("WITH_")
+
+    def get_compile_command(
+        self,
+        feature: str,
+        enabled: bool,
+        with_coverage: bool = True,
+    ) -> list[str]:
+        coverage = "--coverage -O0" if with_coverage else "-O0"
+        return [
+            "make",
+            f"CC={CC}",
+            f"CFLAGS={coverage}",
+            self.format_feature_flag(feature, enabled),
+        ]
+
+    def get_clean_command(self) -> list[str]:
+        return ["make", "clean"]
+
+    def get_test_command(self) -> list[str] | None:
+        return ["make", "test"]
+
+    def get_execution_commands(
+        self, feature: str, enabled: bool
+    ) -> list[list[str]]:
+        return [["./src/app"]]
+
+    def get_binary_path(self) -> str | None:
+        return str(self.project_path / "src" / "app")
+
+    def format_feature_flag(self, feature: str, enabled: bool) -> str:
+        return f"WITH_{feature}={'yes' if enabled else 'no'}"
 
 
 def _build_run_and_cover(root: Path, enabled: bool, coverage_dir: Path) -> None:
@@ -355,6 +466,59 @@ class TestEndToEndFunctionCoverage:
 
         assert covered > 0
         assert covered <= total
+
+
+class TestEndToEndBatch:
+    def test_real_n_plus_one_builds_use_one_workload_plan(self, tmp_path):
+        """Exercise Algorithm 1 through real compiler and coverage processes."""
+        root = tmp_path / "batch-project"
+        (root / "src").mkdir(parents=True)
+        (root / "src" / "main.c").write_text(BATCH_MAIN_C)
+        (root / "Makefile").write_text(BATCH_MAKEFILE)
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        subprocess.run(["git", "add", "."], cwd=root, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=PRAT Test",
+                "-c",
+                "user.email=prat-test@example.invalid",
+                "commit",
+                "-qm",
+                "fixture",
+            ],
+            cwd=root,
+            check=True,
+        )
+
+        output = tmp_path / "batch-results"
+        result = run_batch_analysis(
+            str(root),
+            output_dir=str(output),
+            adapter=BatchFixtureAdapter(str(root)),
+        )
+
+        assert result.success is True, result.error_message
+        assert result.feature_names == ["ALPHA", "BETA"]
+        assert result.builds_performed == 3
+        assert result.mapping_build_states == [
+            {"ALPHA": True, "BETA": True},
+            {"ALPHA": False, "BETA": True},
+            {"ALPHA": True, "BETA": False},
+        ]
+        assert result.feature_results["ALPHA"].removable_lines > 0
+        assert result.feature_results["BETA"].removable_lines > 0
+
+        plan_ids = {
+            result.baseline_coverage.test_plan_id,
+            result.feature_results["ALPHA"].coverage.test_plan_id,
+            result.feature_results["BETA"].coverage.test_plan_id,
+        }
+        assert len(plan_ids) == 1
+        assert None not in plan_ids
+        assert result.source_commit
+        assert (output / "batch_checkpoint.json").is_file()
 
 
 def _lines_for(extraction, basename: str) -> set[int]:

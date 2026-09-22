@@ -5,6 +5,12 @@ feature identification and removal.
 **Paper:** Williams et al., *Guided Feature Identification and Removal for Resource-constrained
 Firmware*, ACM TOSEM 2021 ([doi:10.1145/3487568](https://doi.org/10.1145/3487568)).
 
+> **Scope:** the paper repository contains the manuscript and aggregate results, but does not
+> identify the exact source revisions used in the evaluation or include the original artifact.
+> The Docker targets below are source-pinned compatibility targets on named later releases. Their
+> measurements can test the implementation and compare trends; they cannot establish an exact
+> numerical reproduction of an unrecorded 2021 environment.
+>
 > **Status: results require regeneration.** The mapping algorithm was corrected (see §1), so the
 > result files committed under `results/` were produced by the superseded rule and do not reflect
 > what PRAT computes. `results/README.md` records this. This document describes the methodology,
@@ -56,7 +62,7 @@ Four further corrections affect measured numbers:
 
 | Area | Was | Now |
 |---|---|---|
-| Batch analysis | 2 builds per feature, baseline = project defaults | Algorithm 1's **n+1 builds**, baseline = all features enabled (with a reported fallback if that does not compile) |
+| Batch analysis | 2 builds per feature, baseline = project defaults | Algorithm 1's **n+1 builds**, with a required all-features baseline |
 | Removal | Rebuild failure logged, removal reported successful | Rebuild failure **fails the removal and restores** the tree; a delimiter-balance guard prevents removals that would not compile |
 | KLEE | `max_time = 60` **seconds**; generated tests discarded | `max_time_minutes = 60` per Table 3; tests are replayed into coverage, so `T = U u S` |
 | Function coverage | Not collected | `gcov -f` always requested; available for the paper's per-variant table |
@@ -128,7 +134,8 @@ identical across languages — only the instrumentation differs.
 
 ## 4. Evaluation targets
 
-The paper evaluates seven codebases. Six are covered by demos (Mosquitto twice):
+The paper evaluates seven codebases. Eight compatibility demos cover all seven
+(Mosquitto has two):
 
 | # | Demo | Project / pinned version | Build | Feature analyzed | Paper value |
 |---|---|---|---|---|---|
@@ -138,11 +145,8 @@ The paper evaluates seven codebases. Six are covered by demos (Mosquitto twice):
 | 4 | `uamqp-websockets` | azure-uamqp-c | cmake | `use_wsio` | **26** LOC |
 | 5 | `opendds-content-filtered-topic` | OpenDDS DDS-3.25 | MPC | `content-filtered-topic` | **73** LOC |
 | 6 | `quiche-qlog` | quiche 0.20.1 | cargo | `qlog` | none published |
-| 7 | `aom-encoder` | libaom v3.7.1 | cmake | `CONFIG_AV1_ENCODER` | none published |
-
-**rav1e is not covered by a demo.** The generic Cargo adapter can drive it
-(`./scripts/fetch-targets.sh rav1e`), but it is not one of the bundled pinned demos, so this
-artifact covers six of the paper's seven codebases.
+| 7 | `rav1e-serialize` | rav1e v0.7.1 | cargo | `serialize` | none published |
+| 8 | `aom-encoder` | libaom v3.7.1 | cmake | `CONFIG_AV1_ENCODER` | none published |
 
 ### Where a demo analyzes something the paper did not
 
@@ -190,6 +194,9 @@ prat App/mosquitto TLS --remove  # removes, rebuilds, re-runs the tests
 # Algorithm 1 over every discovered feature (n+1 builds)
 prat App/mosquitto --batch
 
+# Enforce the paper algorithm: KLEE, B_all, every B_f, union removal, verification
+prat App/mosquitto --paper-algorithm
+
 # Feature identification only
 prat App/mosquitto --list --verbose
 
@@ -200,36 +207,34 @@ prat App/mosquitto TLS --symbolic
 pip install 'prat[fuzz]'
 prat App/mosquitto --variants 8 --fuzz --fuzz-seconds 600
 
-# Docker demos
-make paper-check                 # build → run → remove image, per demo, then validate
+# Source-pinned modern-version compatibility corpus
+make compatibility-check
 prat reproduce mosquitto-tls
 prat reproduce --all
 
 # Validate whatever has run
 python3 scripts/validate_paper_results.py results/docker/ \
     --json results/validation_report.json
+
+# Validate a complete Algorithm 1 batch checkpoint
+make validate-batch CHECKPOINT=results/mosquitto-batch/batch_checkpoint.json
 ```
 
 ### How the validator scores
 
 | Status | Meaning |
 |---|---|
-| `PASS` | The paper publishes a value for this feature and `\|D_f\|` is within the accepted range |
-| `FAIL` | The paper publishes a value and `\|D_f\|` is outside the range |
+| `COMPATIBLE` | The paper publishes a historical value and the source-pinned run produced complete, valid evidence |
+| `FAIL` | Required provenance, execution, mapping, removal, or verification evidence is invalid or incomplete |
 | `OBSERVED` | The paper publishes **no** value for the feature analyzed; the measurement is reported and not scored |
 | `MISSING` | No result file found for the target |
 | `ERROR` | The demo ran but the workflow did not succeed |
 
-Tolerances are wide and deliberately so. The paper's per-feature numbers come from
-KLEE-generated tests over a 60-minute budget against the codebase versions available in 2021; a
-local run uses whatever tests ship with the pinned version and, unless `--symbolic` is passed and
-KLEE is present, no symbolic tests at all. Since the mapping is bounded by the coverage `T`
-achieves, a narrower `T` yields a smaller `D_f`. Expect results at the lower end of each range
-without KLEE, and expect version drift in both directions on codebases whose pinned tag is years
-newer than the paper's.
-
-Tolerances have not been widened to accommodate any particular measurement; they express the
-methodological gap above.
+The validator reports the historical paper value and the observed deviation, but it does not
+invent a numerical acceptance range for a later source revision. The paper does not identify its
+exact revisions or preserve the original artifact, so a modern source-pinned run cannot support a
+claim of exact numerical reproduction. `COMPATIBLE` certifies the evidence chain and algorithmic
+behavior on the named target commit.
 
 ---
 
@@ -274,14 +279,16 @@ make typecheck   # mypy
   executed. Without KLEE, `T` is the project's own tests and `D_f` is correspondingly smaller.
   `ExtractionResult.excluded_never_executed` reports how many executable lines were left in place
   for this reason, so the completeness cost is visible rather than silent.
-- **rav1e has no demo** (see §4).
+- **rav1e is covered by the `rav1e-serialize` compatibility demo** (see §4).
 - **Rust coverage uses `cargo-llvm-cov`, not `kcov`** (see §3).
 - **KLEE requires its own environment.** `--symbolic` uses a local `klee` or the `klee/klee`
-  image, and is skipped with a message when neither is present.
+  image. A requested symbolic run fails when neither is available or generation is incomplete.
+- **The KLEE path supports C/C++ LLVM bitcode.** Rust targets use `cargo-llvm-cov` for dynamic
+  mapping, but `--symbolic` and `--paper-algorithm` fail closed for Cargo projects rather than
+  claiming the paper's symbolic-test procedure was executed.
 - **The all-features baseline can fail to compile** on codebases with mutually exclusive options.
-  Batch analysis falls back to the project's default configuration and says so in
-  `BatchResult.baseline_note`; `D_f` then isolates each feature against defaults rather than
-  against a fully-featured build.
+  An Algorithm 1 run fails in that case. `--default-baseline` is a separately labeled exploratory
+  mode and does not satisfy strict batch validation.
 - **Fuzzing needs an instrumented broker.** `fuzz_variant` reports crash data without coverage
   instrumentation, but the coverage columns require a `--coverage` build.
 - **Whole-program Table 4 comparison needs a full batch run** on each codebase, which is

@@ -7,8 +7,12 @@ validates results against expected values, and generates comparison reports.
 """
 
 import argparse
+import hashlib
 import json
+import shutil
+import subprocess
 import sys
+import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -28,10 +32,23 @@ from prat.docker_runner import (
 @dataclass
 class ExpectedResult:
     """Expected results for a demo."""
-    min_removable_lines: int
-    max_removable_lines: int
+    min_removable_lines: Optional[int]
+    max_removable_lines: Optional[int]
     key_files: list[str]
     description: str
+    paper_lines: Optional[int] = None
+
+    @property
+    def is_scored(self) -> bool:
+        """Whether a numerical compatibility range is configured."""
+        return (
+            self.min_removable_lines is not None
+            and self.max_removable_lines is not None
+        )
+
+    @property
+    def has_paper_value(self) -> bool:
+        return self.paper_lines is not None
 
 
 @dataclass
@@ -46,25 +63,15 @@ class DemoResult:
     within_expected_range: bool
     execution_time: Optional[float]
     error_message: Optional[str] = None
+    workflow_success: bool = False
 
 
 # Expected results for each demo.
 #
-# SINGLE SOURCE OF TRUTH: ranges/key-files are loaded from
+# SINGLE SOURCE OF TRUTH: paper references/key-files are loaded from
 # paper_expected_results.json (the same file the validator uses) so the demo
-# runner and `scripts/validate_paper_results.py` can never disagree. A minimal
-# hardcoded fallback is kept only for the case where the JSON is unavailable.
+# runner and `scripts/validate_paper_results.py` cannot disagree.
 _PAPER_EXPECTED_PATH = Path(__file__).resolve().parent.parent / "paper_expected_results.json"
-
-_FALLBACK_EXPECTED = {
-    "mosquitto-tls": ExpectedResult(500, 1800, ["net.c", "tls_mosq.c"], "Mosquitto TLS feature analysis"),
-    "mosquitto-bridge": ExpectedResult(300, 900, ["bridge.c"], "Mosquitto Bridge feature analysis"),
-    "ffmpeg-dca": ExpectedResult(0, 100000, ["dcadec.c"], "FFmpeg DTS (dca) decoder feature analysis"),
-    "uamqp-websockets": ExpectedResult(200, 2000, ["wsio.c"], "azure-uamqp-c WebSockets feature analysis"),
-    "opendds-content-filtered-topic": ExpectedResult(500, 5000, ["Security"], "OpenDDS Security feature analysis"),
-    "quiche-qlog": ExpectedResult(0, 100000, ["src/"], "Quiche qlog feature analysis"),
-    "aom-encoder": ExpectedResult(5000, 50000, ["av1/encoder"], "AOM AV1 encoder feature analysis"),
-}
 
 
 def _load_expected_results() -> dict[str, ExpectedResult]:
@@ -72,21 +79,23 @@ def _load_expected_results() -> dict[str, ExpectedResult]:
     try:
         with open(_PAPER_EXPECTED_PATH) as f:
             targets = json.load(f)["targets"]
-    except Exception as e:  # pragma: no cover - defensive
-        print(f"[!] Could not load {_PAPER_EXPECTED_PATH} ({e}); using fallback ranges")
-        return dict(_FALLBACK_EXPECTED)
+    except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise RuntimeError(
+            f"Cannot load authoritative demo expectations from "
+            f"{_PAPER_EXPECTED_PATH}: {exc}"
+        ) from exc
 
     results: dict[str, ExpectedResult] = {}
     for name, spec in targets.items():
+        if name.startswith("_") or not isinstance(spec, dict):
+            continue
         results[name] = ExpectedResult(
-            min_removable_lines=spec["min_acceptable"],
-            max_removable_lines=spec["max_acceptable"],
+            min_removable_lines=spec.get("min_acceptable"),
+            max_removable_lines=spec.get("max_acceptable"),
             key_files=spec.get("key_files", []),
             description=f"{spec.get('project', name)} {spec.get('feature', '')} feature analysis".strip(),
+            paper_lines=spec.get("paper_lines_removed"),
         )
-    # Keep any fallback-only demos not present in the JSON.
-    for name, spec in _FALLBACK_EXPECTED.items():
-        results.setdefault(name, spec)
     return results
 
 
@@ -133,6 +142,12 @@ DEMO_CONFIGS = {
         "feature": "qlog",
         "project": "quiche"
     },
+    "rav1e-serialize": {
+        "dockerfile": "docker/demo8/Dockerfile",
+        "image_name": "prat-demo:rav1e-serialize",
+        "feature": "serialize",
+        "project": "rav1e",
+    },
     "aom-encoder": {
         "dockerfile": "docker/demo7/Dockerfile",
         "image_name": "prat-demo:aom-encoder",
@@ -140,6 +155,13 @@ DEMO_CONFIGS = {
         "project": "aom"
     },
 }
+
+_missing_expectations = sorted(set(DEMO_CONFIGS) - set(EXPECTED_RESULTS))
+if _missing_expectations:
+    raise RuntimeError(
+        "Demo configuration has no authoritative expectation: "
+        + ", ".join(_missing_expectations)
+    )
 
 
 def build_demo(demo_name: str, no_cache: bool = False) -> bool:
@@ -210,11 +232,24 @@ def run_demo(demo_name: str, output_dir: str) -> DemoResult:
     print(f"Running Demo: {demo_name}")
     print(f"{'='*70}")
     print(f"Description: {expected.description}")
-    print(f"Expected lines: {expected.min_removable_lines}-{expected.max_removable_lines}")
+    if expected.is_scored:
+        print(f"Expected lines: {expected.min_removable_lines}-{expected.max_removable_lines}")
+    elif expected.has_paper_value:
+        print(
+            f"Paper reference: {expected.paper_lines} lines "
+            "(no acceptance range for this later source revision)"
+        )
+    else:
+        print("Paper reference: none published; result will be observational")
 
-    # Create output directory
+    # A failed rerun must never leave a previous checkpoint available for the
+    # validator. Each invocation starts with an empty per-demo directory.
     demo_output = Path(output_dir) / demo_name
+    if demo_output.exists():
+        shutil.rmtree(demo_output)
     demo_output.mkdir(parents=True, exist_ok=True)
+    run_id = str(uuid.uuid4())
+    started_at = datetime.now(timezone.utc).isoformat()
 
     # Run container
     container_result = run_docker_container(
@@ -222,6 +257,7 @@ def run_demo(demo_name: str, output_dir: str) -> DemoResult:
         volumes={
             str(demo_output.absolute()): "/prat/output"
         },
+        environment={"PRAT_RUN_ID": run_id},
         remove=True,
         timeout=3600  # 60 min — OpenDDS builds ACE+TAO+OpenDDS twice (security on/off)
     )
@@ -245,7 +281,9 @@ def run_demo(demo_name: str, output_dir: str) -> DemoResult:
             execution_time=None,
             error_message=f"{container_result.error_message}; see {log_file}"
         )
-        _write_demo_manifest(demo_output, config, expected, result, log_file)
+        _write_demo_manifest(
+            demo_output, config, expected, result, log_file, run_id, started_at
+        )
         return result
 
     # Parse results from checkpoint file
@@ -263,7 +301,9 @@ def run_demo(demo_name: str, output_dir: str) -> DemoResult:
             execution_time=None,
             error_message="Checkpoint file not found"
         )
-        _write_demo_manifest(demo_output, config, expected, result, log_file)
+        _write_demo_manifest(
+            demo_output, config, expected, result, log_file, run_id, started_at
+        )
         return result
 
     try:
@@ -293,20 +333,43 @@ def run_demo(demo_name: str, output_dir: str) -> DemoResult:
             else:
                 key_files_missing.append(key_file)
 
-        # Check if within expected range
+        # A numerical gate applies only if metadata explicitly configures one.
         within_range = (
-            expected.min_removable_lines <= removable_lines <= expected.max_removable_lines
+            True
+            if not expected.is_scored
+            else (
+                expected.min_removable_lines <= removable_lines
+                <= expected.max_removable_lines
+            )
         )
+
+        workflow_success = checkpoint.get('success', False) is True
+        evidence_success = (
+            workflow_success
+            and within_range
+            and not key_files_missing
+        )
+        errors = []
+        if not workflow_success:
+            errors.append(checkpoint.get("error_message") or "workflow failed")
+        if not within_range:
+            errors.append("measurement is outside the configured compatibility range")
+        if key_files_missing:
+            errors.append(
+                f"expected source evidence is missing: {', '.join(key_files_missing)}"
+            )
 
         result = DemoResult(
             demo_name=demo_name,
-            success=checkpoint.get('success', False),
+            success=evidence_success,
             removable_lines=removable_lines,
             files_analyzed=files_analyzed,
             key_files_found=key_files_found,
             key_files_missing=key_files_missing,
             within_expected_range=within_range,
-            execution_time=execution_time
+            execution_time=execution_time,
+            error_message="; ".join(errors) or None,
+            workflow_success=workflow_success,
         )
 
         _write_demo_manifest(
@@ -315,6 +378,8 @@ def run_demo(demo_name: str, output_dir: str) -> DemoResult:
             expected=expected,
             result=result,
             container_log=log_file,
+            run_id=run_id,
+            started_at=started_at,
         )
 
         # Print summary
@@ -323,8 +388,16 @@ def run_demo(demo_name: str, output_dir: str) -> DemoResult:
         print(f"{'='*70}")
         print(f"Success: {result.success}")
         print(f"Removable lines: {removable_lines}")
-        print(f"Expected range: {expected.min_removable_lines}-{expected.max_removable_lines}")
-        print(f"Within range: {within_range}")
+        if expected.is_scored:
+            print(f"Expected range: {expected.min_removable_lines}-{expected.max_removable_lines}")
+            print(f"Within range: {within_range}")
+        elif expected.has_paper_value:
+            print(
+                f"Paper reference: {expected.paper_lines} "
+                "(historical context, not a numerical gate)"
+            )
+        else:
+            print("Paper reference: none published")
         print(f"Files analyzed: {files_analyzed}")
         print(f"Key files found: {', '.join(key_files_found) if key_files_found else 'None'}")
         if key_files_missing:
@@ -346,7 +419,9 @@ def run_demo(demo_name: str, output_dir: str) -> DemoResult:
             execution_time=None,
             error_message=f"Failed to parse results: {e}"
         )
-        _write_demo_manifest(demo_output, config, expected, result, log_file)
+        _write_demo_manifest(
+            demo_output, config, expected, result, log_file, run_id, started_at
+        )
         return result
 
 
@@ -356,6 +431,8 @@ def _write_demo_manifest(
     expected: ExpectedResult,
     result: DemoResult,
     container_log: Path,
+    run_id: str,
+    started_at: str,
 ) -> None:
     """Write a small manifest for committee/demo review."""
     artifacts = {
@@ -364,9 +441,21 @@ def _write_demo_manifest(
         if path.is_file() or path.is_dir()
     }
     artifacts["container.log"] = str(container_log)
+    repo_root = Path(__file__).resolve().parent.parent
+    source_status = _command_output(
+        ["git", "status", "--porcelain"],
+        cwd=repo_root,
+    )
+    artifact_hashes = {
+        str(path.relative_to(demo_output)): _sha256_file(path)
+        for path in sorted(demo_output.rglob("*"))
+        if path.is_file() and path.name != "demo_manifest.json"
+    }
 
     manifest = {
         "created_at": datetime.now(timezone.utc).isoformat(),
+        "started_at": started_at,
+        "run_id": run_id,
         "demo": result.demo_name,
         "image": config["image_name"],
         "project": config["project"],
@@ -374,10 +463,65 @@ def _write_demo_manifest(
         "expected": asdict(expected),
         "result": asdict(result),
         "artifacts": artifacts,
+        "artifact_sha256": artifact_hashes,
+        "provenance": {
+            "prat_git_commit": _command_output(
+                ["git", "rev-parse", "HEAD"],
+                cwd=repo_root,
+            ),
+            "prat_git_dirty": bool(source_status),
+            "prat_source_sha256": _tree_digest(repo_root / "src"),
+            "dockerfile_sha256": _sha256_file(
+                repo_root / config["dockerfile"]
+            ),
+            "expected_results_sha256": _sha256_file(_PAPER_EXPECTED_PATH),
+            "image_id": _command_output(
+                [
+                    "docker", "image", "inspect", config["image_name"],
+                    "--format", "{{.Id}}",
+                ]
+            ),
+        },
     }
 
     path = demo_output / "demo_manifest.json"
     path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+
+def _command_output(command: list[str], cwd: Path | None = None) -> str | None:
+    try:
+        proc = subprocess.run(
+            command,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return proc.stdout.strip() if proc.returncode == 0 else None
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _tree_digest(root: Path) -> str:
+    digest = hashlib.sha256()
+    for path in sorted(
+        item for item in root.rglob("*")
+        if item.is_file()
+        and "__pycache__" not in item.parts
+        and not item.name.endswith((".pyc", ".pyo"))
+        and not any(part.endswith(".egg-info") for part in item.parts)
+    ):
+        digest.update(str(path.relative_to(root)).encode())
+        digest.update(bytes.fromhex(_sha256_file(path)))
+    return digest.hexdigest()
 
 
 def generate_comparison_report(results: list[DemoResult], output_file: str):
@@ -404,17 +548,34 @@ def generate_comparison_report(results: list[DemoResult], output_file: str):
         if expected:
             report_lines.append(f"Description: {expected.description}")
 
-        report_lines.append(f"Status: {'PASS' if result.success else 'FAIL'}")
+        status = (
+            "FAIL"
+            if not result.success
+            else "OBSERVED"
+            if expected and not expected.has_paper_value
+            else "COMPATIBLE"
+        )
+        report_lines.append(f"Status: {status}")
 
         if result.removable_lines is not None:
             report_lines.append(f"Removable Lines: {result.removable_lines}")
             if expected:
-                report_lines.append(
-                    f"Expected Range: {expected.min_removable_lines}-{expected.max_removable_lines}"
-                )
-                report_lines.append(
-                    f"Within Range: {'YES' if result.within_expected_range else 'NO'}"
-                )
+                if expected.is_scored:
+                    report_lines.append(
+                        f"Expected Range: {expected.min_removable_lines}-"
+                        f"{expected.max_removable_lines}"
+                    )
+                    report_lines.append(
+                        f"Within Range: {'YES' if result.within_expected_range else 'NO'}"
+                    )
+                else:
+                    if expected.has_paper_value:
+                        report_lines.append(
+                            f"Paper Reference: {expected.paper_lines} "
+                            "(no modern-version acceptance range)"
+                        )
+                    else:
+                        report_lines.append("Paper Reference: none published")
 
         if result.files_analyzed is not None:
             report_lines.append(f"Files Analyzed: {result.files_analyzed}")
@@ -435,15 +596,23 @@ def generate_comparison_report(results: list[DemoResult], output_file: str):
 
     # Summary
     total = len(results)
-    passed = sum(1 for r in results if r.success and r.within_expected_range)
+    compatible = sum(
+        1 for r in results
+        if r.success and EXPECTED_RESULTS[r.demo_name].has_paper_value
+    )
+    observed = sum(
+        1 for r in results
+        if r.success and not EXPECTED_RESULTS[r.demo_name].has_paper_value
+    )
+    failed = total - compatible - observed
 
     report_lines.append("=" * 80)
     report_lines.append("Summary")
     report_lines.append("=" * 80)
     report_lines.append(f"Total Demos: {total}")
-    report_lines.append(f"Passed: {passed}")
-    report_lines.append(f"Failed: {total - passed}")
-    report_lines.append(f"Success Rate: {(passed/total*100):.1f}%")
+    report_lines.append(f"Compatible: {compatible}")
+    report_lines.append(f"Observed: {observed}")
+    report_lines.append(f"Failed: {failed}")
     report_lines.append("=" * 80)
 
     report_text = "\n".join(report_lines)
@@ -555,7 +724,7 @@ def main():
         if args.cleanup:
             remove_docker_image(DEMO_CONFIGS[args.run]["image_name"], force=True)
 
-        return 0 if result.success and result.within_expected_range else 1
+        return 0 if result.success else 1
 
     if args.run_all:
         print("\n" + "=" * 70)
@@ -575,9 +744,7 @@ def main():
         generate_comparison_report(results, args.report)
 
         # Return success if all demos passed
-        all_passed = all(
-            r.success and r.within_expected_range for r in results
-        )
+        all_passed = all(r.success for r in results)
         return 0 if all_passed else 1
 
     # No action specified

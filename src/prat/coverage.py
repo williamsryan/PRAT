@@ -10,10 +10,12 @@ from compiled binaries with instrumentation.
 from __future__ import annotations
 
 import contextlib
+import hashlib
+import json
 import os
 import shutil
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .adapters import ProjectAdapter
@@ -29,6 +31,51 @@ class CoverageResult:
     coverage_dir: str
     missing_files: list[str]
     error_message: str | None = None
+    dynamic_execution: bool = False
+    execution_commands: int = 0
+    execution_succeeded: int = 0
+    execution_failed: int = 0
+    execution_timed_out: int = 0
+    symbolic_tests_replayed: int = 0
+    test_plan_id: str | None = None
+
+
+@dataclass
+class ExecutionResult:
+    """Outcome of executing the complete test set used for coverage."""
+
+    commands: int = 0
+    succeeded: int = 0
+    failed: int = 0
+    timed_out: int = 0
+    symbolic_replayed: int = 0
+    symbolic_failed: int = 0
+    errors: list[str] = field(default_factory=list)
+
+    @property
+    def success(self) -> bool:
+        """True only when at least one execution completed and none failed."""
+        completed = self.succeeded + self.symbolic_replayed
+        return (
+            completed > 0
+            and self.failed == 0
+            and self.timed_out == 0
+            and self.symbolic_failed == 0
+        )
+
+    def error_message(self) -> str:
+        """Describe why the dynamic execution gate failed."""
+        if self.commands == 0 and self.symbolic_replayed == 0:
+            return "No unit or symbolic tests were executed"
+        parts = []
+        if self.failed:
+            parts.append(f"{self.failed} command(s) failed")
+        if self.timed_out:
+            parts.append(f"{self.timed_out} command(s) timed out")
+        if self.symbolic_failed:
+            parts.append(f"{self.symbolic_failed} symbolic replay(s) failed")
+        parts.extend(self.errors)
+        return "; ".join(parts) or "Dynamic execution did not complete"
 
 
 def generate_coverage(
@@ -90,13 +137,16 @@ def generate_coverage(
             coverage_files, feature, enabled, os.getcwd()
         )
 
-        success = len(coverage_files) > 0
+        success = len(coverage_files) > 0 and not missing_files
         error_message = None
 
         if not success:
             error_message = "No coverage files were generated"
         elif missing_files:
-            print(f"[!] Warning: {len(missing_files)} files failed to generate coverage")
+            error_message = (
+                f"Coverage generation was incomplete for "
+                f"{len(missing_files)} input(s)"
+            )
 
         return CoverageResult(
             success=success,
@@ -144,24 +194,41 @@ def organize_coverage_files(
         coverage_dir_name = f"coverage_files_WITH_{feature.upper()}_{flag}"
     coverage_dir = Path(output_dir) / coverage_dir_name
 
-    # Create coverage directory
+    # A rerun must not inherit files from a previous successful analysis.
+    if coverage_dir.exists():
+        shutil.rmtree(coverage_dir)
     coverage_dir.mkdir(parents=True, exist_ok=True)
 
     # Move coverage files
     moved_files = []
     for cov_file in coverage_files:
         cov_path = Path(cov_file)
-        if cov_path.exists():
-            dest = coverage_dir / cov_path.name
-            try:
-                shutil.move(str(cov_path), str(dest))
-                moved_files.append(str(dest))
-            except Exception as e:
-                print(f"[!] Failed to move {cov_file}: {e}")
+        if not cov_path.exists():
+            raise FileNotFoundError(f"Coverage artifact disappeared: {cov_file}")
+        source_identity = _coverage_source_identity(cov_path)
+        digest = hashlib.sha256(source_identity.encode()).hexdigest()[:16]
+        dest = coverage_dir / f"{digest}-{cov_path.name}"
+        shutil.move(str(cov_path), str(dest))
+        moved_files.append(str(dest))
 
     print(f"[+] Organized {len(moved_files)} coverage files in {coverage_dir}")
 
     return str(coverage_dir)
+
+
+def _coverage_source_identity(path: Path) -> str:
+    """Read gcov's Source header so equal basenames cannot overwrite."""
+    try:
+        with path.open(encoding="utf-8", errors="ignore") as handle:
+            for _ in range(8):
+                line = handle.readline()
+                if not line:
+                    break
+                if "Source:" in line:
+                    return line.split("Source:", 1)[1].strip()
+    except OSError:
+        pass
+    return str(path.resolve())
 
 
 def _gcov_command(coverage_tool: str, args: str) -> str:
@@ -173,6 +240,11 @@ def _gcov_command(coverage_tool: str, args: str) -> str:
     """
     base = f"{coverage_tool} gcov" if "llvm-cov" in coverage_tool else coverage_tool
     return f"{base} -f {args}"
+
+
+def _coverage_inputs(directory: Path) -> str:
+    """Choose coverage artifacts instead of passing every directory entry."""
+    return "*.gcda" if any(directory.glob("*.gcda")) else "*.gcno"
 
 
 def _detect_coverage_tool() -> str:
@@ -204,16 +276,24 @@ def _generate_coverage_make(
         if not directory.exists():
             continue
 
-        # Run coverage tool
-        cmd = _gcov_command(coverage_tool, "*")
+        for stale in directory.glob("*.gcov"):
+            stale.unlink()
 
-        subprocess.run(
+        # Run coverage tool
+        cmd = _gcov_command(coverage_tool, _coverage_inputs(directory))
+
+        proc = subprocess.run(
             cmd,
             shell=True,
             cwd=directory,
             capture_output=True,
             text=True
         )
+        if proc.returncode != 0:
+            missing_files.append(
+                f"{directory}: {proc.stderr or proc.stdout or 'gcov failed'}"
+            )
+            continue
 
         # Collect generated .gcov files
         for item in directory.iterdir():
@@ -228,22 +308,11 @@ def _generate_coverage_cmake(
     coverage_tool: str,
     build_dir_name: str = "build",
 ) -> tuple[list[str], list[str]]:
-    """Generate coverage for CMake-based projects.
+    """Collect dynamic coverage for CMake-based projects.
 
-    PRAT performs *compile-time* differential coverage (README: "compiles a
-    project with and without a feature flag, generates coverage data"). gcov
-    produces a .gcov file from the compile-time .gcno graph alone, marking every
-    instrumented line as never-executed (#####) when no runtime .gcda is
-    present. That is exactly what the working Make/Autotools paths rely on.
-
-    The previous implementation only ran gcov on .gcda files, so a CMake build
-    that was compiled-but-not-executed (the common case for large libraries with
-    tests disabled) produced ZERO .gcov files and the whole workflow failed.
-
-    We therefore drive gcov from the .gcno files (the superset that always
-    exists after a coverage build). gcov automatically consumes a sibling .gcda
-    when present, so this still yields true dynamic coverage whenever the binary
-    or test suite was executed.
+    The adapter path executes and gates the test workload before this collector
+    runs. gcov is invoked from every directory containing a ``.gcno`` graph so
+    it can consume the sibling ``.gcda`` profiles generated by that workload.
     """
     coverage_files: list[str] = []
     missing_files: list[str] = []
@@ -258,15 +327,20 @@ def _generate_coverage_cmake(
 
     seen: set[str] = set()
     for parent_dir in sorted(gcno_dirs):
+        for stale in parent_dir.glob("*.gcov"):
+            stale.unlink()
         cmd = _gcov_command(coverage_tool, "*.gcno")
 
-        subprocess.run(
+        proc = subprocess.run(
             cmd,
             shell=True,
             cwd=parent_dir,
             capture_output=True,
             text=True,
         )
+        if proc.returncode != 0:
+            missing_files.extend(str(path) for path in parent_dir.glob("*.gcno"))
+            continue
 
         # Collect generated .gcov files (dedupe across iterations).
         for item in parent_dir.iterdir():
@@ -321,10 +395,9 @@ def _lcov_to_gcov(lcov_path: str, out_dir: str) -> list[str]:
 
     Rust uses source-based LLVM coverage (`cargo llvm-cov`), which emits lcov,
     not gcc .gcov. We synthesize one .gcov per source file: lines with execution
-    count 0 are written as never-executed (``#####``) — exactly what PRAT's
-    extraction counts as removable — and executed lines carry their run count.
-    Only ``#####`` lines are parsed downstream, so this is sufficient for the
-    differential.
+    count 0 are written as never-executed (``#####``), and executed lines carry
+    their run count. The normal gcov parser then builds the executed-line sets
+    used by the same ``L_all \\ L_f`` mapping as C/C++ projects.
     """
     os.makedirs(out_dir, exist_ok=True)
     files: list[str] = []
@@ -334,7 +407,10 @@ def _lcov_to_gcov(lcov_path: str, out_dir: str) -> list[str]:
     def flush() -> None:
         nonlocal cur_sf, da
         if cur_sf and da:
-            gcov_path = os.path.join(out_dir, os.path.basename(cur_sf) + ".gcov")
+            digest = hashlib.sha256(cur_sf.encode()).hexdigest()[:16]
+            gcov_path = os.path.join(
+                out_dir, f"{digest}-{os.path.basename(cur_sf)}.gcov"
+            )
             with open(gcov_path, "w", encoding="utf-8") as g:
                 g.write(f"        -:    0:Source:{cur_sf}\n")
                 for line, count in sorted(set(da)):
@@ -400,7 +476,8 @@ def execute_for_coverage(
     timeout: int = 300,
     symbolic_tests: list[str] | None = None,
     binary_path: str | None = None,
-) -> bool:
+    execution_commands: list[list[str]] | None = None,
+) -> ExecutionResult:
     """
     Execute the test suite T to generate .gcda profile data.
 
@@ -420,23 +497,28 @@ def execute_for_coverage(
         binary_path: Instrumented binary to replay symbolic tests against.
 
     Returns:
-        True if at least one execution completed (test failures are fine — a
-        failing test still produces coverage), False if nothing ran.
+        Structured result. Coverage is valid only when at least one test or
+        symbolic replay completes successfully and none fail or time out.
     """
     project_path = str(adapter.project_path)
     env = os.environ.copy()
     env.update(adapter.get_coverage_environment())
 
-    ran_anything = False
+    result = ExecutionResult()
 
     # --- U: unit tests shipped with the project -----------------------------
-    exec_cmds = adapter.get_execution_commands(feature, enabled)
+    exec_cmds = (
+        execution_commands
+        if execution_commands is not None
+        else adapter.get_execution_commands(feature, enabled)
+    )
     if not exec_cmds:
         print("    [!] Adapter provided no execution commands (U is empty)")
     for cmd in exec_cmds:
+        result.commands += 1
         try:
             print(f"    Running: {' '.join(cmd)}")
-            subprocess.run(
+            proc = subprocess.run(
                 cmd,
                 cwd=project_path,
                 capture_output=True,
@@ -444,35 +526,44 @@ def execute_for_coverage(
                 env=env,
                 timeout=timeout,
             )
-            ran_anything = True
+            if proc.returncode == 0:
+                result.succeeded += 1
+            else:
+                result.failed += 1
+                detail = (proc.stderr or proc.stdout or "").strip().splitlines()
+                message = detail[-1] if detail else f"exit code {proc.returncode}"
+                result.errors.append(f"{' '.join(cmd)}: {message}")
         except subprocess.TimeoutExpired:
-            print(f"    [!] Execution timed out after {timeout}s "
-                  f"(continuing with partial coverage)")
-            ran_anything = True  # partial coverage is still coverage
+            print(f"    [!] Execution timed out after {timeout}s")
+            result.timed_out += 1
         except (OSError, subprocess.SubprocessError) as exc:
             print(f"    [!] Execution failed: {exc}")
+            result.failed += 1
+            result.errors.append(str(exc))
 
     # --- S: symbolically generated tests ------------------------------------
     if symbolic_tests:
         if binary_path is None:
             binary_path = adapter.get_binary_path()
 
-        if binary_path and os.path.exists(binary_path):
+        if binary_path and Path(binary_path).is_file():
             from .symbolic import replay_tests
 
             print(f"    Replaying {len(symbolic_tests)} symbolic test(s) "
                   f"against {binary_path}")
             replayed = replay_tests(binary_path, symbolic_tests)
             if replayed:
-                ran_anything = True
+                result.symbolic_replayed += sum(replayed.values())
+                result.symbolic_failed += sum(not value for value in replayed.values())
         else:
             print("    [!] No instrumented binary available — cannot replay "
                   "symbolic tests (S excluded from T)")
+            result.symbolic_failed += len(symbolic_tests)
 
-    if not ran_anything:
-        print("    [!] Nothing executed — coverage will be compile-time only")
+    if not result.success:
+        print(f"    [!] Dynamic execution invalid: {result.error_message()}")
 
-    return ran_anything
+    return result
 
 
 def generate_coverage_with_adapter(
@@ -483,6 +574,8 @@ def generate_coverage_with_adapter(
     symbolic_tests: list[str] | None = None,
     feature_states: dict[str, bool] | None = None,
     label: str | None = None,
+    execution_commands: list[list[str]] | None = None,
+    test_plan_id: str | None = None,
 ) -> CoverageResult:
     """
     Generate coverage files using a ProjectAdapter.
@@ -502,6 +595,8 @@ def generate_coverage_with_adapter(
         label: Directory label for the organized output. Defaults to the
             ``feature``/``enabled`` pair; batch analysis passes an explicit
             label such as ``all_features``.
+        execution_commands: A precomputed test plan to execute unchanged.
+        test_plan_id: Digest identifying that test plan across builds.
 
     Returns:
         CoverageResult with paths to generated .gcov files
@@ -520,18 +615,37 @@ def generate_coverage_with_adapter(
         # Step 1: Execute binary/tests to generate .gcda profile data
         # This is what makes coverage DYNAMIC (paper §5.2)
         print("    Executing test suite T for dynamic coverage...")
-        executed = execute_for_coverage(
-            adapter, feature, enabled, symbolic_tests=symbolic_tests
-        )
-        if executed:
+        coverage_runs_tests = adapter.coverage_command_executes_tests() is True
+        execution = ExecutionResult()
+        if not coverage_runs_tests:
+            execution = execute_for_coverage(
+                adapter,
+                feature,
+                enabled,
+                symbolic_tests=symbolic_tests,
+                execution_commands=execution_commands,
+            )
+            if not execution.success:
+                return CoverageResult(
+                    success=False,
+                    coverage_files=[],
+                    coverage_dir="",
+                    missing_files=[],
+                    error_message=execution.error_message(),
+                    dynamic_execution=False,
+                    execution_commands=execution.commands,
+                    execution_succeeded=execution.succeeded,
+                    execution_failed=execution.failed,
+                    execution_timed_out=execution.timed_out,
+                    symbolic_tests_replayed=execution.symbolic_replayed,
+                    test_plan_id=test_plan_id,
+                )
             print("    [+] Execution complete — .gcda profile data generated")
-        else:
-            print("    [!] No execution — falling back to compile-time coverage")
 
         # Step 2: Run coverage tool (gcov/llvm-cov) on .gcno + .gcda files.
         # CMake builds put .gcda files under build/; use the cmake path.
         # Make/Autotools builds put them alongside source files.
-        if adapter.build_system == BuildSystem.CMAKE:
+        if adapter.build_system in (BuildSystem.CMAKE, BuildSystem.MPC):
             coverage_files, missing_files = _generate_coverage_cmake(
                 str(project_path),
                 coverage_tool,
@@ -551,15 +665,22 @@ def generate_coverage_with_adapter(
             print(f"    Running: {' '.join(llvm_cmd)}")
             cargo_env = os.environ.copy()
             cargo_env.update(adapter.get_coverage_environment())
-            subprocess.run(
+            proc = subprocess.run(
                 llvm_cmd, cwd=str(project_path), capture_output=True, text=True, env=cargo_env,
             )
-            if os.path.exists(lcov_path):
+            if proc.returncode == 0 and os.path.exists(lcov_path):
+                execution.commands = 1
+                execution.succeeded = 1
                 tmp_gcov = project_path / f".prat_gcov_{flag}"
                 coverage_files = _lcov_to_gcov(lcov_path, str(tmp_gcov))
             else:
+                execution.commands = 1
+                execution.failed = 1
                 coverage_files = []
-                missing_files = ["cargo llvm-cov produced no lcov"]
+                detail = (proc.stderr or proc.stdout or "").strip()
+                missing_files = [
+                    detail[-1000:] if detail else "cargo llvm-cov produced no lcov"
+                ]
         elif adapter.build_system == BuildSystem.AUTOTOOLS:
             # Autotools projects (e.g. FFmpeg) compile from the project ROOT, so
             # each .gcno records its source path relative to the root
@@ -568,6 +689,8 @@ def generate_coverage_with_adapter(
             # header-only .gcov. Run gcov on the .gcno graphs per source dir,
             # from the project root, and collect the .gcov files produced there.
             seen: set[str] = set()
+            for stale in project_path.glob("*.gcov"):
+                stale.unlink()
             for src_dir_name in source_dirs:
                 src_dir = project_path / src_dir_name
                 if not src_dir.exists():
@@ -579,6 +702,12 @@ def generate_coverage_with_adapter(
                     capture_output=True,
                     text=True,
                 )
+                if proc.returncode != 0:
+                    missing_files.append(
+                        f"{src_dir_name}: "
+                        f"{proc.stderr or proc.stdout or 'gcov failed'}"
+                    )
+                    continue
                 if isinstance(proc.stdout, str):
                     tool_output.append(proc.stdout)
                 for item in project_path.iterdir():
@@ -593,7 +722,9 @@ def generate_coverage_with_adapter(
                 if not src_dir.exists():
                     continue
 
-                cmd = _gcov_command(coverage_tool, "*")
+                for stale in src_dir.glob("*.gcov"):
+                    stale.unlink()
+                cmd = _gcov_command(coverage_tool, _coverage_inputs(src_dir))
 
                 proc = subprocess.run(
                     cmd,
@@ -602,6 +733,12 @@ def generate_coverage_with_adapter(
                     capture_output=True,
                     text=True,
                 )
+                if proc.returncode != 0:
+                    missing_files.append(
+                        f"{src_dir_name}: "
+                        f"{proc.stderr or proc.stdout or 'gcov failed'}"
+                    )
+                    continue
                 if isinstance(proc.stdout, str):
                     tool_output.append(proc.stdout)
 
@@ -609,10 +746,31 @@ def generate_coverage_with_adapter(
                     if item.suffix == ".gcov":
                         coverage_files.append(str(item))
 
+        # Adapters such as Rust execute U inside their coverage command. S still
+        # has to be replayed against the same instrumented build.
+        if coverage_runs_tests and symbolic_tests and execution.success:
+            symbolic_execution = execute_for_coverage(
+                adapter,
+                feature,
+                enabled,
+                symbolic_tests=symbolic_tests,
+                binary_path=adapter.get_binary_path(),
+            )
+            execution.commands += symbolic_execution.commands
+            execution.succeeded += symbolic_execution.succeeded
+            execution.failed += symbolic_execution.failed
+            execution.timed_out += symbolic_execution.timed_out
+            execution.symbolic_replayed += symbolic_execution.symbolic_replayed
+            execution.symbolic_failed += symbolic_execution.symbolic_failed
+            execution.errors.extend(symbolic_execution.errors)
+
         # Organize into standard directory structure
         base_dir = output_dir if output_dir else str(Path.cwd())
         coverage_dir = organize_coverage_files(
             coverage_files, feature, enabled, base_dir, label=label
+        )
+        staged_files = sorted(
+            str(path) for path in Path(coverage_dir).glob("*.gcov")
         )
 
         if tool_output and coverage_dir:
@@ -621,11 +779,35 @@ def generate_coverage_with_adapter(
                 write_function_sidecar(coverage_dir, functions)
 
         return CoverageResult(
-            success=len(coverage_files) > 0,
-            coverage_files=coverage_files,
+            success=(
+                len(staged_files) == len(coverage_files) > 0
+                and execution.success
+                and not missing_files
+            ),
+            coverage_files=staged_files,
             coverage_dir=coverage_dir,
             missing_files=missing_files,
-            error_message=None if coverage_files else "No coverage files generated",
+            error_message=(
+                None
+                if (
+                    len(staged_files) == len(coverage_files) > 0
+                    and execution.success
+                    and not missing_files
+                )
+                else execution.error_message()
+                if not execution.success
+                else f"Coverage generation was incomplete for "
+                f"{len(missing_files)} input(s)"
+                if missing_files
+                else "No coverage files generated"
+            ),
+            dynamic_execution=execution.success,
+            execution_commands=execution.commands,
+            execution_succeeded=execution.succeeded,
+            execution_failed=execution.failed,
+            execution_timed_out=execution.timed_out,
+            symbolic_tests_replayed=execution.symbolic_replayed,
+            test_plan_id=test_plan_id,
         )
 
     except Exception as e:
@@ -635,4 +817,21 @@ def generate_coverage_with_adapter(
             coverage_dir="",
             missing_files=[],
             error_message=f"Coverage generation with adapter failed: {e}",
+            test_plan_id=test_plan_id,
         )
+
+
+def test_plan_digest(
+    commands: list[list[str]],
+    symbolic_tests: list[str] | None = None,
+) -> str:
+    """Hash the immutable workload definition used across differential builds."""
+    symbolic = []
+    for test in sorted(symbolic_tests or []):
+        path = Path(test)
+        digest = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
+        symbolic.append({"name": path.name, "sha256": digest})
+    payload = {"commands": commands, "symbolic_tests": symbolic}
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()

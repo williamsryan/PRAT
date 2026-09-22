@@ -19,11 +19,15 @@ def run_complete_workflow(
     project_path: str,
     feature: str,
     run_tests: bool = False,
-    output_dir: Optional[str] = None,
-    build_system: Optional[BuildSystem] = None,
-    adapter: Optional[ProjectAdapter] = None,
+    output_dir: str | None = None,
+    build_system: BuildSystem | None = None,
+    adapter: ProjectAdapter | None = None,
     symbolic: bool = False,
-    klee_config: Optional[KleeConfig] = None,
+    klee_config: KleeConfig | None = None,
+    remove: bool = False,
+    verify: bool = True,
+    baseline_coverage_dir: str | None = None,
+    reuse_baseline: bool = False,
 ) -> WorkflowResult
 ```
 
@@ -36,6 +40,13 @@ def run_complete_workflow(
 - `adapter`: ProjectAdapter to use (auto-detected if None); overrides build_system
 - `symbolic`: Generate KLEE symbolic tests (experimental; requires KLEE)
 - `klee_config`: KLEE configuration
+- `remove`: Blank exactly the mapped source lines and rebuild
+- `verify`: Re-run the same workload and compare it with the pre-removal output
+- `baseline_coverage_dir`: Existing `L_all` directory used by batch analysis
+- `reuse_baseline`: Reuse that baseline without rebuilding it
+
+The symbolic path consumes C/C++ LLVM bitcode. A symbolic Cargo/Rust request
+fails explicitly; Rust dynamic mapping uses `cargo-llvm-cov`.
 
 **Returns:** `WorkflowResult` with all outputs and statistics
 
@@ -136,6 +147,12 @@ def generate_coverage_with_adapter(
     adapter: ProjectAdapter,
     feature: str,
     enabled: bool,
+    output_dir: str | None = None,
+    symbolic_tests: list[str] | None = None,
+    feature_states: dict[str, bool] | None = None,
+    label: str | None = None,
+    execution_commands: list[list[str]] | None = None,
+    test_plan_id: str | None = None,
 ) -> CoverageResult
 ```
 
@@ -149,8 +166,14 @@ def execute_for_coverage(
     feature: str,
     enabled: bool,
     timeout: int = 300,
-) -> bool
+    symbolic_tests: list[str] | None = None,
+    binary_path: str | None = None,
+    execution_commands: list[list[str]] | None = None,
+) -> ExecutionResult
 ```
+
+The result succeeds only when at least one unit-test command or symbolic replay
+completes and no command fails or times out.
 
 ### gcov.py
 
@@ -265,7 +288,7 @@ def extract_features(
     enabled_coverage_dir: str,
     disabled_coverage_dir: str,
     feature: str = "",
-    skip_generated_idl: bool = True,
+    skip_generated_idl: bool = False,
 ) -> ExtractionResult
 ```
 
@@ -274,13 +297,15 @@ def extract_features(
 ```python
 def extract_from_mapping(
     mapping: FeatureMapping,
-    skip_generated_idl: bool = True,
+    skip_generated_idl: bool = False,
 ) -> ExtractionResult
 ```
 
 **Returns:** `ExtractionResult` with line counts, line numbers, contiguous
 ranges, and the partition of `D_f` over files that exist only in the
-feature-enabled build.
+feature-enabled build. Generated IDL is included by default; skipping it is an
+explicit opt-in because excluding mapped source silently would make the result
+incomplete.
 
 ### discovery.py
 
@@ -295,6 +320,10 @@ Auto-detect build system and discover features.
 ```python
 def discover_features(project_path: str) -> List[Feature]
 ```
+
+The complete signature also accepts an adapter and filtering controls:
+`discover_features(project_path, adapter=None, apply_filters=True,
+keep_developer_options=False)`.
 
 #### `discover_features_make()`
 
@@ -375,6 +404,7 @@ class WorkflowResult:
     verification_result: Optional[VerificationResult] = None
     coverage_percent_enabled: Optional[float] = None
     coverage_percent_disabled: Optional[float] = None
+    run_id: Optional[str] = None
     # D_f itself. Excluded from to_dict() because it carries full source text.
     mapping: Optional[FeatureMapping] = None
 ```
@@ -401,7 +431,35 @@ class CoverageResult:
     coverage_files: List[str]
     coverage_dir: str
     missing_files: List[str]
-    error_message: Optional[str]
+    error_message: Optional[str] = None
+    dynamic_execution: bool = False
+    execution_commands: int = 0
+    execution_succeeded: int = 0
+    execution_failed: int = 0
+    execution_timed_out: int = 0
+    symbolic_tests_replayed: int = 0
+    test_plan_id: Optional[str] = None
+```
+
+`test_plan_id` binds the enabled and disabled measurements to the same workload
+plan. Production workflows reject coverage that lacks successful dynamic
+execution.
+
+### ExecutionResult
+
+```python
+@dataclass
+class ExecutionResult:
+    commands: int = 0
+    succeeded: int = 0
+    failed: int = 0
+    timed_out: int = 0
+    symbolic_replayed: int = 0
+    symbolic_failed: int = 0
+    errors: list[str] = field(default_factory=list)
+
+    @property
+    def success(self) -> bool: ...
 ```
 
 ### GcovFile

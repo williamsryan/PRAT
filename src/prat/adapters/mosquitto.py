@@ -179,10 +179,10 @@ class MosquittoAdapter(ProjectAdapter):
         if use_tls:
             client_cmd = (
                 f"{pub} --cafile {ssl_dir_str}/test-root-ca.crt --insecure"
-                f" -h localhost -p {port} -t prat/test -m hello || true"
+                f" -h localhost -p {port} -t prat/test -m hello"
             )
         else:
-            client_cmd = f"{pub} -h localhost -p {port} -t prat/test -m hello || true"
+            client_cmd = f"{pub} -h localhost -p {port} -t prat/test -m hello"
 
         # Start broker, wait for it to be ready, run a client publish, then shut down
         # cleanly via SIGTERM so the gcov atexit handler writes .gcda files.

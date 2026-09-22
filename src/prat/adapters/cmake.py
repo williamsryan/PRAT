@@ -1,7 +1,7 @@
 """
 CMake project adapter for PRAT.
 
-Handles CMake-based builds with -DCONFIG_FEATURE=1/0 flags.
+Handles conventional CMake boolean options without renaming them.
 """
 
 
@@ -18,7 +18,7 @@ class CMakeAdapter(ProjectAdapter):
     Adapter for CMake-based projects.
 
     Build system: CMake
-    Feature format: -DCONFIG_FEATURE=1/0
+    Feature format: -DFEATURE=ON/OFF
     Coverage tool: gcov or llvm-cov (auto-detected)
     """
 
@@ -53,7 +53,7 @@ class CMakeAdapter(ProjectAdapter):
         Note: This returns the cmake command. Make must be run separately.
         Example: cmake -DCONFIG_TLS=1 -DCMAKE_BUILD_TYPE=Debug ..
         """
-        cmd = ["cmake"]
+        cmd = ["cmake", "-S", ".", "-B", self.cmake_build_dir]
 
         # Add feature flag
         flag = self.format_feature_flag(feature, enabled)
@@ -67,47 +67,52 @@ class CMakeAdapter(ProjectAdapter):
                 "-DCMAKE_CXX_FLAGS=--coverage"
             ])
 
-        # Reference parent directory (assumes build/ subdirectory)
-        cmd.append("..")
-
         return cmd
+
+    def get_build_commands(
+        self,
+        feature: str,
+        enabled: bool,
+        with_coverage: bool = True,
+    ) -> list[list[str]]:
+        """Configure from the project root, then build the binary directory."""
+        return [
+            self.get_compile_command(feature, enabled, with_coverage),
+            ["cmake", "--build", self.cmake_build_dir, "--parallel"],
+        ]
 
     def get_clean_command(self) -> list[str]:
         """Get clean command (remove build directory)."""
-        # CMake clean is typically done by removing build directory
-        # For now, return make clean which works in build directory
-        return ["make", "clean"]
+        return ["cmake", "-E", "remove_directory", self.cmake_build_dir]
 
     def get_test_command(self) -> list[str] | None:
         """Get CMake test command (CTest)."""
-        return ["ctest", "--output-on-failure"]
+        return [
+            "ctest", "--test-dir", self.cmake_build_dir, "--output-on-failure",
+            "--no-tests=error",
+        ]
 
     def normalize_feature_name(self, raw_option: str) -> str:
-        """Strip the ``CONFIG_`` prefix that :meth:`format_feature_flag` re-adds.
-
-        Discovery reports build options verbatim (``CONFIG_TLS``); passing that
-        through unchanged would yield ``-DCONFIG_CONFIG_TLS=1``.
-        """
-        upper = raw_option.upper()
-        return upper[len("CONFIG_"):] if upper.startswith("CONFIG_") else upper
+        """Keep the exact cache-variable name discovered from CMake."""
+        return raw_option
 
     def format_feature_flag(self, feature: str, enabled: bool) -> str:
         """
-        Format feature flag as -DCONFIG_FEATURE=1/0.
+        Format a discovered CMake boolean without inventing a prefix.
 
         Args:
             feature: Feature name (e.g., "TLS", "SSL")
             enabled: True for 1, False for 0
 
         Returns:
-            Formatted flag like "-DCONFIG_TLS=1"
+            Formatted flag like "-DWITH_TLS=ON"
         """
-        flag_value = "1" if enabled else "0"
-        return f"-DCONFIG_{feature.upper()}={flag_value}"
+        flag_value = "ON" if enabled else "OFF"
+        return f"-D{feature}={flag_value}"
 
     def get_binary_path(self) -> str | None:
         """Get path to CMake build directory."""
-        build_dir = self.project_path / "build"
+        build_dir = self.project_path / self.cmake_build_dir
         if build_dir.exists():
             return str(build_dir)
         return None

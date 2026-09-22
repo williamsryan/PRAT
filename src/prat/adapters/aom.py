@@ -70,7 +70,7 @@ class AomAdapter(ProjectAdapter):
         return [configure, build]
 
     def get_clean_command(self) -> list[str]:
-        return ["rm", "-rf", self.cmake_build_dir]
+        return ["cmake", "-E", "remove_directory", self.cmake_build_dir]
 
     def get_test_command(self) -> list[str] | None:
         # AOM test suite is heavy; use the testdata runner if available
@@ -101,15 +101,15 @@ class AomAdapter(ProjectAdapter):
           enabled run (the /tmp artifact persists for the lifetime of the
           container, which spans both builds).
 
-        Commands that don't apply to a given build (e.g. aomenc when the encoder
-        is disabled) simply fail and are tolerated by execute_for_coverage.
+        Every command is required to succeed; a missing encoder or decoder makes
+        the coverage result fail instead of yielding partial evidence.
         """
         bd = self.cmake_build_dir
         gen_input = [
             "sh", "-c",
             "printf 'YUV4MPEG2 W176 H144 F30:1 Ip A1:1 C420\\n' > /tmp/aom_in.y4m && "
             "for i in $(seq 1 12); do printf 'FRAME\\n' >> /tmp/aom_in.y4m && "
-            "head -c 38016 /dev/urandom >> /tmp/aom_in.y4m; done",
+            "head -c 38016 /dev/zero >> /tmp/aom_in.y4m; done",
         ]
         if enabled:
             return [

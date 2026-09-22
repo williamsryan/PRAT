@@ -1,11 +1,12 @@
 # PRAT Docker Demos
 
-Self-contained Docker demos for all paper evaluation targets. Each image clones the target project inside the container — no local `App/` directory needed.
+Self-contained source-pinned compatibility demos for all seven paper evaluation codebases. Each image
+clones and verifies an exact target commit, then maps, removes, rebuilds, and tests one feature.
 
 ## Quick Start
 
 ```bash
-# Build and run all 7 demos:
+# Build and run all 8 demos:
 make docker-build
 make docker-run
 cat results/demo_report.txt
@@ -17,25 +18,27 @@ make docker-demo-ffmpeg
 make docker-demo-uamqp
 make docker-demo-opendds
 make docker-demo-quiche
+make docker-demo-rav1e
 make docker-demo-aom
 ```
 
 ## Demo Overview
 
-| # | Demo Name | Project | Feature | Build System | Expected Lines | Time |
+| # | Demo Name | Project | Feature | Build System | Paper reference | Time |
 |---|---|---|---|---|---|---|
-| 1 | `mosquitto-tls` | Mosquitto v2.0.15 | TLS | Make | 500–1500 | 2–5 min |
-| 2 | `mosquitto-bridge` | Mosquitto v2.0.15 | Bridge | Make | 300–800 | 2–5 min |
+| 1 | `mosquitto-tls` | Mosquitto v2.0.15 | TLS | Make | 790 LOC | 2–5 min |
+| 2 | `mosquitto-bridge` | Mosquitto v2.0.15 | Bridge | Make | 640 LOC | 2–5 min |
 | 3 | `ffmpeg-dca` | FFmpeg n5.1.4 | `decoder=dca` | Autotools | no paper value | 10–20 min |
 | 4 | `uamqp-websockets` | azure-uamqp-c | `use_wsio` | CMake | paper: 26 | 5–10 min |
 | 5 | `opendds-content-filtered-topic` | OpenDDS DDS-3.25 | `content-filtered-topic` | MPC | paper: 73 | 10–20 min |
-| 6 | `quiche-qlog` | Quiche 0.20.1 | qlog | Cargo | 100–1500 | 5–15 min |
-| 7 | `aom-encoder` | AOM v3.7.1 | CONFIG_AV1_ENCODER | CMake | 5000–50000 | 15–30 min |
+| 6 | `quiche-qlog` | Quiche 0.20.1 | qlog | Cargo | no paper value | 5–15 min |
+| 7 | `rav1e-serialize` | rav1e v0.7.1 | serialize | Cargo | no paper value | 5–15 min |
+| 8 | `aom-encoder` | AOM v3.7.1 | CONFIG_AV1_ENCODER | CMake | no paper value | 15–30 min |
 
 ## Prerequisites
 
 - Docker installed and running (`docker --version`)
-- At least 8GB free disk space (for all 7 images)
+- At least 8GB free disk space; use `--cleanup` to remove each image after its run
 - Internet connection (first build only — images clone git repos)
 
 ## Using the Demo Runner
@@ -96,7 +99,9 @@ print(f'Files: {len(data[\"extraction_result\"][\"file_line_counts\"])}')
 
 ## Paper Alignment
 
-These 7 demos correspond to the evaluation targets in Tables 4 and 5 of:
+These demos cover the seven codebases in the paper. The paper does not publish the exact source
+revisions used in 2021, so the pinned modern targets are compatibility checks rather than exact
+numerical reproductions.
 > Williams et al., "Guided Feature Identification and Removal for Resource-constrained Firmware," ACM TOSEM 2021 (doi:10.1145/3487568)
 
 See [docs/PAPER_ALIGNMENT.md](../docs/PAPER_ALIGNMENT.md) for section-by-section code mapping.
@@ -114,4 +119,6 @@ docker run -it --rm prat-demo:mosquitto-tls /bin/bash
 python3 /prat/src/demo_workflow.py --project /prat/App/mosquitto --feature TLS --output /prat/output
 ```
 
-**Results outside expected range**: This is informational. Variations occur due to coverage tool version, test execution path, and platform. The expected ranges are conservative bounds.
+**Observed count differs from the paper**: The report shows the deviation as context. The paper
+does not publish the original source revisions, so the validator checks the evidence chain rather
+than applying an invented range to a later release.
