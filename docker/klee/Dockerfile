@@ -2,8 +2,8 @@
 # Provides KLEE symbolic execution engine for test generation.
 #
 # Usage:
-#   docker build -f docker/klee/Dockerfile -t prat-klee .
-#   docker run --rm -v $(pwd):/work prat-klee klee --help
+#   docker build -f docker/klee/Dockerfile -t prat-klee:latest .
+#   docker run --rm -v $(pwd):/work prat-klee:latest klee --help
 #
 # Or via the symbolic module:
 #   result = generate_symbolic_tests(..., use_docker=True)

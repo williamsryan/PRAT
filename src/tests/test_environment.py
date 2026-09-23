@@ -2,6 +2,7 @@
 
 from unittest.mock import patch
 
+from prat.compilation import BuildSystem
 from prat.environment import EnvironmentResult, is_tool_available, verify_dependencies
 
 
@@ -65,6 +66,33 @@ class TestVerifyDependencies:
         assert "make" in result.available_tools
         assert "python3" in result.available_tools
         assert result.available_tools["gcc"] is True
+
+    @patch("prat.environment.shutil.which")
+    def test_cargo_project_does_not_require_c_toolchain(self, mock_which):
+        available = {"python3", "cargo", "cargo-llvm-cov"}
+        mock_which.side_effect = lambda command: (
+            f"/usr/bin/{command}" if command in available else None
+        )
+
+        result = verify_dependencies(
+            build_system=BuildSystem.CARGO,
+            coverage_tool="llvm-cov",
+        )
+
+        assert result.success is True
+        assert "gcc" not in result.missing_tools
+        assert "gcov" not in result.missing_tools
+
+    @patch("prat.environment.shutil.which")
+    def test_modern_unversioned_llvm_cov_satisfies_generic_check(self, mock_which):
+        available = {"python3", "gcc", "make", "perl", "llvm-cov"}
+        mock_which.side_effect = lambda command: (
+            f"/usr/bin/{command}" if command in available else None
+        )
+
+        result = verify_dependencies()
+
+        assert result.success is True
 
 
 class TestIsToolAvailable:

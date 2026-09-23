@@ -1,92 +1,231 @@
 {
   "_description": "Ground-truth values taken from the published paper: Williams et al., 'Guided Feature Identification and Removal for Resource-constrained Firmware', ACM TOSEM 2021 (doi:10.1145/3487568). Every number here is traceable to a specific table or data file in paper/; nothing is estimated or invented.",
   "_paper": "Williams et al., ACM TOSEM 2021, doi:10.1145/3487568",
-
   "_provenance": {
-    "per_feature": "paper/results/code_removal.csv — the 25 per-feature data points plotted in the paper's 'Code reduction per feature' figure. Columns: 'LOC (our approach)' = PRAT, 'LOC (manual)' = build-flag deactivation alone.",
-    "whole_program": "Table 4, 'Code reduction for target programs' (paper/tab_codereduction.tex) — whole-program LOC and binary size with ALL optional features removed. These are NOT per-feature numbers.",
-    "feature_counts": "Feature Analysis section — build options vs. options that are features by the paper's definition, per codebase.",
-    "_warning": "The paper reports no per-feature line count for FFmpeg, Quiche, rav1e or libaom, and none for an OpenDDS 'SECURITY' feature, an FFmpeg 'x264' feature or a Quiche 'ffdhe' feature. Targets analyzing those carry paper_lines_removed: null. Do not substitute a guess for null — a target with no paper datum is measured, reported, and explicitly not counted as a reproduction."
+    "per_feature": "paper/results/code_removal.csv \u2014 the 25 per-feature data points plotted in the paper's 'Code reduction per feature' figure. Columns: 'LOC (our approach)' = PRAT, 'LOC (manual)' = build-flag deactivation alone.",
+    "whole_program": "Table 4, 'Code reduction for target programs' (paper/tab_codereduction.tex) \u2014 whole-program LOC and binary size with ALL optional features removed. These are NOT per-feature numbers.",
+    "feature_counts": "Feature Analysis section \u2014 build options vs. options that are features by the paper's definition, per codebase.",
+    "_warning": "The paper reports no per-feature line count for FFmpeg, Quiche, rav1e or libaom, and none for an OpenDDS 'SECURITY' feature, an FFmpeg 'x264' feature or a Quiche 'ffdhe' feature. Targets analyzing those carry paper_lines_removed: null. Do not substitute a guess for null \u2014 a target with no paper datum is measured, reported, and explicitly not counted as a reproduction."
   },
-
   "_metric": "PRAT reports |D_f| = |L_all \\ L_f|: source lines executed with the feature enabled and not executed with it disabled, summed over files shared by both builds and files present only in the enabled build. This is the quantity the paper's per-feature figure plots.",
-
   "per_feature": {
     "_note": "Exact values from paper/results/code_removal.csv. 'paper_lines_removed' is the paper's PRAT figure; 'paper_lines_manual' is what build-flag deactivation alone achieves, so paper_lines_removed - paper_lines_manual is the additional removal PRAT contributes.",
-
     "mosquitto": {
       "project": "Mosquitto",
       "build_system": "make",
       "features": {
-        "TLS":             { "paper_lines_removed": 790,  "paper_lines_manual": 481 },
-        "systemd":         { "paper_lines_removed": 1,    "paper_lines_manual": 0 },
-        "Bridge":          { "paper_lines_removed": 640,  "paper_lines_manual": 0 },
-        "Wrap":            { "paper_lines_removed": 31,   "paper_lines_manual": 0 },
-        "Persistence":     { "paper_lines_removed": 68,   "paper_lines_manual": 0 },
-        "Websockets":      { "paper_lines_removed": 721,  "paper_lines_manual": 638 },
-        "Memory_Tracking": { "paper_lines_removed": 74,   "paper_lines_manual": 0 },
-        "TLS_PSK":         { "paper_lines_removed": 1006, "paper_lines_manual": 481 },
-        "EPOLL":           { "paper_lines_removed": 135,  "paper_lines_manual": 0 },
-        "UUID":            { "paper_lines_removed": 7,    "paper_lines_manual": 0 },
-        "SYS_TREE":        { "paper_lines_removed": 30,   "paper_lines_manual": 0 }
+        "TLS": {
+          "paper_lines_removed": 790,
+          "paper_lines_manual": 481
+        },
+        "systemd": {
+          "paper_lines_removed": 1,
+          "paper_lines_manual": 0
+        },
+        "Bridge": {
+          "paper_lines_removed": 640,
+          "paper_lines_manual": 0
+        },
+        "Wrap": {
+          "paper_lines_removed": 31,
+          "paper_lines_manual": 0
+        },
+        "Persistence": {
+          "paper_lines_removed": 68,
+          "paper_lines_manual": 0
+        },
+        "Websockets": {
+          "paper_lines_removed": 721,
+          "paper_lines_manual": 638
+        },
+        "Memory_Tracking": {
+          "paper_lines_removed": 74,
+          "paper_lines_manual": 0
+        },
+        "TLS_PSK": {
+          "paper_lines_removed": 1006,
+          "paper_lines_manual": 481
+        },
+        "EPOLL": {
+          "paper_lines_removed": 135,
+          "paper_lines_manual": 0
+        },
+        "UUID": {
+          "paper_lines_removed": 7,
+          "paper_lines_manual": 0
+        },
+        "SYS_TREE": {
+          "paper_lines_removed": 30,
+          "paper_lines_manual": 0
+        }
       }
     },
-
     "azure-uamqp-c": {
       "project": "azure-uamqp-c",
       "build_system": "cmake",
       "features": {
-        "use_http":            { "paper_lines_removed": 22,   "paper_lines_manual": 4 },
-        "memory_trace":        { "paper_lines_removed": 94,   "paper_lines_manual": 0 },
-        "use_wsio":            { "paper_lines_removed": 26,   "paper_lines_manual": 0 },
-        "use_mbedtls":         { "paper_lines_removed": 5,    "paper_lines_manual": 0 },
-        "use_default_uuid":    { "paper_lines_removed": 0,    "paper_lines_manual": 0 },
-        "no_logging":          { "paper_lines_removed": 1614, "paper_lines_manual": 79 },
-        "use_condition":       { "paper_lines_removed": 0,    "paper_lines_manual": 0 },
-        "use_wolfssl":         { "paper_lines_removed": 1443, "paper_lines_manual": 855 },
-        "use_builtin_httpapi": { "paper_lines_removed": 1,    "paper_lines_manual": 0 }
+        "use_http": {
+          "paper_lines_removed": 22,
+          "paper_lines_manual": 4
+        },
+        "memory_trace": {
+          "paper_lines_removed": 94,
+          "paper_lines_manual": 0
+        },
+        "use_wsio": {
+          "paper_lines_removed": 26,
+          "paper_lines_manual": 0
+        },
+        "use_mbedtls": {
+          "paper_lines_removed": 5,
+          "paper_lines_manual": 0
+        },
+        "use_default_uuid": {
+          "paper_lines_removed": 0,
+          "paper_lines_manual": 0
+        },
+        "no_logging": {
+          "paper_lines_removed": 1614,
+          "paper_lines_manual": 79
+        },
+        "use_condition": {
+          "paper_lines_removed": 0,
+          "paper_lines_manual": 0
+        },
+        "use_wolfssl": {
+          "paper_lines_removed": 1443,
+          "paper_lines_manual": 855
+        },
+        "use_builtin_httpapi": {
+          "paper_lines_removed": 1,
+          "paper_lines_manual": 0
+        }
       }
     },
-
     "opendds": {
       "project": "OpenDDS",
       "build_system": "mpc",
       "features": {
-        "persistence-profile":       { "paper_lines_removed": 1001, "paper_lines_manual": 22 },
-        "ownership-kind-exclusive":  { "paper_lines_removed": 24,   "paper_lines_manual": 3 },
-        "query-condition":           { "paper_lines_removed": 143,  "paper_lines_manual": 32 },
-        "content-filtered-topic":    { "paper_lines_removed": 73,   "paper_lines_manual": 64 },
-        "ownership-profile":         { "paper_lines_removed": 24,   "paper_lines_manual": 8 }
+        "persistence-profile": {
+          "paper_lines_removed": 1001,
+          "paper_lines_manual": 22
+        },
+        "ownership-kind-exclusive": {
+          "paper_lines_removed": 24,
+          "paper_lines_manual": 3
+        },
+        "query-condition": {
+          "paper_lines_removed": 143,
+          "paper_lines_manual": 32
+        },
+        "content-filtered-topic": {
+          "paper_lines_removed": 73,
+          "paper_lines_manual": 64
+        },
+        "ownership-profile": {
+          "paper_lines_removed": 24,
+          "paper_lines_manual": 8
+        }
       }
     }
   },
-
   "whole_program": {
     "_note": "Table 4. 'all_features' is the reference build; 'manual' disables every optional feature via build flags; 'prat' additionally removes the mapped feature code. Validate a --batch run against these: |union of D_f| should approach (all_features_loc - prat_loc).",
-    "Mosquitto":     { "all_features_loc": 18983,   "manual_loc": 18345,  "prat_loc": 14273,  "all_features_bytes": 1655112,  "manual_bytes": 1245648,  "prat_bytes": 498156 },
-    "azure-uamqp-c": { "all_features_loc": 49629,   "manual_loc": 49311,  "prat_loc": 35293,  "all_features_bytes": 1250716,  "manual_bytes": 749564,   "prat_bytes": 701524 },
-    "OpenDDS":       { "all_features_loc": 207936,  "manual_loc": 206514, "prat_loc": 202498, "all_features_bytes": 47176232, "manual_bytes": 46995256, "prat_bytes": 39786816 },
-    "Quiche":        { "all_features_loc": 488247,  "manual_loc": 479545, "prat_loc": 476771, "all_features_bytes": 20237216, "manual_bytes": 12714298, "prat_bytes": 10533152 },
-    "FFmpeg":        { "all_features_loc": 1122317, "manual_loc": 945890, "prat_loc": 674620, "all_features_bytes": 30400928, "manual_bytes": 26057568, "prat_bytes": 19361728 },
-    "rav1e":         { "all_features_loc": 130010,  "manual_loc": 128950, "prat_loc": 128054, "all_features_bytes": 24480350, "manual_bytes": 20382662, "prat_bytes": 18060592 },
-    "libaom":        { "all_features_loc": 344554,  "manual_loc": 336944, "prat_loc": 309216, "all_features_bytes": 3517928,  "manual_bytes": 3444112,  "prat_bytes": 3188680 }
+    "Mosquitto": {
+      "all_features_loc": 18983,
+      "manual_loc": 18345,
+      "prat_loc": 14273,
+      "all_features_bytes": 1655112,
+      "manual_bytes": 1245648,
+      "prat_bytes": 498156
+    },
+    "azure-uamqp-c": {
+      "all_features_loc": 49629,
+      "manual_loc": 49311,
+      "prat_loc": 35293,
+      "all_features_bytes": 1250716,
+      "manual_bytes": 749564,
+      "prat_bytes": 701524
+    },
+    "OpenDDS": {
+      "all_features_loc": 207936,
+      "manual_loc": 206514,
+      "prat_loc": 202498,
+      "all_features_bytes": 47176232,
+      "manual_bytes": 46995256,
+      "prat_bytes": 39786816
+    },
+    "Quiche": {
+      "all_features_loc": 488247,
+      "manual_loc": 479545,
+      "prat_loc": 476771,
+      "all_features_bytes": 20237216,
+      "manual_bytes": 12714298,
+      "prat_bytes": 10533152
+    },
+    "FFmpeg": {
+      "all_features_loc": 1122317,
+      "manual_loc": 945890,
+      "prat_loc": 674620,
+      "all_features_bytes": 30400928,
+      "manual_bytes": 26057568,
+      "prat_bytes": 19361728
+    },
+    "rav1e": {
+      "all_features_loc": 130010,
+      "manual_loc": 128950,
+      "prat_loc": 128054,
+      "all_features_bytes": 24480350,
+      "manual_bytes": 20382662,
+      "prat_bytes": 18060592
+    },
+    "libaom": {
+      "all_features_loc": 344554,
+      "manual_loc": 336944,
+      "prat_loc": 309216,
+      "all_features_bytes": 3517928,
+      "manual_bytes": 3444112,
+      "prat_bytes": 3188680
+    }
   },
-
   "feature_counts": {
     "_note": "Feature Analysis section: build options exposed vs. options that are features by the paper's definition. The paper's feature identification found all 115 true features with 1 false positive (a shared-library option with no associated source).",
-    "Mosquitto":     { "build_options": 20, "features": 19 },
-    "azure-uamqp-c": { "build_options": 32, "features": 16 },
-    "OpenDDS":       { "build_options": 10, "features": 9 },
-    "Quiche":        { "build_options": 5,  "features": 4 },
-    "FFmpeg":        { "build_options": 34, "features": 33 },
-    "rav1e":         { "build_options": 16, "features": 14 },
-    "libaom":        { "build_options": 26, "features": 20 },
+    "Mosquitto": {
+      "build_options": 20,
+      "features": 19
+    },
+    "azure-uamqp-c": {
+      "build_options": 32,
+      "features": 16
+    },
+    "OpenDDS": {
+      "build_options": 10,
+      "features": 9
+    },
+    "Quiche": {
+      "build_options": 5,
+      "features": 4
+    },
+    "FFmpeg": {
+      "build_options": 34,
+      "features": 33
+    },
+    "rav1e": {
+      "build_options": 16,
+      "features": 14
+    },
+    "libaom": {
+      "build_options": 26,
+      "features": 20
+    },
     "total_features": 115,
     "false_positives": 1,
     "false_negatives": 0,
-    "unsupported": { "count": 7, "reason": "2 Windows-specific, 5 triggered compilation bugs unrelated to PRAT" }
+    "unsupported": {
+      "count": 7,
+      "reason": "2 Windows-specific, 5 triggered compilation bugs unrelated to PRAT"
+    }
   },
-
   "other_reported_values": {
     "_note": "Additional paper figures a reproduction can check.",
     "klee_line_coverage_pct": 80.2,
@@ -99,13 +238,13 @@
     "fuzzing_function_coverage_pct_min": 80.1,
     "fuzzing_line_coverage_pct_min": 59.9
   },
-
   "targets": {
-    "_note": "Docker demo targets. 'paper_lines_removed' is present ONLY where the paper reports a value for that exact feature; otherwise it is null and 'paper_feature' is false. Tolerances are wide because the paper's numbers come from KLEE-enhanced coverage over a 60-minute budget against the versions available in 2021; a local run uses whatever tests ship with the pinned version.",
-
+    "_note": "Source-pinned compatibility targets. 'paper_lines_removed' is present ONLY where the paper reports a value for that exact feature; otherwise it is null and 'paper_feature' is false. The paper does not publish its source commits, so these later pinned releases cannot establish exact numerical reproduction. Strict validation checks provenance, dynamic execution, exact mapped-line removal, and post-removal verification. No modern target has an invented numerical acceptance range.",
     "mosquitto-tls": {
       "project": "Mosquitto",
+      "project_id": "mosquitto",
       "version": "v2.0.15",
+      "commit": "b0277869d9806f6fab8e1bc11c4a4987c9a79ded",
       "feature": "TLS",
       "analyzed_feature": "TLS",
       "paper_feature": true,
@@ -113,17 +252,22 @@
       "paper_lines_removed": 790,
       "paper_lines_manual": 481,
       "paper_source": "paper/results/code_removal.csv (Mosquitto,TLS)",
-      "tolerance_pct": 100,
-      "min_acceptable": 200,
-      "max_acceptable": 2400,
-      "key_files": ["net.c", "tls_mosq.c", "net_mosq.c"],
+      "tolerance_pct": null,
+      "min_acceptable": null,
+      "max_acceptable": null,
+      "key_files": [
+        "net.c",
+        "tls_mosq.c",
+        "net_mosq.c"
+      ],
       "docker_demo": "demo1",
-      "notes": "Paper value 790 was produced with KLEE-generated tests; without them, coverage of TLS paths is narrower and |D_f| is expected at the lower end."
+      "notes": "Paper value 790 was produced with KLEE-generated tests. This later source-pinned target reports its observed value and deviation without treating the historical number as an acceptance threshold."
     },
-
     "mosquitto-bridge": {
       "project": "Mosquitto",
+      "project_id": "mosquitto",
       "version": "v2.0.15",
+      "commit": "b0277869d9806f6fab8e1bc11c4a4987c9a79ded",
       "feature": "BRIDGE",
       "analyzed_feature": "Bridge",
       "paper_feature": true,
@@ -131,17 +275,21 @@
       "paper_lines_removed": 640,
       "paper_lines_manual": 0,
       "paper_source": "paper/results/code_removal.csv (Mosquitto,Bridge)",
-      "tolerance_pct": 100,
-      "min_acceptable": 150,
-      "max_acceptable": 1900,
-      "key_files": ["bridge.c", "handle_connect.c"],
+      "tolerance_pct": null,
+      "min_acceptable": null,
+      "max_acceptable": null,
+      "key_files": [
+        "bridge.c",
+        "handle_connect.c"
+      ],
       "docker_demo": "demo2",
       "notes": "The paper's manual figure is 0: no build flag removes any Bridge code, so the entire 640 is code PRAT finds that flag-flipping does not."
     },
-
     "uamqp-websockets": {
       "project": "azure-uamqp-c",
-      "version": "2024-01-22",
+      "project_id": "azure-uamqp-c",
+      "version": "v1.2.0",
+      "commit": "9701f09a4db40afb53f5086662be64e8fac78bbf",
       "feature": "use_wsio",
       "analyzed_feature": "use_wsio",
       "paper_feature": true,
@@ -149,34 +297,42 @@
       "paper_lines_removed": 26,
       "paper_lines_manual": 0,
       "paper_source": "paper/results/code_removal.csv (azure-uamqp-c,use_wsio)",
-      "tolerance_pct": 400,
-      "min_acceptable": 0,
-      "max_acceptable": 1500,
-      "key_files": ["wsio.c", "uws_client.c"],
+      "tolerance_pct": null,
+      "min_acceptable": null,
+      "max_acceptable": null,
+      "key_files": [
+        "wsio.c",
+        "uws_client.c"
+      ],
       "docker_demo": "demo4",
-      "notes": "The paper's option is 'use_wsio' (not 'USE_WEBSOCKETS', which is not a build option in this codebase). The paper's 26 lines are interleaved code only; the pinned version is much newer than the 2021 one, so a larger count is expected and is version drift rather than disagreement."
+      "notes": "The paper's option is 'use_wsio' (not 'USE_WEBSOCKETS'). The published 26-line value is shown as a historical reference; the paper does not identify the evaluated source revision, so this later pinned release is not assigned an invented acceptance range."
     },
-
     "ffmpeg-dca": {
       "project": "FFmpeg",
+      "project_id": "FFmpeg",
       "version": "n5.1.4",
+      "commit": "4729204c17f756e186d622060088371d10b34f7e",
       "feature": "decoder=dca",
       "analyzed_feature": "decoder=dca",
       "paper_feature": false,
       "build_system": "autotools",
       "paper_lines_removed": null,
-      "paper_source": "none — the paper reports no per-feature line count for FFmpeg",
+      "paper_source": "none \u2014 the paper reports no per-feature line count for FFmpeg",
       "tolerance_pct": null,
       "min_acceptable": null,
       "max_acceptable": null,
-      "key_files": ["dcadec.c", "dca_core.c"],
+      "key_files": [
+        "dcadec.c",
+        "dca_core.c"
+      ],
       "docker_demo": "demo3",
       "notes": "Exercises PRAT on a self-contained in-tree FFmpeg decoder. The paper's FFmpeg evaluation is whole-program (Table 4) and lists no individual FFmpeg feature, so this target has no paper value to reproduce; it is reported as an observed measurement only. An 'x264' target is not viable regardless: x264's removable code lives in the external libx264 library, which FFmpeg only links."
     },
-
     "opendds-content-filtered-topic": {
       "project": "OpenDDS",
+      "project_id": "OpenDDS",
       "version": "DDS-3.25",
+      "commit": "2038b660f2037fb0758dbf106005d77f3b2d52f8",
       "feature": "content-filtered-topic",
       "analyzed_feature": "content-filtered-topic",
       "paper_feature": true,
@@ -184,46 +340,78 @@
       "paper_lines_removed": 73,
       "paper_lines_manual": 64,
       "paper_source": "paper/results/code_removal.csv (OpenDDS,content-filtered-topic)",
-      "tolerance_pct": 400,
-      "min_acceptable": 0,
-      "max_acceptable": 2000,
-      "key_files": ["ContentFilteredTopic", "dds/DCPS"],
+      "tolerance_pct": null,
+      "min_acceptable": null,
+      "max_acceptable": null,
+      "key_files": [
+        "ContentFilteredTopic",
+        "dds/DCPS"
+      ],
       "docker_demo": "demo5",
       "notes": "Replaces the previous 'SECURITY' target, which is not a feature the paper analyzed and had no paper value. content-filtered-topic is a real ./configure switch in DDS-3.25 and one of the paper's five OpenDDS features."
     },
-
     "quiche-qlog": {
       "project": "Quiche",
+      "project_id": "quiche",
       "version": "0.20.1",
+      "commit": "dae27b7d5a0dcf8304a56ffd295399fc00ec03e9",
       "feature": "qlog",
       "analyzed_feature": "qlog",
       "paper_feature": false,
       "build_system": "cargo",
       "paper_lines_removed": null,
-      "paper_source": "none — the paper reports no per-feature line count for Quiche",
+      "paper_source": "none \u2014 the paper reports no per-feature line count for Quiche",
       "tolerance_pct": null,
       "min_acceptable": null,
       "max_acceptable": null,
-      "key_files": ["src/"],
+      "key_files": [
+        "src/"
+      ],
       "docker_demo": "demo6",
-      "notes": "The paper's Quiche evaluation is whole-program (Table 4) and names no individual Quiche feature. 'ffdhe' is not a Cargo feature in any quiche release — it is a BoringSSL TLS config — so it cannot be toggled by Cargo at all. 'qlog' is a real feature with ~63 cfg sites exercised by the crate's own tests, so it exercises the Rust path end to end; the number is observational."
+      "notes": "The paper's Quiche evaluation is whole-program (Table 4) and names no individual Quiche feature. 'ffdhe' is not a Cargo feature in any quiche release \u2014 it is a BoringSSL TLS config \u2014 so it cannot be toggled by Cargo at all. 'qlog' is a real feature with ~63 cfg sites exercised by the crate's own tests, so it exercises the Rust path end to end; the number is observational."
     },
-
+    "rav1e-serialize": {
+      "project": "rav1e",
+      "project_id": "rav1e",
+      "version": "v0.7.1",
+      "commit": "a8d05d0c43826a465b60dbadd0ab7f1327d75371",
+      "feature": "serialize",
+      "analyzed_feature": "serialize",
+      "paper_feature": false,
+      "build_system": "cargo",
+      "paper_lines_removed": null,
+      "paper_source": "none \u2014 the paper reports no per-feature line count for rav1e",
+      "tolerance_pct": null,
+      "min_acceptable": null,
+      "max_acceptable": null,
+      "key_files": [
+        "src/api/util.rs",
+        "src/stats.rs"
+      ],
+      "docker_demo": "demo8",
+      "notes": "Completes compatibility coverage of all seven paper codebases. The paper publishes only rav1e's whole-program result; serialize is a real non-default Cargo feature and is reported as an observational measurement."
+    },
     "aom-encoder": {
       "project": "AOM (libaom)",
+      "project_id": "aom",
       "version": "v3.7.1",
+      "commit": "aca387522ccc0a1775716923d5489dd2d4b1e628",
       "feature": "CONFIG_AV1_ENCODER",
       "analyzed_feature": "CONFIG_AV1_ENCODER",
       "paper_feature": false,
       "build_system": "cmake",
       "paper_lines_removed": null,
-      "paper_source": "none — the paper reports no per-feature line count for libaom",
+      "paper_source": "none \u2014 the paper reports no per-feature line count for libaom",
       "tolerance_pct": null,
       "min_acceptable": null,
       "max_acceptable": null,
-      "key_files": ["av1/encoder", "aom_dsp"],
+      "key_files": [
+        "av1/encoder",
+        "aom_dsp"
+      ],
       "docker_demo": "demo7",
       "notes": "libaom's whole-program result is in Table 4; no individual libaom feature is reported. CONFIG_AV1_ENCODER is a real libaom toggle and the largest one, so it is a useful scale test, but the count is observational."
     }
-  }
+  },
+  "_validation_policy": "The paper does not publish exact source revisions, so modern compatibility targets have no numerical acceptance range. Validators report the published value and deviation but certify only provenance, execution, mapping, removal, and verification evidence. Exact numerical reproduction requires the unavailable historical inputs."
 }

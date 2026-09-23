@@ -9,6 +9,7 @@ feature, and output directory, and it runs the same package workflow that the
 
 import argparse
 import json
+import os
 import platform
 import subprocess
 import sys
@@ -68,6 +69,7 @@ def _write_manifest(
 
     manifest = {
         "created_at": datetime.now(timezone.utc).isoformat(),
+        "run_id": os.environ.get("PRAT_RUN_ID"),
         "tool": "PRAT",
         "project_path": str(project_path),
         "project_name": project_path.name,
@@ -126,7 +128,17 @@ def main() -> int:
     parser.add_argument(
         "--symbolic",
         action="store_true",
-        help="Generate experimental KLEE symbolic tests",
+        help="Generate KLEE symbolic tests and include them in T",
+    )
+    parser.add_argument(
+        "--remove",
+        action="store_true",
+        help="Remove the mapped feature code after analysis",
+    )
+    parser.add_argument(
+        "--no-verify",
+        action="store_true",
+        help="Skip post-removal rebuild and test replay",
     )
     args = parser.parse_args()
 
@@ -154,6 +166,8 @@ def main() -> int:
         output_dir=str(output_dir),
         adapter=adapter,
         symbolic=args.symbolic,
+        remove=args.remove,
+        verify=not args.no_verify,
     )
 
     _write_manifest(output_dir, project_path, args.feature, result)

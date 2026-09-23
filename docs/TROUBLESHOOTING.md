@@ -299,9 +299,9 @@ This is normal for large projects. Consider:
 
 ## Validation Issues
 
-### Results Don't Match Expected Range
+### Observed Count Differs from the Paper
 
-**Symptom:** `Within range: NO`
+**Symptom:** The source-pinned result differs from the historical paper value.
 
 **Diagnosis:**
 1. Project version may differ
@@ -309,13 +309,12 @@ This is normal for large projects. Consider:
 3. Feature implementation changed
 
 **Solution:**
-This is informational - verify results manually:
+Use strict validation to verify provenance, dynamic execution, mapped-line
+removal, and post-removal behavior. The paper does not publish its exact source
+revision, so the artifact does not invent a numerical acceptance range:
 ```bash
-# Check key files were analyzed
-grep "tls_mosq.c" demo_output/mosquitto-tls/workflow_checkpoint.json
-
-# Inspect HTML report
-open demo_output/mosquitto-tls/*.html
+python3 scripts/validate_paper_results.py demo_output \
+  --target mosquitto-tls --strict
 ```
 
 ### Key Files Missing

@@ -49,7 +49,7 @@ class UamqpAdapter(ProjectAdapter):
             "-B", "build",
             f"-D{feature}={flag_value}",
             "-DCMAKE_BUILD_TYPE=Debug",
-            "-Drun_unittests=OFF",
+            "-Drun_unittests=ON",
             # The bundled samples (e.g. websockets_sample) link directly against
             # wsio symbols, so a use_wsio=OFF build fails at link time unless we
             # skip them. Samples are not part of the library under analysis.
@@ -74,7 +74,7 @@ class UamqpAdapter(ProjectAdapter):
         return [configure, build]
 
     def get_clean_command(self) -> list[str]:
-        return ["rm", "-rf", "build"]
+        return ["cmake", "-E", "remove_directory", "build"]
 
     def get_test_command(self) -> list[str] | None:
         return ["cmake", "--build", "build", "--target", "test"]
@@ -90,7 +90,10 @@ class UamqpAdapter(ProjectAdapter):
 
     def get_execution_commands(self, feature: str, enabled: bool) -> list[list[str]]:
         # azure-uamqp-c has unit tests via ctest
-        return [["ctest", "--test-dir", "build", "--output-on-failure"]]
+        return [[
+            "ctest", "--test-dir", "build", "--output-on-failure",
+            "--no-tests=error",
+        ]]
 """
 Known features for azure-uamqp-c:
   - use_wsio: WebSocket transport layer

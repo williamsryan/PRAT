@@ -23,10 +23,9 @@ against a slightly different L_all.
 
 *The baseline has all features enabled.* B_all enables every discovered feature
 and B_i enables all but f_i, so D_i isolates f_i against a fully-featured
-program rather than against whatever the project's defaults happen to be. When
-the all-features build does not compile — mutually exclusive options make this
-possible, and the paper reports discarding such options — the baseline falls
-back to project defaults and the result records that it did.
+program rather than against whatever the project's defaults happen to be. A
+failed B_all aborts the run; substituting project defaults would change
+Algorithm 1's semantics.
 
 Build options whose disabled build fails to compile are discarded, as the paper
 specifies, and reported separately from options that mapped to zero lines.
@@ -34,8 +33,12 @@ specifies, and reported separately from options that mapped to zero lines.
 
 from __future__ import annotations
 
+import json
+import os
+import subprocess
 import time
-from dataclasses import dataclass, field
+import uuid
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from .adapters import ProjectAdapter, get_adapter
@@ -49,13 +52,25 @@ from .coverage import (
     CoverageResult,
     generate_coverage,
     generate_coverage_with_adapter,
+    test_plan_digest,
 )
 from .discovery import Feature, discover_features
 from .extraction import ExtractionResult, extract_from_mapping
 from .feature_graph import build_feature_graph, generate_feature_graph_html
 from .gcov import load_coverage_dir
 from .mapping import FeatureMapping, coverage_percent, map_feature_from_coverage
-from .symbolic import KleeConfig, check_klee_available, generate_symbolic_tests
+from .removal import RemovalResult, remove_feature_code, restore_from_backup
+from .symbolic import (
+    KleeConfig,
+    SymbolicResult,
+    check_klee_available,
+    generate_symbolic_tests,
+)
+from .verification import (
+    VerificationResult,
+    capture_reference_outputs,
+    verify_correctness,
+)
 
 
 @dataclass
@@ -70,6 +85,9 @@ class FeatureAnalysis:
     build_time: float = 0.0
     #: Set when this feature's build failed and the option was discarded.
     discarded_reason: str | None = None
+    #: Pipeline stage responsible for a discarded or failed analysis.
+    failure_stage: str | None = None
+    coverage: CoverageResult | None = None
 
     @property
     def analyzed(self) -> bool:
@@ -110,7 +128,15 @@ class BatchResult:
     baseline_note: str | None = None
     #: Line coverage achieved by T against B_all.
     baseline_coverage_percent: float | None = None
+    baseline_coverage: CoverageResult | None = None
     symbolic_test_count: int = 0
+    removal_result: RemovalResult | None = None
+    verification_result: VerificationResult | None = None
+    batch_checkpoint_path: str | None = None
+    mapping_build_states: list[dict[str, bool]] = field(default_factory=list)
+    run_id: str | None = None
+    source_commit: str | None = None
+    feature_names: list[str] = field(default_factory=list)
 
     @property
     def union_removable_lines(self) -> int:
@@ -139,6 +165,8 @@ def run_batch_analysis(
     symbolic: bool = False,
     klee_config: KleeConfig | None = None,
     all_features_baseline: bool = True,
+    remove: bool = False,
+    verify: bool = True,
 ) -> BatchResult:
     """
     Run Algorithm 1 for every discovered feature in a project.
@@ -155,6 +183,8 @@ def run_batch_analysis(
         all_features_baseline: Compile B_all with every discovered feature
             enabled. Disable to use the project's default configuration as the
             baseline instead.
+        remove: Remove the union of every successfully mapped D_f.
+        verify: Rebuild and rerun the same test commands after union removal.
 
     Returns:
         BatchResult with per-feature mappings and a cross-feature map.
@@ -164,6 +194,8 @@ def run_batch_analysis(
 
     if output_dir is None:
         output_dir = project_path
+    checkpoint_path = Path(output_dir) / "batch_checkpoint.json"
+    checkpoint_path.unlink(missing_ok=True)
 
     skip_set = set(skip_features or ())
 
@@ -173,13 +205,27 @@ def run_batch_analysis(
 
     if adapter is None:
         adapter = get_adapter(project_path)
+    if adapter is None:
+        return _finalize_batch_result(BatchResult(
+            success=False,
+            project=project_name,
+            features_discovered=0,
+            features_analyzed=0,
+            features_failed=0,
+            total_removable_lines=0,
+            total_time=time.time() - start_time,
+            error_message=(
+                "No project adapter can execute and validate this build system; "
+                "refusing to produce compile-only coverage"
+            ),
+        ), output_dir, start_time)
 
     # --- F <- feature identification ---------------------------------------
     print("[1] Discovering features...")
-    features = discover_features(project_path)
+    features = discover_features(project_path, adapter=adapter)
 
     if not features:
-        return BatchResult(
+        return _finalize_batch_result(BatchResult(
             success=False,
             project=project_name,
             features_discovered=0,
@@ -188,7 +234,7 @@ def run_batch_analysis(
             total_removable_lines=0,
             total_time=time.time() - start_time,
             error_message="No features discovered",
-        )
+        ), output_dir, start_time)
 
     active = [f for f in features if f.name not in skip_set]
 
@@ -200,7 +246,7 @@ def run_batch_analysis(
         print(f"      [{status}] {feature.name}{description}")
 
     if not active:
-        return BatchResult(
+        return _finalize_batch_result(BatchResult(
             success=False,
             project=project_name,
             features_discovered=len(features),
@@ -209,7 +255,7 @@ def run_batch_analysis(
             total_removable_lines=0,
             total_time=time.time() - start_time,
             error_message="All discovered features were skipped",
-        )
+        ), output_dir, start_time)
 
     result = BatchResult(
         success=False,
@@ -218,11 +264,20 @@ def run_batch_analysis(
         features_analyzed=0,
         features_failed=0,
         total_removable_lines=0,
+        run_id=os.environ.get("PRAT_RUN_ID") or str(uuid.uuid4()),
     )
 
     # --- S <- SymbolicTestGeneration(P); T <- U u S -------------------------
     symbolic_tests: list[str] = []
+    symbolic_result_obj: SymbolicResult | None = None
     if symbolic:
+        if adapter.build_system == BuildSystem.CARGO:
+            result.error_message = (
+                "The KLEE symbolic-test path supports C/C++ LLVM bitcode, not "
+                "Cargo/Rust projects; refusing to label this run as the full "
+                "paper algorithm"
+            )
+            return _finalize_batch_result(result, output_dir, start_time)
         print("\n[2] Generating symbolic test set S (KLEE)...")
         local = check_klee_available(use_docker=False)
         if local or check_klee_available(use_docker=True):
@@ -233,43 +288,68 @@ def run_batch_analysis(
                 use_docker=not local,
                 replay=False,
             )
+            symbolic_result_obj = symbolic_result
             if symbolic_result.success:
                 symbolic_tests = list(symbolic_result.test_cases)
                 result.symbolic_test_count = symbolic_result.test_count
                 print(f"    Generated {symbolic_result.test_count} test case(s); "
                       f"T = U u S")
             else:
-                print(f"    Symbolic generation failed, T = U only: "
-                      f"{symbolic_result.error_message}")
+                result.error_message = (
+                    "Symbolic generation was requested but failed: "
+                    f"{symbolic_result.error_message}"
+                )
+                return _finalize_batch_result(result, output_dir, start_time)
         else:
-            print("    KLEE not available — T = U only")
+            result.error_message = (
+                "Symbolic generation was requested but KLEE is unavailable "
+                "locally and the prat-klee:latest image is not installed"
+            )
+            return _finalize_batch_result(result, output_dir, start_time)
     else:
         print("\n[2] Symbolic test generation not requested — T = U")
 
     all_names = [f.name for f in active]
+    result.feature_names = list(all_names)
+    result.source_commit = _git_commit(project_path)
+    fixed_test_commands = _all_feature_test_commands(adapter, all_names)
+    plan_commands = fixed_test_commands or (
+        [["adapter-managed-coverage-tests"]]
+        if adapter.coverage_command_executes_tests()
+        else []
+    )
+    workload_plan_id = test_plan_digest(plan_commands, symbolic_tests)
 
     # --- B_all <- Compile(P); L_all <- CoverageAnalysis(B_all, T) -----------
     print("\n[3] Building baseline B_all and collecting L_all...")
     baseline_cov, baseline_note, used_all = _build_baseline(
         adapter, project_path, all_names, run_tests, build_system,
         output_dir, symbolic_tests, all_features_baseline,
+        execution_commands=fixed_test_commands,
+        test_plan_id=workload_plan_id,
+    )
+    result.mapping_build_states.append(
+        {name: True for name in all_names}
+        if all_features_baseline
+        else {}
     )
     result.builds_performed += 1
     result.baseline_all_features = used_all
     result.baseline_note = baseline_note
+    result.baseline_coverage = baseline_cov
 
     if baseline_cov is None:
         result.error_message = baseline_note or "Baseline build failed"
-        result.total_time = time.time() - start_time
         print(f"    [!] {result.error_message}")
-        return result
+        return _finalize_batch_result(result, output_dir, start_time)
 
-    baseline_coverage = load_coverage_dir(baseline_cov)
+    baseline_coverage = load_coverage_dir(baseline_cov.coverage_dir)
     if not baseline_coverage:
-        result.error_message = f"No parseable coverage in baseline {baseline_cov}"
-        result.total_time = time.time() - start_time
+        result.error_message = (
+            f"No parseable coverage in baseline {baseline_cov.coverage_dir}"
+        )
         print(f"    [!] {result.error_message}")
-        return result
+        return _finalize_batch_result(result, output_dir, start_time)
 
     result.baseline_coverage_percent = coverage_percent(baseline_coverage)
     print(f"    L_all: {sum(len(c.executed) for c in baseline_coverage.values())} "
@@ -284,6 +364,7 @@ def run_batch_analysis(
           f"one build each)...\n")
 
     feature_results: dict[str, FeatureAnalysis] = {}
+    result.feature_results = feature_results
 
     for index, feature in enumerate(active, start=1):
         print(f"{'-' * 50}")
@@ -300,12 +381,14 @@ def run_batch_analysis(
             adapter, project_path, feature.name, False,
             run_tests, build_system, states,
         )
+        result.mapping_build_states.append(dict(states or {}))
         result.builds_performed += 1
 
         if not compilation.success:
             # Algorithm 1: discard build options that fail to compile.
             reason = compilation.error_message or "compilation failed"
             analysis.discarded_reason = reason
+            analysis.failure_stage = "compilation"
             result.discarded_options[feature.name] = reason
             result.features_failed += 1
             print(f"    [!] Discarded — build failed: {reason.splitlines()[0][:160]}")
@@ -314,17 +397,42 @@ def run_batch_analysis(
         cov = _coverage(
             adapter, project_path, feature.name, False, build_system,
             compilation, output_dir, symbolic_tests, states,
+            execution_commands=fixed_test_commands,
+            test_plan_id=workload_plan_id,
         )
+        analysis.coverage = cov
 
         if not cov.success:
             reason = cov.error_message or "coverage generation failed"
             analysis.discarded_reason = reason
-            result.discarded_options[feature.name] = reason
+            analysis.failure_stage = "coverage"
             result.features_failed += 1
-            print(f"    [!] Discarded — coverage failed: {reason}")
-            continue
+            result.error_message = (
+                f"Coverage failed for {feature.name}; the batch is incomplete: "
+                f"{reason}"
+            )
+            print(f"    [!] {result.error_message}")
+            return _finalize_batch_result(result, output_dir, start_time)
+        if not cov.dynamic_execution:
+            reason = "coverage did not execute the test set T"
+            analysis.discarded_reason = reason
+            analysis.failure_stage = "execution"
+            result.features_failed += 1
+            result.error_message = (
+                f"Coverage failed for {feature.name}; {reason}"
+            )
+            print(f"    [!] {result.error_message}")
+            return _finalize_batch_result(result, output_dir, start_time)
 
         disabled_coverage = load_coverage_dir(cov.coverage_dir)
+        if not disabled_coverage:
+            analysis.discarded_reason = "coverage contained no parseable files"
+            analysis.failure_stage = "coverage"
+            result.features_failed += 1
+            result.error_message = (
+                f"Coverage failed for {feature.name}; no parseable files"
+            )
+            return _finalize_batch_result(result, output_dir, start_time)
         mapping = map_feature_from_coverage(
             feature.name, baseline_coverage, disabled_coverage
         )
@@ -356,13 +464,242 @@ def run_batch_analysis(
             generate_feature_graph_html(graph, graph_path)
             result.feature_graph_path = graph_path
         except Exception as exc:  # noqa: BLE001 - graph is a view, not the result
-            print(f"    [!] Failed to generate feature graph: {exc}")
+            result.error_message = f"Failed to generate feature graph: {exc}"
+            print(f"    [!] {result.error_message}")
+            return _finalize_batch_result(result, output_dir, start_time)
+
+    if remove:
+        if adapter is None:
+            result.error_message = "Batch union removal requires a project adapter"
+            return _finalize_batch_result(result, output_dir, start_time)
+
+        union = _union_extraction(feature_results)
+        disabled_states = {name: False for name in all_names}
+        print("\n[6] Building all-features-disabled reference configuration...")
+        reference_build = compile_with_adapter(
+            adapter,
+            all_names[0],
+            False,
+            run_tests=False,
+            feature_states=disabled_states,
+            with_coverage=False,
+        )
+        result.builds_performed += 1
+        if not reference_build.success:
+            result.error_message = (
+                "Could not build the all-features-disabled reference: "
+                f"{reference_build.error_message}"
+            )
+            return _finalize_batch_result(result, output_dir, start_time)
+
+        test_commands = _all_feature_test_commands(adapter, all_names)
+        try:
+            references = capture_reference_outputs(
+                project_path,
+                adapter=adapter,
+                test_commands=test_commands,
+            )
+        except RuntimeError as exc:
+            result.error_message = str(exc)
+            return _finalize_batch_result(result, output_dir, start_time)
+
+        build_commands = adapter.get_build_commands_for_set(
+            disabled_states, with_coverage=False
+        )
+        print(f"\n[7] Removing union D ({union.total_removable_lines} lines)...")
+        result.removal_result = remove_feature_code(
+            union,
+            project_path,
+            "ALL_SELECTED_FEATURES",
+            rebuild=not verify,
+            build_commands=build_commands,
+        )
+        if not result.removal_result.success:
+            result.error_message = result.removal_result.error_message
+            return _finalize_batch_result(result, output_dir, start_time)
+
+        if verify:
+            print("\n[8] Verifying union removal...")
+            result.verification_result = verify_correctness(
+                project_path,
+                adapter=adapter,
+                build_commands=build_commands,
+                test_commands=test_commands,
+                symbolic_result=symbolic_result_obj,
+                reference_outputs=references,
+            )
+            if not result.verification_result.success:
+                if result.removal_result.backup_dir:
+                    result.removal_result.restored = restore_from_backup(
+                        result.removal_result.backup_dir, project_path
+                    )
+                result.error_message = (
+                    "Union removal verification failed: "
+                    f"{result.verification_result.error_message or ''}"
+                )
+                return _finalize_batch_result(result, output_dir, start_time)
 
     result.total_time = time.time() - start_time
-    result.success = result.features_analyzed > 0
+    result.success = (
+        result.features_analyzed > 0
+        and (result.baseline_all_features or not all_features_baseline)
+    )
 
     _print_summary(result, len(active))
+    return _finalize_batch_result(result, output_dir, start_time)
+
+
+def _union_extraction(
+    feature_results: dict[str, FeatureAnalysis],
+) -> ExtractionResult:
+    """Merge per-feature mappings into the exact union used for removal."""
+    numbers: dict[str, set[int]] = {}
+    contents: dict[str, dict[int, str]] = {}
+    feature_only: set[str] = set()
+
+    for analysis in feature_results.values():
+        extraction = analysis.extraction
+        if extraction is None:
+            continue
+        for path, lines in extraction.file_line_numbers.items():
+            numbers.setdefault(path, set()).update(lines)
+            path_contents = contents.setdefault(path, {})
+            for line, text in zip(
+                lines, extraction.file_line_content.get(path, [])
+            ):
+                path_contents.setdefault(line, text)
+        feature_only.update(extraction.feature_only_source_paths)
+
+    ordered = {path: sorted(lines) for path, lines in sorted(numbers.items())}
+    counts = {path: len(lines) for path, lines in ordered.items()}
+    return ExtractionResult(
+        success=True,
+        file_line_counts=counts,
+        total_removable_lines=sum(counts.values()),
+        file_line_numbers=ordered,
+        file_line_content={
+            path: [contents.get(path, {}).get(line, "") for line in lines]
+            for path, lines in ordered.items()
+        },
+        feature_only_source_paths=sorted(feature_only),
+        feature_only_file_counts={
+            path: counts[path] for path in feature_only if path in counts
+        },
+        feature_only_removable_lines=sum(
+            counts[path] for path in feature_only if path in counts
+        ),
+    )
+
+
+def _all_feature_test_commands(
+    adapter: ProjectAdapter,
+    features: list[str],
+) -> list[list[str]]:
+    """Union adapter test commands without running duplicates."""
+    commands: list[list[str]] = []
+    seen: set[tuple[str, ...]] = set()
+    for feature in features:
+        for enabled in (True, False):
+            for command in adapter.get_execution_commands(feature, enabled):
+                key = tuple(command)
+                if key not in seen:
+                    seen.add(key)
+                    commands.append(command)
+    return commands
+
+
+def _finalize_batch_result(
+    result: BatchResult,
+    output_dir: str,
+    start_time: float,
+) -> BatchResult:
+    """Finish timing and persist success or failure evidence."""
+    result.total_time = time.time() - start_time
+    try:
+        result.batch_checkpoint_path = _save_batch_checkpoint(result, output_dir)
+    except OSError as exc:
+        result.success = False
+        checkpoint_error = f"batch checkpoint could not be saved: {exc}"
+        result.error_message = (
+            f"{result.error_message}; {checkpoint_error}"
+            if result.error_message
+            else checkpoint_error
+        )
     return result
+
+
+def _save_batch_checkpoint(result: BatchResult, output_dir: str) -> str:
+    """Persist reviewer-readable evidence without embedding source text."""
+    path = Path(output_dir) / "batch_checkpoint.json"
+    data = {
+        "success": result.success,
+        "project": result.project,
+        "features_discovered": result.features_discovered,
+        "features_analyzed": result.features_analyzed,
+        "features_failed": result.features_failed,
+        "builds_performed": result.builds_performed,
+        "mapping_build_states": result.mapping_build_states,
+        "run_id": result.run_id,
+        "source_commit": result.source_commit,
+        "feature_names": result.feature_names,
+        "baseline_all_features": result.baseline_all_features,
+        "baseline_coverage_percent": result.baseline_coverage_percent,
+        "baseline_coverage": (
+            asdict(result.baseline_coverage)
+            if result.baseline_coverage
+            else None
+        ),
+        "symbolic_test_count": result.symbolic_test_count,
+        "sum_removable_lines": result.total_removable_lines,
+        "union_removable_lines": result.union_removable_lines,
+        "discarded_options": result.discarded_options,
+        "features": {
+            name: {
+                "analyzed": analysis.analyzed,
+                "removable_lines": analysis.removable_lines,
+                "affected_files": analysis.affected_files,
+                "discarded_reason": analysis.discarded_reason,
+                "failure_stage": analysis.failure_stage,
+                "coverage": (
+                    asdict(analysis.coverage) if analysis.coverage else None
+                ),
+            }
+            for name, analysis in result.feature_results.items()
+        },
+        "removal_result": (
+            asdict(result.removal_result) if result.removal_result else None
+        ),
+        "verification_result": (
+            asdict(result.verification_result)
+            if result.verification_result
+            else None
+        ),
+        "error_message": result.error_message,
+        "total_time": result.total_time,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".json.tmp")
+    temporary.write_text(
+        json.dumps(data, indent=2, default=str),
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+    return str(path)
+
+
+def _git_commit(project_path: str) -> str | None:
+    """Read the analyzed source revision when the project is a git checkout."""
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=project_path,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return proc.stdout.strip() if proc.returncode == 0 else None
 
 
 def _leave_one_out(all_names: list[str], excluded: str) -> dict[str, bool]:
@@ -379,21 +716,26 @@ def _build_baseline(
     output_dir: str,
     symbolic_tests: list[str],
     all_features_baseline: bool,
-) -> tuple[str | None, str | None, bool]:
+    execution_commands: list[list[str]] | None = None,
+    test_plan_id: str | None = None,
+) -> tuple[CoverageResult | None, str | None, bool]:
     """Compile B_all and collect L_all.
 
-    Returns ``(coverage_dir, note, used_all_features)``. When the all-features
-    build fails, retries with the project's default configuration and explains
-    the fallback in ``note`` so the result is not silently a different baseline.
+    Returns ``(coverage_result, note, used_all_features)``. The requested
+    baseline is strict: a B_all failure is not replaced with project defaults.
     """
-    attempts: list[tuple[dict[str, bool] | None, bool, str]] = []
-    if all_features_baseline and adapter is not None:
-        attempts.append(
+    if all_features_baseline:
+        if adapter is None:
+            return (
+                None,
+                "An adapter with explicit feature-set support is required for B_all",
+                False,
+            )
+        attempts: list[tuple[dict[str, bool] | None, bool, str]] = [
             ({name: True for name in all_names}, True, "all features enabled")
-        )
-    attempts.append((None, False, "project default configuration"))
-
-    fallback_note: str | None = None
+        ]
+    else:
+        attempts = [(None, False, "project default configuration")]
 
     for states, used_all, description in attempts:
         print(f"    Compiling baseline ({description})...")
@@ -406,30 +748,28 @@ def _build_baseline(
             first = (compilation.error_message or "").splitlines()
             detail = first[0][:160] if first else "unknown error"
             print(f"    [!] Baseline build failed ({description}): {detail}")
-            if used_all:
-                fallback_note = (
-                    "B_all with all features enabled did not compile "
-                    f"({detail}); baseline fell back to the project default "
-                    "configuration, so D_f isolates each feature against "
-                    "defaults rather than against a fully-featured build"
-                )
             continue
 
         cov = _coverage(
             adapter, project_path, all_names[0], True, build_system,
             compilation, output_dir, symbolic_tests, states,
             label="all_features" if used_all else "baseline_defaults",
+            execution_commands=execution_commands,
+            test_plan_id=test_plan_id,
         )
 
         if not cov.success:
             print(f"    [!] Baseline coverage failed ({description}): "
                   f"{cov.error_message}")
             continue
+        if not cov.dynamic_execution:
+            print(f"    [!] Baseline coverage was not dynamic ({description})")
+            continue
 
-        note = None if used_all else fallback_note
-        return cov.coverage_dir, note, used_all
+        return cov, None, used_all
 
-    return None, fallback_note or "Baseline build failed for all attempts", False
+    requested = "all-features B_all" if all_features_baseline else "default baseline"
+    return None, f"{requested} build or coverage failed", False
 
 
 def _compile(
@@ -465,6 +805,8 @@ def _coverage(
     symbolic_tests: list[str],
     feature_states: dict[str, bool] | None,
     label: str | None = None,
+    execution_commands: list[list[str]] | None = None,
+    test_plan_id: str | None = None,
 ) -> CoverageResult:
     if adapter:
         return generate_coverage_with_adapter(
@@ -473,6 +815,8 @@ def _coverage(
             symbolic_tests=symbolic_tests or None,
             feature_states=feature_states,
             label=label,
+            execution_commands=execution_commands,
+            test_plan_id=test_plan_id,
         )
     return generate_coverage(
         project_path=project_path,

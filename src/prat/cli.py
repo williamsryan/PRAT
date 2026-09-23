@@ -197,10 +197,19 @@ def run_doctor(project_path: str | None = None) -> int:
     print(f"Python:   {platform.python_version()}")
     print(f"Platform: {platform.platform()}")
 
-    deps = verify_dependencies()
+    adapter = None
+    if project_path and Path(project_path).exists():
+        adapter = get_adapter(project_path)
+    deps = verify_dependencies(
+        build_system=adapter.build_system if adapter else None,
+        coverage_tool=adapter.coverage_tool if adapter else None,
+    )
 
     print("\nRequired/coverage tools:")
-    for tool in ["gcc", "make", "python3", "perl", "gcov", "llvm-cov-9"]:
+    for tool in [
+        "gcc", "make", "cmake", "cargo", "cargo-llvm-cov", "python3",
+        "perl", "gcov", "llvm-cov",
+    ]:
         print(f"  {tool:12s} {_tool_path(tool)}")
 
     print("\nOptional tools:")
@@ -223,7 +232,6 @@ def run_doctor(project_path: str | None = None) -> int:
             except Exception as exc:
                 print(f"  build system error: {exc}")
 
-            adapter = get_adapter(str(project))
             print(f"  adapter      {type(adapter).__name__ if adapter else 'none'}")
             if adapter:
                 print(f"  coverage     {adapter.coverage_tool}")
@@ -261,9 +269,14 @@ def run_analysis(
     print(f"PRAT Analysis: {project_path} - Feature: {feature}")
     print(f"{'='*70}")
 
-    # Verify dependencies first
+    adapter = get_adapter(project_path)
+
+    # Verify dependencies for the selected adapter.
     progress.step("Verifying dependencies...")
-    deps = verify_dependencies()
+    deps = verify_dependencies(
+        build_system=adapter.build_system if adapter else None,
+        coverage_tool=adapter.coverage_tool if adapter else None,
+    )
     missing = deps.missing_tools
 
     if missing:
@@ -276,9 +289,6 @@ def run_analysis(
 
     # Run workflow
     try:
-        from .adapters import get_adapter
-        adapter = get_adapter(project_path)
-
         result = run_complete_workflow(
             project_path=project_path,
             feature=feature,
@@ -453,9 +463,11 @@ def run_variant_chain(
     print(f"{'=' * 70}")
 
     campaign = FuzzCampaign()
+    fuzz_failed = False
     for variant in chain.variants:
         if not variant.success or not variant.binary_path:
             print(f"\n[{variant.label}] skipped — variant did not build")
+            fuzz_failed = True
             continue
 
         print(f"\n[{variant.label}] fuzzing "
@@ -476,6 +488,8 @@ def run_variant_chain(
 
         if result.error_message:
             print(f"    [!] {result.error_message}")
+        if not result.success:
+            fuzz_failed = True
 
     compare_to_baseline(campaign)
 
@@ -488,6 +502,10 @@ def run_variant_chain(
     if campaign.baseline_crashes:
         print(f"Crashes already present in variant 0 (pre-existing): "
               f"{', '.join(campaign.baseline_crashes)}")
+
+    if fuzz_failed:
+        print("\n✗ One or more variants were not fuzzed successfully")
+        return 1
 
     if campaign.any_introduced_crash:
         print("\n✗ Crashes introduced by feature removal:")
@@ -515,23 +533,25 @@ _REPRODUCE_DEMOS = [
     "uamqp-websockets",
     "opendds-content-filtered-topic",
     "quiche-qlog",
+    "rav1e-serialize",
     "aom-encoder",
 ]
 
 
 def run_reproduce(argv: list[str]) -> int:
-    """Build + run PRAT Docker demo(s) and validate against the paper numbers.
+    """Build and run source-pinned Docker compatibility demos.
 
     Thin wrapper over ``src/demo-runner.py`` and
     ``scripts/validate_paper_results.py`` so the published ``prat`` entry point
-    offers a one-command reproduction. Disk-safe by default: each (large) image
-    is removed right after its run. Requires a source checkout / editable install.
+    offers a one-command compatibility check. The paper did not publish exact
+    source revisions, so this command does not claim bit-for-bit reproduction.
+    Disk-safe by default: each image is removed after its run.
     """
     import subprocess
 
     p = argparse.ArgumentParser(
         prog="prat reproduce",
-        description="Build + run PRAT Docker demo(s) and validate against paper numbers",
+        description="Run source-pinned compatibility demos and compare paper values",
     )
     p.add_argument("demo", nargs="?", choices=_REPRODUCE_DEMOS,
                    help="Demo to reproduce (omit and pass --all for every demo)")
@@ -561,17 +581,33 @@ def run_reproduce(argv: list[str]) -> int:
     demos = _REPRODUCE_DEMOS if args.all else [args.demo]
 
     for demo in demos:
-        print(f"\n{'='*70}\nReproducing: {demo}\n{'='*70}")
-        subprocess.run([sys.executable, str(runner), "--build", demo])
-        subprocess.run(
+        print(f"\n{'='*70}\nCompatibility target: {demo}\n{'='*70}")
+        build_proc = subprocess.run([sys.executable, str(runner), "--build", demo])
+        if build_proc.returncode != 0:
+            print(f"✗ Failed to build reproduction demo: {demo}")
+            return build_proc.returncode or 1
+        run_proc = subprocess.run(
             [sys.executable, str(runner), "--run", demo, *cleanup, "--output", args.output]
         )
+        if run_proc.returncode != 0:
+            print(f"✗ Failed to run reproduction demo: {demo}")
+            return run_proc.returncode or 1
 
     if not args.no_validate:
-        subprocess.run(
-            [sys.executable, str(validator), f"{args.output}/",
-             "--json", "results/validation_report.json"]
+        validation_proc = subprocess.run(
+            [
+                sys.executable,
+                str(validator),
+                f"{args.output}/",
+                "--strict",
+                *([] if args.all else ["--target", args.demo]),
+                "--json",
+                str(Path(args.output) / "validation_report.json"),
+            ]
         )
+        if validation_proc.returncode != 0:
+            print("✗ Reproduction results did not pass strict validation")
+            return validation_proc.returncode or 1
     return 0
 
 
@@ -693,6 +729,12 @@ For more information, see docs/API.md
         action="store_true",
         help="Analyze ALL discovered features (batch mode)"
     )
+    parser.add_argument(
+        "--paper-algorithm",
+        action="store_true",
+        help="Run Algorithm 1 end to end: all-feature baseline, KLEE test "
+             "generation, per-feature mapping, union removal, and verification",
+    )
 
     parser.add_argument(
         "--remove",
@@ -747,6 +789,12 @@ For more information, see docs/API.md
 
     args = parser.parse_args()
 
+    if args.paper_algorithm:
+        args.batch = True
+        args.symbolic = True
+        args.remove = True
+        args.no_verify = False
+
     if args.doctor:
         return run_doctor(args.project)
 
@@ -774,8 +822,10 @@ For more information, see docs/API.md
             project_path=str(project_path),
             output_dir=args.output,
             run_tests=args.tests,
-            symbolic=getattr(args, "symbolic", False),
-            all_features_baseline=not getattr(args, "default_baseline", False),
+            symbolic=args.symbolic,
+            all_features_baseline=True if args.paper_algorithm else not args.default_baseline,
+            remove=args.remove,
+            verify=not args.no_verify,
         )
         if batch_result.success:
             print(f"\n✓ Batch analysis complete: "

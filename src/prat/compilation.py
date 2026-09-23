@@ -24,6 +24,7 @@ class BuildSystem(Enum):
     CMAKE = "cmake"
     AUTOTOOLS = "autotools"
     CARGO = "cargo"
+    MPC = "mpc"
     UNKNOWN = "unknown"
 
 
@@ -153,12 +154,21 @@ def _compile_make(
     target = f"WITH_{feature.upper()}={flag}"
 
     # Clean previous build
-    subprocess.run(
+    clean_proc = subprocess.run(
         ["make", "clean"],
         cwd=project_path,
         capture_output=True,
         text=True
     )
+    if clean_proc.returncode != 0:
+        return CompilationResult(
+            success=False,
+            binary_path=None,
+            error_message=f"Make clean failed: {clean_proc.stderr}",
+            compilation_time=0.0,
+            coverage_enabled=True,
+            build_system=BuildSystem.MAKE,
+        )
 
     # Compile with coverage enabled
     compile_proc = subprocess.run(
@@ -187,7 +197,14 @@ def _compile_make(
             text=True
         )
         if test_proc.returncode != 0:
-            print(f"[!] Tests failed: {test_proc.stderr}")
+            return CompilationResult(
+                success=False,
+                binary_path=None,
+                error_message=f"Tests failed: {test_proc.stderr or test_proc.stdout}",
+                compilation_time=0.0,
+                coverage_enabled=True,
+                build_system=BuildSystem.MAKE,
+            )
 
     # Find binary (project-specific, may need adjustment)
     binary_path = None
@@ -268,7 +285,14 @@ def _compile_cmake(
             text=True
         )
         if test_proc.returncode != 0:
-            print(f"[!] Tests failed: {test_proc.stderr}")
+            return CompilationResult(
+                success=False,
+                binary_path=str(build_dir),
+                error_message=f"Tests failed: {test_proc.stderr or test_proc.stdout}",
+                compilation_time=0.0,
+                coverage_enabled=True,
+                build_system=BuildSystem.CMAKE,
+            )
 
     return CompilationResult(
         success=True,
@@ -312,12 +336,21 @@ def _compile_autotools(
         )
 
     # Clean
-    subprocess.run(
+    clean_proc = subprocess.run(
         ["make", "clean"],
         cwd=project_path,
         capture_output=True,
         text=True
     )
+    if clean_proc.returncode != 0:
+        return CompilationResult(
+            success=False,
+            binary_path=None,
+            error_message=f"Make clean failed: {clean_proc.stderr}",
+            compilation_time=0.0,
+            coverage_enabled=True,
+            build_system=BuildSystem.AUTOTOOLS,
+        )
 
     # Build
     make_proc = subprocess.run(
@@ -346,7 +379,14 @@ def _compile_autotools(
             text=True
         )
         if test_proc.returncode != 0:
-            print(f"[!] Tests failed: {test_proc.stderr}")
+            return CompilationResult(
+                success=False,
+                binary_path=project_path,
+                error_message=f"Tests failed: {test_proc.stderr or test_proc.stdout}",
+                compilation_time=0.0,
+                coverage_enabled=True,
+                build_system=BuildSystem.AUTOTOOLS,
+            )
 
     return CompilationResult(
         success=True,
@@ -372,13 +412,22 @@ def _compile_cargo(
     env["RUSTDOCFLAGS"] = "-Cpanic=abort"
 
     # Clean
-    subprocess.run(
+    clean_proc = subprocess.run(
         ["cargo", "clean"],
         cwd=project_path,
         capture_output=True,
         text=True,
         env=env
     )
+    if clean_proc.returncode != 0:
+        return CompilationResult(
+            success=False,
+            binary_path=None,
+            error_message=f"Cargo clean failed: {clean_proc.stderr}",
+            compilation_time=0.0,
+            coverage_enabled=True,
+            build_system=BuildSystem.CARGO,
+        )
 
     # Build
     if enabled:
@@ -414,7 +463,14 @@ def _compile_cargo(
             env=env
         )
         if test_proc.returncode != 0:
-            print(f"[!] Tests failed: {test_proc.stderr}")
+            return CompilationResult(
+                success=False,
+                binary_path=str(Path(project_path) / "target" / "debug"),
+                error_message=f"Tests failed: {test_proc.stderr or test_proc.stdout}",
+                compilation_time=0.0,
+                coverage_enabled=True,
+                build_system=BuildSystem.CARGO,
+            )
 
     binary_path = str(Path(project_path) / "target" / "debug")
 
@@ -434,6 +490,7 @@ def compile_with_adapter(
     enabled: bool,
     run_tests: bool = False,
     feature_states: dict[str, bool] | None = None,
+    with_coverage: bool = True,
 ) -> CompilationResult:
     """
     Compile a project using a ProjectAdapter.
@@ -451,6 +508,7 @@ def compile_with_adapter(
             takes precedence over ``feature``/``enabled`` and produces the
             Algorithm 1 builds: B_all with all features on, and B_i with all on
             except f_i.
+        with_coverage: Add instrumentation flags to the build.
 
     Returns:
         CompilationResult with status, binary path, and error messages
@@ -464,21 +522,35 @@ def compile_with_adapter(
 
         # Step 1: Clean
         clean_cmd = adapter.get_clean_command()
-        subprocess.run(
+        clean_proc = subprocess.run(
             clean_cmd,
             cwd=project_path,
             capture_output=True,
             text=True,
             env=env,
         )
+        if clean_proc.returncode != 0:
+            return CompilationResult(
+                success=False,
+                binary_path=None,
+                error_message=(
+                    f"Clean failed ({' '.join(clean_cmd[:2])}): "
+                    f"{clean_proc.stderr or clean_proc.stdout}"
+                ),
+                compilation_time=time.time() - start_time,
+                coverage_enabled=with_coverage,
+                build_system=adapter.build_system,
+            )
 
         # Step 2: Compile (adapters may require multiple commands, e.g. configure + make)
         if feature_states:
             build_cmds = adapter.get_build_commands_for_set(
-                feature_states, with_coverage=True
+                feature_states, with_coverage=with_coverage
             )
         else:
-            build_cmds = adapter.get_build_commands(feature, enabled, with_coverage=True)
+            build_cmds = adapter.get_build_commands(
+                feature, enabled, with_coverage=with_coverage
+            )
         for build_cmd in build_cmds:
             compile_proc = subprocess.run(
                 build_cmd,
@@ -493,7 +565,7 @@ def compile_with_adapter(
                     binary_path=None,
                     error_message=f"Compilation failed ({' '.join(build_cmd[:2])}): {compile_proc.stderr}",
                     compilation_time=time.time() - start_time,
-                    coverage_enabled=True,
+                    coverage_enabled=with_coverage,
                     build_system=adapter.build_system,
                 )
 
@@ -509,14 +581,21 @@ def compile_with_adapter(
                     env=env,
                 )
                 if test_proc.returncode != 0:
-                    print(f"[!] Tests failed: {test_proc.stderr}")
+                    return CompilationResult(
+                        success=False,
+                        binary_path=adapter.get_binary_path(),
+                        error_message=f"Tests failed: {test_proc.stderr or test_proc.stdout}",
+                        compilation_time=time.time() - start_time,
+                        coverage_enabled=with_coverage,
+                        build_system=adapter.build_system,
+                    )
 
         return CompilationResult(
             success=True,
             binary_path=adapter.get_binary_path(),
             error_message=None,
             compilation_time=time.time() - start_time,
-            coverage_enabled=True,
+            coverage_enabled=with_coverage,
             build_system=adapter.build_system,
         )
 

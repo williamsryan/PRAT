@@ -76,6 +76,20 @@ class TestCompileProject:
         assert result.success is False
         assert "missing header" in result.error_message
 
+    @patch("prat.compilation.subprocess.run")
+    def test_make_test_failure_fails_compilation(self, mock_run, tmp_path):
+        (tmp_path / "Makefile").touch()
+        mock_run.side_effect = [
+            MagicMock(returncode=0, stderr="", stdout=""),
+            MagicMock(returncode=0, stderr="", stdout=""),
+            MagicMock(returncode=2, stderr="unit failure", stdout=""),
+        ]
+
+        result = compile_project(str(tmp_path), "TLS", True, run_tests=True)
+
+        assert result.success is False
+        assert "unit failure" in result.error_message
+
 
 class TestCompileWithAdapter:
     """Tests for compile_with_adapter()."""
@@ -119,6 +133,44 @@ class TestCompileWithAdapter:
 
         assert result.success is False
         assert "fatal error" in result.error_message
+
+    @patch("prat.compilation.subprocess.run")
+    def test_clean_failure_stops_before_build(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=1, stderr="cannot clean", stdout=""
+        )
+        adapter = MagicMock()
+        adapter.project_path = Path("/fake/project")
+        adapter.build_system = BuildSystem.MAKE
+        adapter.get_clean_command.return_value = ["make", "clean"]
+        adapter.get_coverage_environment.return_value = {}
+
+        result = compile_with_adapter(adapter, "TLS", True)
+
+        assert result.success is False
+        assert "cannot clean" in result.error_message
+        adapter.get_build_commands.assert_not_called()
+
+    @patch("prat.compilation.subprocess.run")
+    def test_adapter_test_failure_is_propagated(self, mock_run):
+        mock_run.side_effect = [
+            MagicMock(returncode=0, stderr="", stdout=""),
+            MagicMock(returncode=0, stderr="", stdout=""),
+            MagicMock(returncode=3, stderr="test failure", stdout=""),
+        ]
+        adapter = MagicMock()
+        adapter.project_path = Path("/fake/project")
+        adapter.build_system = BuildSystem.MAKE
+        adapter.get_clean_command.return_value = ["make", "clean"]
+        adapter.get_build_commands.return_value = [["make"]]
+        adapter.get_test_command.return_value = ["make", "test"]
+        adapter.get_binary_path.return_value = None
+        adapter.get_coverage_environment.return_value = {}
+
+        result = compile_with_adapter(adapter, "TLS", True, run_tests=True)
+
+        assert result.success is False
+        assert "test failure" in result.error_message
 
     @patch("prat.compilation.subprocess.run")
     def test_runs_tests_when_requested(self, mock_run):

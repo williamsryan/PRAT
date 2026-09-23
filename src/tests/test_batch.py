@@ -1,6 +1,6 @@
 """Tests for prat.batch — Algorithm 1 across every discovered feature."""
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from prat.batch import (
     BatchResult,
@@ -14,6 +14,8 @@ from prat.coverage import CoverageResult
 from prat.discovery import Feature
 from prat.extraction import extract_from_mapping
 from prat.mapping import map_feature
+from prat.removal import RemovalResult
+from prat.verification import VerificationResult, VerificationStatus
 
 from .test_mapping import write_gcov
 
@@ -121,30 +123,60 @@ class TestBatchResult:
 
 
 class TestRunBatchAnalysis:
+    def test_symbolic_rust_batch_fails_closed(self, tmp_path):
+        adapter = MagicMock(
+            build_system=BuildSystem.CARGO,
+            coverage_tool="cargo-llvm-cov",
+            source_directories=["src"],
+        )
+        with patch(
+            "prat.batch.discover_features",
+            return_value=[make_feature("qlog")],
+        ):
+            result = run_batch_analysis(
+                str(tmp_path),
+                output_dir=str(tmp_path),
+                adapter=adapter,
+                symbolic=True,
+            )
+
+        assert result.success is False
+        assert "full paper algorithm" in (result.error_message or "")
+        assert (tmp_path / "batch_checkpoint.json").exists()
+
     def test_no_features_discovered_fails_cleanly(self, tmp_path):
         with patch("prat.batch.discover_features", return_value=[]):
-            result = run_batch_analysis(str(tmp_path))
+            result = run_batch_analysis(str(tmp_path), adapter=MagicMock())
 
         assert result.success is False
         assert result.error_message == "No features discovered"
+        assert (tmp_path / "batch_checkpoint.json").exists()
 
     def test_all_features_skipped_fails_cleanly(self, tmp_path):
         with patch("prat.batch.discover_features",
                    return_value=[make_feature("TLS")]):
-            result = run_batch_analysis(str(tmp_path), skip_features=["TLS"])
+            result = run_batch_analysis(
+                str(tmp_path),
+                skip_features=["TLS"],
+                adapter=MagicMock(),
+            )
 
         assert result.success is False
         assert "skipped" in result.error_message
+        assert (tmp_path / "batch_checkpoint.json").exists()
 
 
 class TestAlgorithmOneBuildCount:
     """The paper builds n+1 binaries: one baseline plus one per feature."""
 
     def _patched_batch(self, tmp_path, features, compile_mock, coverage_mock):
+        adapter = MagicMock()
+        adapter.get_execution_commands.return_value = [["make", "test"]]
+        adapter.coverage_command_executes_tests.return_value = False
         return patch.multiple(
             "prat.batch",
             discover_features=lambda *a, **k: features,
-            get_adapter=lambda *a, **k: object(),
+            get_adapter=lambda *a, **k: adapter,
             compile_with_adapter=compile_mock,
             generate_coverage_with_adapter=coverage_mock,
             build_feature_graph=lambda *a, **k: None,
@@ -182,6 +214,7 @@ class TestAlgorithmOneBuildCount:
                 coverage_files=[str(p) for p in directory.iterdir()],
                 coverage_dir=str(directory),
                 missing_files=[],
+                dynamic_execution=True,
             )
 
         with self._patched_batch(tmp_path, features, fake_compile, fake_coverage):
@@ -222,6 +255,7 @@ class TestAlgorithmOneBuildCount:
                 coverage_files=[str(p) for p in directory.iterdir()],
                 coverage_dir=str(directory),
                 missing_files=[],
+                dynamic_execution=True,
             )
 
         with self._patched_batch(tmp_path, features, fake_compile, fake_coverage):
@@ -263,6 +297,7 @@ class TestAlgorithmOneBuildCount:
                 coverage_files=[str(p) for p in directory.iterdir()],
                 coverage_dir=str(directory),
                 missing_files=[],
+                dynamic_execution=True,
             )
 
         with self._patched_batch(tmp_path, features, fake_compile, fake_coverage):
@@ -273,7 +308,7 @@ class TestAlgorithmOneBuildCount:
         assert "BROKEN" in result.discarded_options
         assert result.feature_results["BROKEN"].analyzed is False
 
-    def test_falls_back_to_defaults_when_all_features_build_fails(self, tmp_path):
+    def test_all_features_build_failure_aborts_without_semantic_fallback(self, tmp_path):
         features = [make_feature("TLS")]
 
         baseline = tmp_path / "cov_defaults"
@@ -282,8 +317,6 @@ class TestAlgorithmOneBuildCount:
         write_gcov(off_tls, "src/net.c", {14: "9"})
 
         def fake_compile(adapter, feature, enabled, run_tests, feature_states=None):
-            # The all-features attempt passes an explicit state map and fails;
-            # the default-configuration attempt passes none and succeeds.
             if feature_states is not None and all(feature_states.values()):
                 return CompilationResult(
                     success=False, binary_path=None,
@@ -304,14 +337,54 @@ class TestAlgorithmOneBuildCount:
                 coverage_files=[str(p) for p in directory.iterdir()],
                 coverage_dir=str(directory),
                 missing_files=[],
+                dynamic_execution=True,
             )
 
         with self._patched_batch(tmp_path, features, fake_compile, fake_coverage):
             result = run_batch_analysis(str(tmp_path), output_dir=str(tmp_path))
 
+        assert result.success is False
         assert result.baseline_all_features is False
-        # The fallback must be stated, not silent.
-        assert "fell back" in (result.baseline_note or "")
+        assert "all-features" in (result.baseline_note or "")
+
+    def test_coverage_failure_aborts_instead_of_discarding_the_feature(self, tmp_path):
+        features = [make_feature("TLS")]
+        baseline = tmp_path / "cov_all"
+        write_gcov(baseline, "src/net.c", {10: "1"})
+
+        def fake_compile(*_args, **_kwargs):
+            return CompilationResult(
+                success=True, binary_path=None, error_message=None,
+                compilation_time=0.0, coverage_enabled=True,
+                build_system=BuildSystem.MAKE,
+            )
+
+        def fake_coverage(_adapter, _feature, enabled, **_kwargs):
+            if enabled:
+                return CoverageResult(
+                    success=True,
+                    coverage_files=[str(p) for p in baseline.iterdir()],
+                    coverage_dir=str(baseline),
+                    missing_files=[],
+                    dynamic_execution=True,
+                )
+            return CoverageResult(
+                success=False,
+                coverage_files=[],
+                coverage_dir="",
+                missing_files=[],
+                error_message="test suite failed",
+                dynamic_execution=False,
+            )
+
+        with self._patched_batch(tmp_path, features, fake_compile, fake_coverage):
+            result = run_batch_analysis(str(tmp_path), output_dir=str(tmp_path))
+
+        assert result.success is False
+        assert "batch is incomplete" in (result.error_message or "")
+        assert result.discarded_options == {}
+        assert result.feature_results["TLS"].failure_stage == "coverage"
+        assert (tmp_path / "batch_checkpoint.json").exists()
 
     def test_skip_features_are_not_analyzed(self, tmp_path):
         features = [make_feature("TLS"), make_feature("BRIDGE")]
@@ -339,6 +412,7 @@ class TestAlgorithmOneBuildCount:
                 coverage_files=[str(p) for p in directory.iterdir()],
                 coverage_dir=str(directory),
                 missing_files=[],
+                dynamic_execution=True,
             )
 
         with self._patched_batch(tmp_path, features, fake_compile, fake_coverage):
@@ -349,3 +423,92 @@ class TestAlgorithmOneBuildCount:
         assert analyzed == ["TLS"]
         assert result.features_discovered == 2
         assert "BRIDGE" not in result.feature_results
+
+    def test_union_removal_and_verification_are_evidence_producers(self, tmp_path):
+        features = [make_feature("TLS")]
+        baseline = tmp_path / "cov_all"
+        disabled = tmp_path / "cov_tls_off"
+        write_gcov(baseline, "src/net.c", {10: "2", 14: "1"})
+        write_gcov(disabled, "src/net.c", {14: "1"})
+
+        adapter = MagicMock()
+        adapter.build_system = BuildSystem.MAKE
+        adapter.coverage_tool = "gcov"
+        adapter.source_directories = ["src"]
+        adapter.coverage_command_executes_tests.return_value = False
+        adapter.get_execution_commands.return_value = [["make", "test"]]
+        adapter.get_build_commands_for_set.return_value = [["make"]]
+
+        def fake_compile(*_args, **_kwargs):
+            return CompilationResult(
+                success=True,
+                binary_path=None,
+                error_message=None,
+                compilation_time=0.0,
+                coverage_enabled=True,
+                build_system=BuildSystem.MAKE,
+            )
+
+        def fake_coverage(_adapter, _feature, _enabled, **kwargs):
+            directory = baseline if kwargs.get("label") == "all_features" else disabled
+            return CoverageResult(
+                success=True,
+                coverage_files=[str(path) for path in directory.iterdir()],
+                coverage_dir=str(directory),
+                missing_files=[],
+                dynamic_execution=True,
+                execution_commands=1,
+                execution_succeeded=1,
+                test_plan_id=kwargs.get("test_plan_id"),
+            )
+
+        removal = RemovalResult(
+            success=True,
+            lines_removed=1,
+            files_modified=1,
+            files_stubbed=0,
+            backup_dir=str(tmp_path / "backup"),
+            target_lines=1,
+        )
+        verification = VerificationResult(
+            success=True,
+            compiles=True,
+            status=VerificationStatus.PASSED,
+            total_tests_run=1,
+            total_tests_passed=1,
+        )
+        remove_mock = MagicMock(return_value=removal)
+        verify_mock = MagicMock(return_value=verification)
+
+        with patch.multiple(
+            "prat.batch",
+            discover_features=lambda *args, **kwargs: features,
+            compile_with_adapter=fake_compile,
+            generate_coverage_with_adapter=fake_coverage,
+            build_feature_graph=lambda *args, **kwargs: None,
+            generate_feature_graph_html=lambda *args, **kwargs: None,
+            capture_reference_outputs=lambda *args, **kwargs: {
+                "make test": "ok"
+            },
+            remove_feature_code=remove_mock,
+            verify_correctness=verify_mock,
+        ):
+            result = run_batch_analysis(
+                str(tmp_path),
+                output_dir=str(tmp_path),
+                adapter=adapter,
+                remove=True,
+                verify=True,
+            )
+
+        assert result.success is True
+        assert result.union_removable_lines == 1
+        assert result.removal_result is removal
+        assert result.verification_result is verification
+        assert result.builds_performed == 3
+        assert remove_mock.call_args.args[0].file_line_numbers == {
+            "src/net.c": [10]
+        }
+        assert verify_mock.call_args.kwargs["reference_outputs"] == {
+            "make test": "ok"
+        }

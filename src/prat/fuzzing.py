@@ -129,7 +129,7 @@ class FuzzCampaign:
 def check_boofuzz_available() -> bool:
     """Whether the optional Boofuzz dependency is importable."""
     try:
-        import boofuzz  # type: ignore[import-untyped]  # noqa: F401
+        import boofuzz  # type: ignore[import-not-found,import-untyped]  # noqa: F401
     except ImportError:
         return False
     return True

@@ -14,7 +14,7 @@ from prat.workflow import run_complete_workflow
 result = run_complete_workflow(
     project_path="App/mosquitto",
     feature="TLS",
-    run_tests=False
+    run_tests=True
 )
 
 if result.success:
@@ -50,9 +50,10 @@ python3 src/demo-runner.py --run mosquitto-tls --output results
 cat results/mosquitto-tls/workflow_checkpoint.json
 ```
 
-### Expected Results
+### Interpreting Results
 
-- Removable lines: 500-1500
+- Historical paper value: 790 LOC on an unrecorded 2021 source revision
+- The current source-pinned result is reported with its deviation; no acceptance range is invented
 - Key files: `net.c`, `tls_mosq.c`
 - Execution time: 2-5 minutes
 
@@ -91,15 +92,18 @@ if result.success:
         print(f"    {f}: {extraction.file_line_counts[f]} lines")
 ```
 
-### Expected Results
+### Interpreting Results
 
-- Removable lines: 300-800
+- Historical paper value: 640 LOC on an unrecorded 2021 source revision
+- The current source-pinned result is reported with its deviation; no acceptance range is invented
 - Key files: `bridge.c`
 - Execution time: 2-5 minutes
 
-## Example 3: FFmpeg x264 Encoder (Autotools-based)
+## Example 3: FFmpeg DCA Decoder (configure/Make-based)
 
-FFmpeg uses Autotools (configure scripts) for building. The x264 feature adds H.264 video encoding support.
+FFmpeg uses its own configure script and Make. The bundled target analyzes the in-tree DCA
+decoder. The paper publishes no per-feature FFmpeg line count, so this is an observational
+compatibility target rather than a numerical paper reproduction.
 
 ### Using Workflow API
 
@@ -109,14 +113,14 @@ from prat.compilation import BuildSystem
 
 result = run_complete_workflow(
     project_path="App/FFmpeg",
-    feature="x264",
+    feature="decoder=dca",
     build_system=BuildSystem.AUTOTOOLS
 )
 
 if result.success:
     extraction = result.extraction_result
     
-    print(f"FFmpeg x264 Analysis:")
+    print("FFmpeg DCA analysis:")
     print(f"  Removable lines: {extraction.total_removable_lines}")
     print(f"  Files analyzed: {len(extraction.file_line_counts)}")
     
@@ -133,16 +137,19 @@ if result.success:
 
 ```bash
 # Build demo
-python3 src/demo-runner.py --build ffmpeg-x264
+python3 src/demo-runner.py --build ffmpeg-dca
 
 # Run demo
-python3 src/demo-runner.py --run ffmpeg-x264 --output results
+python3 src/demo-runner.py --run ffmpeg-dca --output results
+
+# Validate provenance, dynamic execution, mapping, removal, and verification
+python3 scripts/validate_paper_results.py results --target ffmpeg-dca --strict
 ```
 
 ### Expected Results
 
-- Removable lines: 1000-5000
-- Key files: `libavcodec/libx264.c`
+- Result status: `OBSERVED` (the paper has no per-feature FFmpeg value)
+- Key files: `libavcodec/dcadec.c`, `libavcodec/dca_core.c`
 - Execution time: 10-20 minutes (FFmpeg is large)
 
 ## Example 4: Discovering Features
@@ -155,13 +162,13 @@ Before analyzing a project, discover available features:
 from prat.discovery import discover_features_make
 
 features = discover_features_make("App/mosquitto")
-print(f"Mosquitto features: {', '.join(features)}")
+print(f"Mosquitto features: {', '.join(f.name for f in features)}")
 
 # Analyze each feature
 for feature in features:
-    result = run_complete_workflow("App/mosquitto", feature)
+    result = run_complete_workflow("App/mosquitto", feature.name)
     if result.success:
-        print(f"{feature}: {result.extraction_result.total_removable_lines} lines")
+        print(f"{feature.name}: {result.extraction_result.total_removable_lines} lines")
 ```
 
 ### Autotools Projects
@@ -170,7 +177,7 @@ for feature in features:
 from prat.discovery import discover_features_autotools
 
 features = discover_features_autotools("App/FFmpeg")
-print(f"FFmpeg features: {', '.join(features[:10])}...")  # FFmpeg has many features
+print(", ".join(f.name for f in features[:10]) + "...")  # FFmpeg has many features
 ```
 
 ### CMake Projects
@@ -179,7 +186,7 @@ print(f"FFmpeg features: {', '.join(features[:10])}...")  # FFmpeg has many feat
 from prat.discovery import discover_features_cmake
 
 features = discover_features_cmake("path/to/cmake-project")
-print(f"Available features: {', '.join(features)}")
+print(f"Available features: {', '.join(f.name for f in features)}")
 ```
 
 ## Example 5: Handling Errors and Checkpoints
@@ -272,7 +279,7 @@ cat comparison.txt
 
 ## Example 9: Validating Results
 
-Validate demo results against expected values:
+Inspect a demo result alongside the published historical reference:
 
 ```python
 from src.demo_runner import run_demo, EXPECTED_RESULTS
@@ -284,8 +291,10 @@ expected = EXPECTED_RESULTS[demo_name]
 
 print(f"Demo: {demo_name}")
 print(f"Actual lines: {result.removable_lines}")
-print(f"Expected range: {expected.min_removable_lines}-{expected.max_removable_lines}")
-print(f"Within range: {result.within_expected_range}")
+if expected.paper_lines is not None:
+    print(f"Historical paper value: {expected.paper_lines}")
+else:
+    print("Historical paper value: none published")
 
 if result.key_files_missing:
     print(f"Warning: Missing key files: {result.key_files_missing}")

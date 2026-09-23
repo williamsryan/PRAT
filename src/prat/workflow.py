@@ -23,7 +23,9 @@ single-feature entry point it builds on.
 from __future__ import annotations
 
 import json
+import os
 import time
+import uuid
 from dataclasses import asdict, dataclass
 from enum import Enum
 from pathlib import Path
@@ -35,6 +37,7 @@ from .coverage import (
     CoverageResult,
     generate_coverage,
     generate_coverage_with_adapter,
+    test_plan_digest,
 )
 from .diff import ComparisonResult, generate_comparison_reports
 from .environment import verify_dependencies
@@ -42,14 +45,18 @@ from .extraction import ExtractionResult, extract_from_mapping
 from .gcov import load_coverage_dir
 from .mapping import FeatureMapping, coverage_percent, map_feature_from_coverage
 from .mapping import protected_lines as mapping_protected
-from .removal import RemovalResult, remove_feature_code
+from .removal import RemovalResult, remove_feature_code, restore_from_backup
 from .reporting import (
     generate_dot_graph,
     generate_html_report,
     generate_json_report,
 )
 from .symbolic import KleeConfig, SymbolicResult, check_klee_available, generate_symbolic_tests
-from .verification import VerificationResult, verify_correctness
+from .verification import (
+    VerificationResult,
+    capture_reference_outputs,
+    verify_correctness,
+)
 
 
 class WorkflowCheckpoint(Enum):
@@ -89,6 +96,7 @@ class WorkflowResult:
     verification_result: VerificationResult | None = None
     coverage_percent_enabled: float | None = None
     coverage_percent_disabled: float | None = None
+    run_id: str | None = None
 
     # The mapping D_f. Excluded from serialization because it carries full
     # source text; ExtractionResult is the serializable projection of it.
@@ -101,16 +109,21 @@ class WorkflowResult:
         result.pop("mapping", None)
         return result
 
-    def save_checkpoint(self, output_dir: str) -> None:
+    def save_checkpoint(self, output_dir: str) -> bool:
         """Save workflow state to a checkpoint file."""
         checkpoint_file = Path(output_dir) / "workflow_checkpoint.json"
+        temporary = checkpoint_file.with_suffix(".json.tmp")
         try:
             Path(output_dir).mkdir(parents=True, exist_ok=True)
-            with open(checkpoint_file, "w") as handle:
+            with open(temporary, "w") as handle:
                 json.dump(self.to_dict(), handle, indent=2, default=str)
+            temporary.replace(checkpoint_file)
             print(f"[+] Checkpoint saved to {checkpoint_file}")
+            return True
         except OSError as exc:
+            temporary.unlink(missing_ok=True)
             print(f"[!] Failed to save checkpoint: {exc}")
+            return False
 
 
 def run_complete_workflow(
@@ -174,23 +187,18 @@ def run_complete_workflow(
         extraction_result=None,
         total_time=0.0,
         checkpoint=WorkflowCheckpoint.START,
+        run_id=os.environ.get("PRAT_RUN_ID") or str(uuid.uuid4()),
     )
 
     def fail(message: str) -> WorkflowResult:
         print(f"[!] {message}")
         result.error_message = message
         result.total_time = time.time() - start_time
-        result.save_checkpoint(output_dir)
+        if not result.save_checkpoint(output_dir):
+            result.error_message = f"{message}; checkpoint could not be saved"
         return result
 
     try:
-        # --- Step 0: environment ------------------------------------------
-        print("[1/8] Verifying environment dependencies...")
-        deps = verify_dependencies()
-        if deps.missing_tools:
-            return fail(f"Missing dependencies: {', '.join(deps.missing_tools)}")
-        print("[+] All dependencies verified\n")
-
         if adapter is None:
             adapter = get_adapter(project_path)
         if adapter:
@@ -199,7 +207,26 @@ def run_complete_workflow(
             print(f"    Coverage tool: {adapter.coverage_tool}")
             print(f"    Source dirs: {', '.join(adapter.source_directories)}\n")
         else:
-            print("[+] No project-specific adapter found — using generic pipeline\n")
+            return fail(
+                "No project adapter can execute and validate this build system; "
+                "refusing to produce compile-only coverage"
+            )
+
+        if symbolic and adapter.build_system == BuildSystem.CARGO:
+            return fail(
+                "The KLEE symbolic-test path supports C/C++ LLVM bitcode, not "
+                "Cargo/Rust projects"
+            )
+
+        # --- Step 0: environment ------------------------------------------
+        print("[1/8] Verifying environment dependencies...")
+        deps = verify_dependencies(
+            build_system=adapter.build_system,
+            coverage_tool=adapter.coverage_tool,
+        )
+        if deps.missing_tools:
+            return fail(f"Missing dependencies: {', '.join(deps.missing_tools)}")
+        print("[+] All dependencies verified\n")
 
         # --- Algorithm 1 line 2: S <- SymbolicTestGeneration(P) -----------
         symbolic_tests: list[str] = []
@@ -221,12 +248,27 @@ def run_complete_workflow(
                     print(f"[+] Generated {symbolic_result.test_count} symbolic "
                           f"test case(s); T = U u S\n")
                 else:
-                    print(f"[!] Symbolic generation failed, T = U only: "
-                          f"{symbolic_result.error_message}\n")
+                    return fail(
+                        "Symbolic generation was requested but failed: "
+                        f"{symbolic_result.error_message}"
+                    )
             else:
-                print("[!] KLEE not available (local or Docker) — T = U only\n")
+                return fail(
+                    "Symbolic generation was requested but KLEE is unavailable "
+                    "locally and the prat-klee:latest image is not installed"
+                )
         else:
             print("[2/8] Symbolic test generation not requested — T = U\n")
+
+        workload_commands: list[list[str]] = []
+        seen_commands: set[tuple[str, ...]] = set()
+        for state in (True, False):
+            for command in adapter.get_execution_commands(feature, state):
+                key = tuple(command)
+                if key not in seen_commands:
+                    seen_commands.add(key)
+                    workload_commands.append(command)
+        workload_plan_id = test_plan_digest(workload_commands, symbolic_tests)
 
         # --- Algorithm 1 lines 4-5: B_all and L_all -----------------------
         if reuse_baseline and baseline_coverage_dir:
@@ -249,11 +291,17 @@ def run_complete_workflow(
             cov_enabled = _coverage(
                 adapter, project_path, feature, True, build_system,
                 comp_enabled, output_dir, symbolic_tests,
+                test_plan_id=workload_plan_id,
             )
             result.coverage_enabled = cov_enabled
             if not cov_enabled.success:
                 return fail(f"Coverage generation failed (enabled): "
                             f"{cov_enabled.error_message}")
+            if not cov_enabled.dynamic_execution:
+                return fail(
+                    "Coverage generation did not execute the test set T "
+                    "for the enabled build"
+                )
             print(f"[+] Generated {len(cov_enabled.coverage_files)} coverage file(s)\n")
             enabled_coverage_dir = cov_enabled.coverage_dir
 
@@ -276,11 +324,17 @@ def run_complete_workflow(
         cov_disabled = _coverage(
             adapter, project_path, feature, False, build_system,
             comp_disabled, output_dir, symbolic_tests,
+            test_plan_id=workload_plan_id,
         )
         result.coverage_disabled = cov_disabled
         if not cov_disabled.success:
             return fail(f"Coverage generation failed (disabled): "
                         f"{cov_disabled.error_message}")
+        if not cov_disabled.dynamic_execution:
+            return fail(
+                "Coverage generation did not execute the test set T "
+                "for the disabled build"
+            )
         print(f"[+] Generated {len(cov_disabled.coverage_files)} coverage file(s)\n")
 
         # --- Algorithm 1 line 10: D_f = L_all \ L_f -----------------------
@@ -292,6 +346,8 @@ def run_complete_workflow(
 
         if not enabled_cov:
             return fail(f"No parseable coverage in {enabled_coverage_dir}")
+        if not disabled_cov:
+            return fail(f"No parseable coverage in {cov_disabled.coverage_dir}")
 
         result.coverage_percent_enabled = coverage_percent(enabled_cov)
         result.coverage_percent_disabled = coverage_percent(disabled_cov)
@@ -330,12 +386,31 @@ def run_complete_workflow(
             print(f"Feature Removal: {feature}")
             print(f"{'=' * 70}")
 
+            reference_outputs: dict[str, str] | None = None
+            test_commands: list[list[str]] | None = None
+            build_commands: list[list[str]] | None = None
+            if adapter:
+                test_commands = adapter.get_execution_commands(feature, False)
+                build_commands = adapter.get_build_commands(
+                    feature, False, with_coverage=False
+                )
+
+            if verify:
+                try:
+                    reference_outputs = capture_reference_outputs(
+                        project_path,
+                        adapter=adapter,
+                        test_commands=test_commands,
+                    )
+                except RuntimeError as exc:
+                    return fail(str(exc))
             removal_result = remove_feature_code(
                 extraction_result,
                 project_path,
                 feature,
                 protected_lines=mapping_protected(mapping),
-                rebuild=True,
+                rebuild=not verify,
+                build_commands=build_commands,
             )
             result.removal_result = removal_result
 
@@ -353,11 +428,18 @@ def run_complete_workflow(
                 verification_result = verify_correctness(
                     project_path,
                     adapter=adapter,
+                    build_commands=build_commands,
+                    test_commands=test_commands,
                     symbolic_result=result.symbolic_result,
+                    reference_outputs=reference_outputs,
                 )
                 result.verification_result = verification_result
 
                 if not verification_result.success:
+                    if removal_result.backup_dir:
+                        removal_result.restored = restore_from_backup(
+                            removal_result.backup_dir, project_path
+                        )
                     return fail(
                         f"Post-removal verification failed: "
                         f"{verification_result.error_message or ''}"
@@ -383,7 +465,9 @@ def run_complete_workflow(
             print(f"Comparison reports: {result.comparison_result.index_path}")
         print(f"{'=' * 70}\n")
 
-        result.save_checkpoint(output_dir)
+        if not result.save_checkpoint(output_dir):
+            result.success = False
+            result.error_message = "Workflow completed but checkpoint could not be saved"
         return result
 
     except KeyboardInterrupt:
@@ -420,12 +504,14 @@ def _coverage(
     compilation: CompilationResult,
     output_dir: str,
     symbolic_tests: list[str],
+    test_plan_id: str | None = None,
 ) -> CoverageResult:
     if adapter:
         return generate_coverage_with_adapter(
             adapter, feature, enabled,
             output_dir=output_dir,
             symbolic_tests=symbolic_tests or None,
+            test_plan_id=test_plan_id,
         )
     return generate_coverage(
         project_path=project_path,
@@ -446,34 +532,31 @@ def _generate_reports(
 ) -> None:
     """Generate HTML/DOT/JSON reports and the paper's comparison reports.
 
-    Report failures are non-fatal: the mapping is the result, and losing a
-    rendering should not discard it.
+    Reports are part of the review artifact. A missing rendering makes the run
+    incomplete, so failures propagate to the workflow checkpoint.
     """
-    try:
-        base = Path(output_dir)
-        base.mkdir(parents=True, exist_ok=True)
+    base = Path(output_dir)
+    base.mkdir(parents=True, exist_ok=True)
 
-        html_path = str(base / "report.html")
-        generate_html_report(extraction_result, feature, output_path=html_path)
-        extraction_result.html_report_path = html_path
+    html_path = str(base / "report.html")
+    generate_html_report(extraction_result, feature, output_path=html_path)
+    extraction_result.html_report_path = html_path
 
-        dot_path = str(base / "FDG.dot")
-        generate_dot_graph(extraction_result, feature, output_path=dot_path)
-        extraction_result.dot_graph_path = dot_path
+    dot_path = str(base / "FDG.dot")
+    generate_dot_graph(extraction_result, feature, output_path=dot_path)
+    extraction_result.dot_graph_path = dot_path
 
-        result.comparison_result = generate_comparison_reports(
-            mapping,
-            enabled_coverage_dir,
-            disabled_coverage_dir,
-            str(base),
-        )
+    result.comparison_result = generate_comparison_reports(
+        mapping,
+        enabled_coverage_dir,
+        disabled_coverage_dir,
+        str(base),
+    )
 
-        generate_json_report(
-            extraction_result, feature, output_path=str(base / "report.json")
-        )
-        print("[+] Reports generated\n")
-    except Exception as exc:  # noqa: BLE001 - reporting must not lose the mapping
-        print(f"[!] Report generation failed (non-fatal): {exc}\n")
+    generate_json_report(
+        extraction_result, feature, output_path=str(base / "report.json")
+    )
+    print("[+] Reports generated\n")
 
 
 def resume_workflow(

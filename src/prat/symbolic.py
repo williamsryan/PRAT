@@ -26,6 +26,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+KLEE_DOCKER_IMAGE = "prat-klee:latest"
+
 
 @dataclass
 class KleeConfig:
@@ -111,7 +113,7 @@ def check_klee_available(use_docker: bool = False) -> bool:
     if use_docker:
         try:
             proc = subprocess.run(
-                ["docker", "image", "inspect", "klee/klee:latest"],
+                ["docker", "image", "inspect", KLEE_DOCKER_IMAGE],
                 capture_output=True, text=True, timeout=10,
             )
             return proc.returncode == 0
@@ -195,10 +197,10 @@ def compile_to_bytecode(
             failed.append(f"{source}: {detail[0] if detail else 'compile failed'}")
 
     if failed:
-        print(f"[!] {len(failed)} file(s) did not compile to bytecode; "
-              f"continuing with the remaining {len(objects)}")
+        print(f"[!] {len(failed)} file(s) did not compile to bytecode")
         for entry in failed[:5]:
             print(f"      {entry}")
+        return None
 
     if not objects:
         print("[!] No source file compiled to bytecode")
@@ -245,7 +247,7 @@ def run_klee(
     config: KleeConfig | None = None,
     output_dir: str | None = None,
     use_docker: bool = False,
-    docker_image: str = "klee/klee:latest",
+    docker_image: str = KLEE_DOCKER_IMAGE,
 ) -> SymbolicResult:
     """
     Run KLEE symbolic execution on LLVM bytecode.
@@ -369,11 +371,16 @@ def _collect_klee_results(
                 test_cases.append(os.path.join(output_dir, f))
 
     return SymbolicResult(
-        success=len(test_cases) > 0 or proc.returncode == 0,
+        success=len(test_cases) > 0 and proc.returncode == 0,
         test_cases=test_cases,
         test_count=len(test_cases),
         bytecode_path=bytecode_path,
         klee_output_dir=output_dir,
+        error_message=(
+            None
+            if test_cases and proc.returncode == 0
+            else f"KLEE produced {len(test_cases)} tests and exited {proc.returncode}"
+        ),
     )
 
 
@@ -402,7 +409,7 @@ def replay_tests(
     """
     if not shutil.which(klee_replay_binary):
         print(f"[!] {klee_replay_binary} not found — cannot replay tests")
-        return {}
+        return {Path(test).name: False for test in test_cases}
 
     print(f"[+] Replaying {len(test_cases)} KLEE test cases against {binary_path}")
     results = {}
@@ -421,7 +428,7 @@ def replay_tests(
             results[name] = (proc.returncode == 0)
 
         except subprocess.TimeoutExpired:
-            results[name] = True  # Timeout OK — still generates coverage
+            results[name] = False
         except Exception as e:
             results[name] = False
             print(f"    [!] {name}: replay error: {e}")
@@ -511,6 +518,8 @@ def generate_symbolic_tests(
     print(f"\n[2/3] Running KLEE symbolic execution "
           f"(max {config.max_time_minutes}min)...")
     klee_out = os.path.join(output_dir, "klee-out")
+    if os.path.isdir(klee_out):
+        shutil.rmtree(klee_out)
     result = run_klee(bc_path, config, klee_out, use_docker)
 
     if not result.success:

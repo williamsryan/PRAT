@@ -96,7 +96,7 @@ def _is_generated_idl(name: str) -> bool:
 
 def extract_from_mapping(
     mapping: FeatureMapping,
-    skip_generated_idl: bool = True,
+    skip_generated_idl: bool = False,
 ) -> ExtractionResult:
     """Build an ``ExtractionResult`` from a computed feature mapping D_f."""
     file_line_counts: dict[str, int] = {}
@@ -143,7 +143,7 @@ def extract_features(
     enabled_coverage_dir: str,
     disabled_coverage_dir: str,
     feature: str = "",
-    skip_generated_idl: bool = True,
+    skip_generated_idl: bool = False,
 ) -> ExtractionResult:
     """Compute D_f from two coverage directories and package it for reporting.
 

@@ -4,13 +4,14 @@
 that was active in variant i" — a chain, not the star topology used for mapping.
 """
 
+from pathlib import Path
 from unittest.mock import patch
 
 from prat.compilation import BuildSystem, CompilationResult
 from prat.coverage import CoverageResult
 from prat.discovery import Feature
 from prat.removal import RemovalResult
-from prat.variants import VariantChain, build_variant_chain
+from prat.variants import VariantChain, _snapshot_binary, build_variant_chain
 
 from .test_mapping import write_gcov
 
@@ -48,13 +49,21 @@ class ChainHarness:
             coverage_files=[str(p) for p in directory.iterdir()],
             coverage_dir=str(directory),
             missing_files=[],
+            dynamic_execution=True,
         )
 
     def patches(self):
+        class Adapter:
+            def get_build_commands_for_set(self, states, with_coverage=True):
+                return [["true"]]
+
+            def get_binary_path(self):
+                return None
+
         return patch.multiple(
             "prat.variants",
             discover_features=lambda *a, **k: self.features,
-            get_adapter=lambda *a, **k: object(),
+            get_adapter=lambda *a, **k: Adapter(),
             compile_with_adapter=self.compile,
             generate_coverage_with_adapter=self.coverage,
         )
@@ -277,6 +286,19 @@ class TestBuildVariantChain:
 
 
 class TestVariantChain:
+    def test_binary_snapshots_do_not_follow_later_rebuilds(self, tmp_path):
+        live = tmp_path / "broker"
+        live.write_bytes(b"variant-0")
+        first = _snapshot_binary(str(live), str(tmp_path / "out"), "variant_0")
+
+        live.write_bytes(b"variant-1")
+        second = _snapshot_binary(str(live), str(tmp_path / "out"), "variant_1")
+
+        assert first and second
+        assert first != second
+        assert Path(first).read_bytes() == b"variant-0"
+        assert Path(second).read_bytes() == b"variant-1"
+
     def test_summary_lists_every_variant(self):
         from prat.variants import Variant
 

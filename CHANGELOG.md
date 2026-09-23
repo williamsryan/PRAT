@@ -22,8 +22,7 @@ this is a major version and the committed results under `results/` must be regen
   execution counts into line sets and `prat.mapping` computes the set difference.
 - **Batch analysis performs Algorithm 1's `n+1` builds** against a single all-features baseline,
   rather than two builds per feature against project defaults. `BatchResult.builds_performed`
-  reports the count; when the all-features build does not compile the baseline falls back to
-  project defaults and `baseline_note` records that it did.
+  reports the count; an all-features baseline failure now fails the Algorithm 1 run.
 - **A failed rebuild now fails the removal and restores the tree.** The paper relies on a broken
   build preventing an incorrect implementation from being produced; previously the failure was
   logged and the removal still reported success.
@@ -79,6 +78,7 @@ this is a major version and the committed results under `results/` must be regen
   after `--remove` (`--no-verify` opts out).
 - End-to-end integration test running the whole pipeline against a real compiler and real gcov.
 - `make list-features-all`, `make variants-mosquitto`, `make fuzz-mosquitto`.
+- An eighth Docker target, `rav1e-serialize`, covers the seventh paper codebase.
 
 ### Changed
 
@@ -118,7 +118,7 @@ this is a major version and the committed results under `results/` must be regen
 - `results/` and `docs/sample-results/` predate the mapping correction; see `results/README.md`.
 - Rust coverage uses `cargo-llvm-cov` rather than the paper's `kcov`; the substitution and its
   reason are recorded in `REPRODUCIBILITY.md` §3 and `docs/PAPER_ALIGNMENT.md`.
-- rav1e remains without a bundled demo, so six of the paper's seven codebases are covered.
+- Eight compatibility demos cover all seven paper codebases.
 
 ## [1.0.0] — 2026-06-26
 

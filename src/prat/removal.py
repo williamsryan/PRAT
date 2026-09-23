@@ -16,14 +16,13 @@ implementation from being generated." That only holds if a failed rebuild fails
 the removal and restores the tree, which is what :func:`remove_feature_code`
 does.
 
-*Delimiter balance must be preserved.* D_f contains only lines gcov attributes
-executable code to. A closing brace is not such a line, so ``if (x) {`` can
-enter D_f while its matching ``}`` never can — blanking the opener alone closes
-the enclosing function early. The balance guard therefore either absorbs the
-adjacent non-executable structural lines needed to keep delimiters balanced, or
-declines to remove that run. Absorbing a bare ``}`` is consistent with the
-paper's granularity: it carries no coverage in either build, so it is neither
-feature code nor shared code, it is the syntax of the block being removed.
+*Removal is conservative and fully accounted.* D_f contains only executable
+lines observed by the coverage differential. The default path may also blank
+adjacent non-executable delimiter-only lines needed to keep the source
+syntactically balanced; these are reported separately as
+``absorbed_structural`` and are not counted in |D_f|. It never expands to whole
+files. If an edit remains unsafe or a mapped source cannot be located, removal
+fails and restores the tree.
 """
 
 from __future__ import annotations
@@ -59,6 +58,8 @@ class RemovalResult:
     skipped_unbalanced: dict[str, list[tuple[int, int]]] = field(default_factory=dict)
     # Non-executable structural lines absorbed to keep delimiters balanced.
     absorbed_structural: int = 0
+    missing_source_files: list[str] = field(default_factory=list)
+    target_lines: int = 0
 
     @property
     def skipped_line_count(self) -> int:
@@ -200,6 +201,7 @@ def plan_removal(
     lines: list[str],
     candidates: set[int],
     protected: set[int] | None = None,
+    absorb_structural: bool = True,
 ) -> tuple[set[int], list[tuple[int, int]], int]:
     """Decide which candidate lines can be removed without unbalancing the file.
 
@@ -232,15 +234,18 @@ def plan_removal(
     candidate_lines = {
         line for line in candidates if 1 <= line <= total and line not in protected
     }
-    runs = _bridge_structural_gaps(
-        lines, merge_contiguous(sorted(candidate_lines)), protected
+    raw_runs = merge_contiguous(sorted(candidate_lines))
+    runs = (
+        _bridge_structural_gaps(lines, raw_runs, protected)
+        if absorb_structural
+        else raw_runs
     )
 
     for start, end in runs:
         run = set(range(start, end + 1))
         balance = sum(deltas[line - 1] for line in run)
 
-        if balance > 0:
+        if balance > 0 and absorb_structural:
             # Unclosed openers: absorb following structural lines.
             cursor = end + 1
             while balance > 0 and cursor <= total:
@@ -249,7 +254,7 @@ def plan_removal(
                 run.add(cursor)
                 balance += deltas[cursor - 1]
                 cursor += 1
-        elif balance < 0:
+        elif balance < 0 and absorb_structural:
             # Unmatched closers: absorb preceding structural lines.
             cursor = start - 1
             while balance < 0 and cursor >= 1:
@@ -283,11 +288,14 @@ def remove_feature_code(
     feature: str,
     mapping: FeatureMapping | None = None,
     protected_lines: dict[str, set[int]] | None = None,
-    stub_feature_only_files: bool = True,
+    stub_feature_only_files: bool = False,
     backup: bool = True,
     rebuild: bool = True,
     build_command: list[str] | None = None,
+    build_commands: list[list[str]] | None = None,
     balance_guard: bool = True,
+    allow_structural_absorption: bool = True,
+    require_complete: bool = True,
     restore_on_build_failure: bool = True,
 ) -> RemovalResult:
     """Remove feature-specific code from the source tree and rebuild.
@@ -300,14 +308,21 @@ def remove_feature_code(
             the feature disabled are derived from it and protected.
         protected_lines: Explicit ``source_path -> lines`` that must survive.
             Merged with anything derived from ``mapping``.
-        stub_feature_only_files: Replace files that exist only in the
-            feature-enabled build with a stub, so build systems that list them
-            unconditionally still resolve.
+        stub_feature_only_files: Legacy opt-in that replaces dedicated files.
+            Disabled by default because whole-file stubbing removes lines that
+            are outside D_f.
         backup: Create a backup of every file before modifying it.
         rebuild: Rebuild after removal and treat failure as removal failure.
         build_command: Rebuild command; auto-detected when None.
+        build_commands: Ordered rebuild commands. Prefer this for adapters whose
+            configuration and build are separate operations.
         balance_guard: Enforce delimiter balance. Disabling it reproduces the
             unguarded behaviour and can corrupt source files.
+        allow_structural_absorption: Permit the balance guard to remove nearby
+            non-executable delimiter lines, recorded separately from mapped
+            lines. Enabled by default because gcov does not mark braces as
+            executable even when their containing block is removed.
+        require_complete: Fail and restore unless every mapped line is removed.
         restore_on_build_failure: Restore from backup when the rebuild fails.
 
     Returns:
@@ -321,6 +336,7 @@ def remove_feature_code(
     per_file_stats: dict[str, int] = {}
     skipped_unbalanced: dict[str, list[tuple[int, int]]] = {}
     absorbed_total = 0
+    missing_source_files: list[str] = []
     backup_dir: str | None = None
 
     protected = {path: set(lines) for path, lines in (protected_lines or {}).items()}
@@ -356,6 +372,7 @@ def remove_feature_code(
             source_file = _find_source_file(project, source_path)
             if source_file is None:
                 print(f"    [!] Source file not found: {source_path}")
+                missing_source_files.append(source_path)
                 continue
 
             _backup_file(source_file, project, backup_dir, backup)
@@ -365,6 +382,7 @@ def remove_feature_code(
                 set(line_numbers),
                 protected=protected.get(source_path),
                 balance_guard=balance_guard,
+                allow_structural_absorption=allow_structural_absorption,
             )
 
             absorbed_total += absorbed
@@ -385,6 +403,7 @@ def remove_feature_code(
             for source_path in sorted(feature_only):
                 source_file = _find_source_file(project, source_path)
                 if source_file is None:
+                    missing_source_files.append(source_path)
                     continue
 
                 _backup_file(source_file, project, backup_dir, backup)
@@ -395,6 +414,36 @@ def remove_feature_code(
                 )
                 files_stubbed += 1
                 print(f"    {source_path}: stubbed (dedicated feature file)")
+
+        incomplete = (
+            total_removed != extraction_result.total_removable_lines
+            or bool(skipped_unbalanced)
+            or bool(missing_source_files)
+        )
+        if require_complete and incomplete:
+            message = (
+                f"Exact removal incomplete: removed {total_removed} of "
+                f"{extraction_result.total_removable_lines} mapped line(s)"
+            )
+            if missing_source_files:
+                message += f"; {len(missing_source_files)} source file(s) missing"
+            if skipped_unbalanced:
+                message += "; one or more mapped ranges were syntactically unsafe"
+            restored = bool(backup_dir and restore_from_backup(backup_dir, project_path))
+            return RemovalResult(
+                success=False,
+                lines_removed=total_removed,
+                files_modified=files_modified,
+                files_stubbed=files_stubbed,
+                backup_dir=backup_dir,
+                restored=restored,
+                error_message=message,
+                per_file_stats=per_file_stats,
+                skipped_unbalanced=skipped_unbalanced,
+                absorbed_structural=absorbed_total,
+                missing_source_files=missing_source_files,
+                target_lines=extraction_result.total_removable_lines,
+            )
 
         print(f"\n    Summary: {total_removed} lines removed, "
               f"{files_modified} file(s) modified, {files_stubbed} file(s) stubbed")
@@ -412,13 +461,17 @@ def remove_feature_code(
             per_file_stats=per_file_stats,
             skipped_unbalanced=skipped_unbalanced,
             absorbed_structural=absorbed_total,
+            missing_source_files=missing_source_files,
+            target_lines=extraction_result.total_removable_lines,
         )
 
         if not rebuild:
             return result
 
         print("\n[+] Rebuilding to verify removal...")
-        result.rebuild_success = _rebuild_project(project_path, build_command)
+        result.rebuild_success = _rebuild_project(
+            project_path, build_command, build_commands
+        )
 
         if result.rebuild_success:
             print("    [+] Rebuild successful — removal preserved compilation")
@@ -444,6 +497,9 @@ def remove_feature_code(
         return result
 
     except OSError as exc:
+        restored = False
+        if backup_dir:
+            restored = restore_from_backup(backup_dir, project_path)
         return RemovalResult(
             success=False,
             lines_removed=total_removed,
@@ -454,6 +510,9 @@ def remove_feature_code(
             per_file_stats=per_file_stats,
             skipped_unbalanced=skipped_unbalanced,
             absorbed_structural=absorbed_total,
+            missing_source_files=missing_source_files,
+            target_lines=extraction_result.total_removable_lines,
+            restored=restored,
         )
 
 
@@ -532,6 +591,7 @@ def _remove_lines_from_file(
     line_numbers: set[int],
     protected: set[int] | None = None,
     balance_guard: bool = True,
+    allow_structural_absorption: bool = False,
 ) -> tuple[int, list[tuple[int, int]], int]:
     """Blank the given lines in a source file.
 
@@ -550,7 +610,12 @@ def _remove_lines_from_file(
         return 0, [], 0
 
     if balance_guard:
-        approved, skipped, absorbed = plan_removal(lines, line_numbers, protected)
+        approved, skipped, absorbed = plan_removal(
+            lines,
+            line_numbers,
+            protected,
+            absorb_structural=allow_structural_absorption,
+        )
     else:
         total = len(lines)
         blocked = protected or set()
@@ -572,39 +637,47 @@ def _remove_lines_from_file(
         print(f"    [!] Error writing {file_path}: {exc}")
         return 0, skipped, absorbed
 
-    return len(approved), skipped, absorbed
+    return len(approved & line_numbers), skipped, absorbed
 
 
 def _rebuild_project(
     project_path: str,
     build_command: list[str] | None = None,
+    build_commands: list[list[str]] | None = None,
 ) -> bool:
     """Rebuild the project after code removal."""
-    if build_command is None:
+    commands: list[list[str]]
+    if build_commands is not None:
+        commands = build_commands
+    elif build_command is not None:
+        commands = [build_command]
+    else:
         project = Path(project_path)
         if (project / "Cargo.toml").exists():
-            build_command = ["cargo", "build"]
+            commands = [["cargo", "build"]]
         elif (project / "CMakeLists.txt").exists():
-            build_command = ["make", "-C", "build", "-j"]
+            commands = [["cmake", "--build", "build", "--parallel"]]
         elif (project / "Makefile").exists():
-            build_command = ["make", "-j"]
+            commands = [["make", "-j"]]
         else:
             print("    [!] Cannot auto-detect build command")
             return False
 
     try:
-        proc = subprocess.run(
-            build_command,
-            cwd=project_path,
-            capture_output=True,
-            text=True,
-            timeout=600,
-        )
-        if proc.returncode != 0:
-            tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-15:]
-            for line in tail:
-                print(f"      | {line}")
-        return proc.returncode == 0
+        for command in commands:
+            proc = subprocess.run(
+                command,
+                cwd=project_path,
+                capture_output=True,
+                text=True,
+                timeout=600,
+            )
+            if proc.returncode != 0:
+                tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-15:]
+                for line in tail:
+                    print(f"      | {line}")
+                return False
+        return True
 
     except subprocess.TimeoutExpired:
         print("    [!] Rebuild timed out")

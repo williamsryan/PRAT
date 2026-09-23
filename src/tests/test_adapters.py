@@ -8,6 +8,7 @@ from prat.adapters import get_adapter
 from prat.adapters.cmake import CMakeAdapter
 from prat.adapters.ffmpeg import FFmpegAdapter
 from prat.adapters.mosquitto import MosquittoAdapter
+from prat.adapters.opendds import OpenDDSAdapter
 from prat.adapters.rust import RustAdapter
 from prat.compilation import BuildSystem
 
@@ -177,6 +178,14 @@ class TestFFmpegAdapter:
         assert "--enable-libx264" in cmd
         assert "--enable-gpl" in cmd
 
+    def test_dca_execution_exercises_and_rejects_the_same_input(self, adapter):
+        enabled = adapter.get_execution_commands("decoder=dca", True)
+        disabled = adapter.get_execution_commands("decoder=dca", False)
+
+        assert any("prat-dca.dts" in " ".join(command) for command in enabled)
+        assert "prat-dca.dts" in " ".join(disabled[0])
+        assert "not found" in disabled[0][2]
+
 
 class TestRustAdapter:
     """Tests for RustAdapter."""
@@ -196,13 +205,22 @@ class TestRustAdapter:
         assert "--features" in cmd
 
     def test_compile_command_disabled(self, adapter):
-        # DISABLED keeps default features (feature simply omitted); we must NOT
-        # use --no-default-features (it would drop required defaults like a TLS
-        # backend and break the build).
         cmd = adapter.get_compile_command("tls", False)
         assert "--features" not in cmd
-        assert "--no-default-features" not in cmd
+        assert "--no-default-features" in cmd
         assert cmd[:2] == ["cargo", "build"]
+
+    def test_disabling_a_default_feature_preserves_other_defaults(self, tmp_path):
+        (tmp_path / "Cargo.toml").write_text(
+            "[features]\ndefault = ['tls', 'logging']\ntls = []\nlogging = []\n"
+        )
+        (tmp_path / "src").mkdir(exist_ok=True)
+        adapter = RustAdapter(str(tmp_path))
+
+        cmd = adapter.get_compile_command("tls", False)
+
+        assert "--no-default-features" in cmd
+        assert cmd[cmd.index("--features") + 1] == "logging"
 
     def test_llvm_cov_command(self, adapter):
         enabled = adapter.get_llvm_cov_command("qlog", True, "/tmp/c.lcov")
@@ -210,7 +228,7 @@ class TestRustAdapter:
         assert "--features" in enabled and "qlog" in enabled
         assert "--lcov" in enabled
         disabled = adapter.get_llvm_cov_command("qlog", False, "/tmp/c.lcov")
-        assert "--features" not in disabled
+        assert "--no-default-features" in disabled
 
     def test_coverage_environment_empty(self, adapter):
         # cargo-llvm-cov manages instrumentation itself.
@@ -230,11 +248,41 @@ class TestCMakeAdapter:
 
     def test_feature_flag(self, adapter):
         flag = adapter.format_feature_flag("TLS", True)
-        assert flag == "-DCONFIG_TLS=1"
+        assert flag == "-DTLS=ON"
 
         flag = adapter.format_feature_flag("TLS", False)
-        assert flag == "-DCONFIG_TLS=0"
+        assert flag == "-DTLS=OFF"
 
     def test_compile_command_has_coverage_flags(self, adapter):
         cmd = adapter.get_compile_command("TLS", True)
         assert any("--coverage" in arg for arg in cmd)
+        assert cmd[:5] == ["cmake", "-S", ".", "-B", "build"]
+
+    def test_build_commands_configure_then_build(self, adapter):
+        commands = adapter.get_build_commands("TLS", True)
+        assert commands[0][0] == "cmake"
+        assert commands[1] == ["cmake", "--build", "build", "--parallel"]
+
+
+class TestOpenDDSAdapter:
+    @pytest.fixture
+    def adapter(self, tmp_path):
+        (tmp_path / "configure").touch()
+        (tmp_path / "dds").mkdir()
+        (tmp_path / "DDS.mwc").touch()
+        return OpenDDSAdapter(str(tmp_path))
+
+    def test_toggles_content_filtered_topic(self, adapter):
+        enabled = adapter.get_compile_command("content-filtered-topic", True)
+        disabled = adapter.get_compile_command("content-filtered-topic", False)
+
+        assert "--content-filtered-topic" in enabled[2]
+        assert "--no-content-filtered-topic" in disabled[2]
+        assert "--security" not in enabled[2]
+
+    def test_reports_the_actual_mpc_build_system(self, adapter):
+        assert adapter.build_system == BuildSystem.MPC
+
+    def test_runs_upstream_content_filtered_topic_test(self, adapter):
+        command = adapter.get_execution_commands("content-filtered-topic", True)
+        assert "tests/DCPS/ContentFilteredTopic/run_test.pl" in command[0][2]

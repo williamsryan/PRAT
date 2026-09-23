@@ -125,9 +125,20 @@ def capture_reference_outputs(
                 text=True,
                 timeout=timeout,
             )
+            if proc.returncode != 0:
+                raise RuntimeError(
+                    f"Pre-removal reference suite {name} failed with "
+                    f"exit code {proc.returncode}"
+                )
             references[name] = _normalize_output(proc.stdout + proc.stderr)
-        except (subprocess.TimeoutExpired, OSError, subprocess.SubprocessError):
-            continue
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"Pre-removal reference suite {name} timed out"
+            ) from exc
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise RuntimeError(
+                f"Pre-removal reference suite {name} could not run: {exc}"
+            ) from exc
 
     return references
 
@@ -136,6 +147,7 @@ def verify_correctness(
     project_path: str,
     adapter: Any | None = None,
     build_command: list[str] | None = None,
+    build_commands: list[list[str]] | None = None,
     test_commands: list[list[str]] | None = None,
     symbolic_result: SymbolicResult | None = None,
     binary_path: str | None = None,
@@ -150,6 +162,7 @@ def verify_correctness(
         project_path: Path to the (modified) project root.
         adapter: ProjectAdapter supplying build/test commands and binary path.
         build_command: Override rebuild command.
+        build_commands: Ordered rebuild commands for multi-step adapters.
         test_commands: Override test commands (list of command lists).
         symbolic_result: KLEE results whose ``.ktest`` files form S of T.
         binary_path: Binary for KLEE replay; taken from ``adapter`` if omitted.
@@ -173,7 +186,9 @@ def verify_correctness(
 
     # --- Step 1: rebuild ---------------------------------------------------
     print("[1] Rebuilding debloated project...")
-    result.compiles = _rebuild(project_path, build_command, adapter)
+    result.compiles = _rebuild(
+        project_path, build_command, adapter, build_commands=build_commands
+    )
 
     if not result.compiles:
         result.status = VerificationStatus.BUILD_FAILED
@@ -249,7 +264,9 @@ def verify_correctness(
             print(f"    [{marker}] KLEE replay: {passed}/{len(replay_results)} passed")
         else:
             print("\n[3] KLEE tests available but no binary to replay against "
-                  "— skipping")
+                  "— verification failed")
+            result.total_tests_run += len(symbolic_result.test_cases)
+            result.total_tests_failed += len(symbolic_result.test_cases)
     else:
         print("\n[3] No KLEE tests to replay — skipping")
 
@@ -299,7 +316,11 @@ def _decide_status(
         return VerificationStatus.CRASHED
     if not saw_tests:
         return VerificationStatus.INCONCLUSIVE
-    if result.total_tests_failed > 0 or result.diverged_suites:
+    if (
+        result.total_tests_failed > 0
+        or result.diverged_suites
+        or any(not suite.success for suite in result.test_suites)
+    ):
         return VerificationStatus.FAILED
     return VerificationStatus.PASSED
 
@@ -308,12 +329,15 @@ def _rebuild(
     project_path: str,
     build_command: list[str] | None,
     adapter: Any | None = None,
+    build_commands: list[list[str]] | None = None,
 ) -> bool:
     """Rebuild the project to verify it still compiles."""
-    if build_command is not None:
+    if build_commands is not None:
+        commands = build_commands
+    elif build_command is not None:
         commands = [build_command]
     elif adapter:
-        commands = adapter.get_build_commands("", True, with_coverage=False)
+        return False
     else:
         project = Path(project_path)
         if (project / "Cargo.toml").exists():

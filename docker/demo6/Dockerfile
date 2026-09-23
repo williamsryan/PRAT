@@ -1,4 +1,4 @@
-# Dockerfile for PRAT Demo 6: Quiche FFDHE Feature Analysis
+# Dockerfile for PRAT Demo 6: Quiche qlog Feature Analysis
 # Self-contained — clones Quiche inside the image
 # Requires Rust toolchain for Cargo builds
 
@@ -32,8 +32,7 @@ RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
 ENV PATH="/root/.cargo/bin:${PATH}"
 
 RUN pip3 install --no-cache-dir \
-    toml==0.10.2 \
-    pandas>=1.3.0
+    toml==0.10.2
 
 WORKDIR /prat
 
@@ -43,6 +42,8 @@ COPY src/ /prat/src/
 # quiche/deps/boringssl as a git submodule and is required to build).
 RUN git clone --depth 1 --branch 0.20.1 \
     https://github.com/cloudflare/quiche.git /prat/App/quiche && \
+    test "$(git -C /prat/App/quiche rev-parse HEAD)" = \
+    "dae27b7d5a0dcf8304a56ffd295399fc00ec03e9" && \
     cd /prat/App/quiche && \
     git submodule update --init --recursive --depth 1
 
@@ -59,4 +60,5 @@ RUN mkdir -p /prat/output
 CMD ["python3", "/prat/src/demo_workflow.py", \
      "--project", "/prat/App/quiche/quiche", \
      "--feature", "qlog", \
+     "--remove", \
      "--output", "/prat/output"]

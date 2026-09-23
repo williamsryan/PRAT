@@ -11,9 +11,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from .aom import AomAdapter
+from .autotools import AutotoolsAdapter
 from .base import ProjectAdapter
 from .cmake import CMakeAdapter
 from .ffmpeg import FFmpegAdapter
+from .make import MakeAdapter
 from .mosquitto import MosquittoAdapter
 from .opendds import OpenDDSAdapter
 from .rust import RustAdapter
@@ -28,6 +30,8 @@ __all__ = [
     'UamqpAdapter',
     'OpenDDSAdapter',
     'AomAdapter',
+    'MakeAdapter',
+    'AutotoolsAdapter',
     'get_adapter',
 ]
 
@@ -57,6 +61,8 @@ def get_adapter(project_path: str) -> ProjectAdapter | None:
         AomAdapter,
         RustAdapter,
         CMakeAdapter,
+        AutotoolsAdapter,
+        MakeAdapter,
     ]
 
     for adapter_cls in adapter_classes:

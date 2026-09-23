@@ -144,6 +144,13 @@ def _validate_graph(graph: FeatureGraph) -> None:
                 f"edge {edge.source} -> {edge.target} does not go "
                 f"feature -> file -> loc"
             )
+        if node_tier[edge.source] == 1:
+            features = edge.metadata.get("features")
+            if not isinstance(features, list) or not features:
+                raise GraphValidationError(
+                    f"file -> loc edge {edge.source} -> {edge.target} "
+                    "has no feature attribution"
+                )
 
     # Kahn's algorithm: an acyclic graph fully drains.
     indegree = dict.fromkeys(node_tier, 0)
@@ -275,7 +282,7 @@ def _add_loc_nodes(
                     source=f"file_{file_name}",
                     target=node_id,
                     weight=span,
-                    metadata={"lines": span},
+                    metadata={"lines": span, "features": [feature_name]},
                 )
             )
         else:
@@ -284,6 +291,12 @@ def _add_loc_nodes(
             for node in graph.nodes:
                 if node.id == node_id:
                     features = node.metadata.setdefault("features", [])
+                    if feature_name not in features:
+                        features.append(feature_name)
+                    break
+            for edge in graph.edges:
+                if edge.source == f"file_{file_name}" and edge.target == node_id:
+                    features = edge.metadata.setdefault("features", [])
                     if feature_name not in features:
                         features.append(feature_name)
                     break
@@ -1351,17 +1364,38 @@ const GRAPH_DATA = {graph_json};
   function applyFeatureFocus(featureName) {{
     const featureId = `feat_${{featureName}}`;
     const connectedIds = new Set([featureId]);
+    const connectedFileIds = new Set();
     GRAPH_DATA.edges.forEach(edge => {{
       const sourceId = typeof edge.source === 'object' ? edge.source.id : edge.source;
       const targetId = typeof edge.target === 'object' ? edge.target.id : edge.target;
-      if (sourceId === featureId) connectedIds.add(targetId);
-      if (targetId === featureId) connectedIds.add(sourceId);
+      if (sourceId === featureId) {{
+        connectedIds.add(targetId);
+        connectedFileIds.add(targetId);
+      }}
+    }});
+    GRAPH_DATA.edges.forEach(edge => {{
+      const sourceId = typeof edge.source === 'object' ? edge.source.id : edge.source;
+      const targetId = typeof edge.target === 'object' ? edge.target.id : edge.target;
+      if (
+        connectedFileIds.has(sourceId)
+        && (edge.features || []).includes(featureName)
+      ) {{
+        connectedIds.add(targetId);
+      }}
     }});
 
     node.classed('dimmed', item => !connectedIds.has(item.id));
     link.classed('dimmed', edge => {{
       const sourceId = typeof edge.source === 'object' ? edge.source.id : edge.source;
-      return sourceId !== featureId;
+      const targetId = typeof edge.target === 'object' ? edge.target.id : edge.target;
+      return !(
+        (sourceId === featureId && connectedIds.has(targetId))
+        || (
+          connectedFileIds.has(sourceId)
+          && connectedIds.has(targetId)
+          && (edge.features || []).includes(featureName)
+        )
+      );
     }});
   }}
 
@@ -1388,6 +1422,11 @@ const GRAPH_DATA = {graph_json};
 
     const connectedFeatureIds = new Set((fileNode.features || []).map(feature => `feat_${{feature}}`));
     connectedFeatureIds.add(fileNode.id);
+    GRAPH_DATA.edges.forEach(edge => {{
+      const sourceId = typeof edge.source === 'object' ? edge.source.id : edge.source;
+      const targetId = typeof edge.target === 'object' ? edge.target.id : edge.target;
+      if (sourceId === fileNode.id) connectedFeatureIds.add(targetId);
+    }});
 
     node.classed('dimmed', item => !connectedFeatureIds.has(item.id));
     link.classed('dimmed', edge => {{

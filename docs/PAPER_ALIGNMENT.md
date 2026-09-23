@@ -51,9 +51,9 @@ prat App/mosquitto --batch      # Algorithm 1 over every discovered feature
 
 `run_batch_analysis` compiles `B_all` once, collects `L_all` once, and reuses it for every feature — n+1 builds for n features, as the paper specifies. `BatchResult.builds_performed` records the count so it can be checked.
 
-`B_all` enables **every discovered feature**, and `B_i` enables all but `f_i`. When the all-features build does not compile (mutually exclusive options make this possible; the paper reports discarding five such options), the baseline falls back to the project's default configuration and `BatchResult.baseline_note` says so. That fallback changes what `D_f` isolates against, so it is reported rather than applied silently.
+`B_all` enables **every discovered feature**, and `B_i` enables all but `f_i`. If the all-features build does not compile, the Algorithm 1 run fails instead of silently changing the baseline. Build options whose leave-one-out build fails are discarded, as the paper describes, and listed in `BatchResult.discarded_options`.
 
-Build options whose feature-disabled build fails are discarded, as the paper describes, and listed in `BatchResult.discarded_options`.
+The explicit `--default-baseline` mode is available for exploratory analysis, but its output is not accepted by the strict Algorithm 1 validator.
 
 ### Sum vs. union
 
@@ -186,7 +186,11 @@ The paper's "code comparison reports which display, side-by-side, the original c
 
 Generated tests are passed into coverage collection and replayed against each instrumented build, so `T = U u S` holds in the runs that produce `D_f`.
 
-**Status**: the module runs end to end when KLEE is available (local or the `klee/klee` Docker image) and is skipped with a message when it is not. `--symbolic` opts in; without it, `T = U`.
+**Status**: when `--symbolic` is requested, unavailable or failed KLEE execution fails the
+workflow. `--paper-algorithm` makes symbolic generation mandatory together with the all-features
+baseline, union removal, and post-removal verification. Ordinary analysis may explicitly use
+`T = U` by omitting that mode. The KLEE path consumes C/C++ LLVM bitcode; Cargo/Rust symbolic
+requests fail closed rather than claiming this paper step ran.
 
 **Tests**: `src/tests/test_symbolic.py`.
 
@@ -242,7 +246,8 @@ The paper evaluates seven codebases (Table 5, Table 4): Mosquitto, azure-uamqp-c
 | 4 | `uamqp-websockets` | azure-uamqp-c | cmake | `use_wsio` | **26** LOC |
 | 5 | `opendds-content-filtered-topic` | OpenDDS DDS-3.25 | MPC | `content-filtered-topic` | **73** LOC |
 | 6 | `quiche-qlog` | quiche 0.20.1 | cargo | `qlog` | none — no per-feature LOC for Quiche |
-| 7 | `aom-encoder` | libaom v3.7.1 | cmake | `CONFIG_AV1_ENCODER` | none — no per-feature LOC for libaom |
+| 7 | `rav1e-serialize` | rav1e v0.7.1 | cargo | `serialize` | none — no per-feature LOC for rav1e |
+| 8 | `aom-encoder` | libaom v3.7.1 | cmake | `CONFIG_AV1_ENCODER` | none — no per-feature LOC for libaom |
 
 Three points about this table, all of which were wrong in earlier revisions of this repo:
 
@@ -250,30 +255,36 @@ Three points about this table, all of which were wrong in earlier revisions of t
 
 **Four demos analyze features the paper does not report a line count for.** Those are measured and reported, and scored as `OBSERVED` rather than pass/fail, because there is no published value to compare against. `decoder=dca` is used for FFmpeg because x264's removable code lives in the external `libx264` library that FFmpeg only links; `qlog` is used for quiche because `ffdhe` is a BoringSSL TLS setting and not a Cargo feature in any release.
 
-**rav1e is not covered by a demo.** Six of the paper's seven codebases are (Mosquitto twice). The generic Cargo adapter can drive rav1e — `./scripts/fetch-targets.sh rav1e` — but it is not one of the bundled pinned demos.
+**All seven paper codebases have a source-pinned compatibility demo.** The rav1e demo analyzes its
+real non-default `serialize` Cargo feature and is observational because the paper publishes no
+per-feature rav1e line count.
 
 Feature counts (Mosquitto 19, azure-uamqp-c 16, OpenDDS 9, Quiche 4, FFmpeg 33, rav1e 14, libaom 20; 115 total) are recorded in `paper_expected_results.json` under `feature_counts` for comparison against `prat --list`.
 
-### Validating against the paper
+### Comparing with paper-reported values
 
 ```bash
-make paper-check    # build → run → remove image, per demo, then validate
+make compatibility-check
 python3 scripts/validate_paper_results.py results/docker/ --json results/validation_report.json
 ```
 
-The validator scores a target only when the paper publishes a value for the feature analyzed; otherwise it reports the measurement as `OBSERVED`. Tolerances are wide, because the paper's numbers come from KLEE-enhanced coverage over a 60-minute budget against the versions available in 2021, while a local run uses whatever tests ship with the pinned version.
+The validator requires current run provenance, successful dynamic execution, exact source commit,
+source removal, and post-removal verification in strict mode. It scores a target only when the
+paper publishes a value for the feature. Because the paper does not record source commits, these
+scores are compatibility comparisons rather than exact reproduction claims.
 
 ---
 
 ## Docker demos
 
-Self-contained demos (`docker/demo1`–`demo7`) that clone each target at a pinned tag inside the image:
+Self-contained demos (`docker/demo1`–`demo8`) that verify an exact source commit:
 
 ```bash
-make paper-check                 # all demos, disk-safe, then validate
+make compatibility-check
 make docker-build && make docker-run
-prat reproduce mosquitto-tls     # single demo
+prat reproduce mosquitto-tls
 prat reproduce --all
 ```
 
-Each demo runs one feature through the single-feature pipeline. `prat App/<project> --batch` is the Algorithm 1 path over all features; `make batch-mosquitto` runs it locally.
+Each demo runs one feature through mapping, exact removal, rebuild, and test replay.
+`prat App/<project> --paper-algorithm` is the complete Algorithm 1 path over all features.

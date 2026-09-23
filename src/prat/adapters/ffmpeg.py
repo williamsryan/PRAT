@@ -104,6 +104,47 @@ class FFmpegAdapter(ProjectAdapter):
         """Get FFmpeg test command (FATE test suite)."""
         return ["make", "fate", "-j3", "SAMPLES=fate-suite/"]
 
+    def get_execution_commands(self, feature: str, enabled: bool) -> list[list[str]]:
+        """Exercise the in-tree DCA decoder without an external FATE corpus."""
+        if feature.lower() != "decoder=dca":
+            return super().get_execution_commands(feature, enabled)
+
+        sample = "/tmp/prat-dca.dts"
+        if enabled:
+            return [
+                [
+                    "bash",
+                    "-lc",
+                    "./ffmpeg -hide_banner -loglevel error "
+                    "-f lavfi -i 'sine=frequency=1000:duration=0.25' "
+                    "-c:a dca -strict -2 -y "
+                    f"{sample}",
+                ],
+                [
+                    "./ffmpeg",
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-i",
+                    sample,
+                    "-f",
+                    "null",
+                    "-",
+                ],
+            ]
+
+        return [[
+            "bash",
+            "-lc",
+            "set -e; "
+            "log=/tmp/prat-dca-disabled.log; "
+            f"if ./ffmpeg -hide_banner -loglevel error -i {sample} "
+            "-f null - >\"$log\" 2>&1; then "
+            "echo 'DCA unexpectedly decoded while disabled' >&2; exit 1; fi; "
+            "grep -Eiq 'decoder .*not found|unknown decoder|unsupported codec' "
+            "\"$log\"",
+        ]]
+
     def format_feature_flag(self, feature: str, enabled: bool) -> str:
         """
         Format feature flag as --enable-feature or --disable-feature.
