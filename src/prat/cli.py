@@ -256,6 +256,7 @@ def run_analysis(
     symbolic: bool = False,
     remove: bool = False,
     verify: bool = False,
+    all_features_baseline: bool = True,
 ) -> int:
     """
     Run PRAT analysis workflow.
@@ -298,6 +299,7 @@ def run_analysis(
             adapter=adapter,
             remove=remove,
             verify=verify,
+            all_features_baseline=all_features_baseline,
         )
 
         if not result.success:
@@ -783,8 +785,10 @@ For more information, see docs/API.md
     parser.add_argument(
         "--default-baseline",
         action="store_true",
-        help="In --batch mode, use the project's default configuration as the "
-             "baseline instead of enabling all discovered features"
+        help="Use the project's default configuration as the baseline instead "
+             "of Algorithm 1's all-features B_all (single-feature and --batch). "
+             "Exploratory only: the result is labelled project-default and is "
+             "not accepted as a paper reproduction"
     )
 
     args = parser.parse_args()
@@ -872,6 +876,7 @@ For more information, see docs/API.md
         # Verification is part of the paper's removal step, so it runs by
         # default once anything has been removed; --no-verify opts out.
         verify=not getattr(args, "no_verify", False),
+        all_features_baseline=not args.default_baseline,
     )
 
 

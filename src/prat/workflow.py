@@ -3,9 +3,11 @@ Workflow orchestration module for PRAT.
 
 Runs the paper's five-step pipeline for a single feature:
 
-1. Feature identification (see :mod:`prat.discovery`; the feature is given here)
-2. Feature-to-code mapping — build with and without the feature, collect
-   coverage under the test suite T = U u S, compute D_f = L_all \\ L_f
+1. Feature identification (see :mod:`prat.discovery`; F is discovered here so
+   the two builds can range over every feature, and the target f is given)
+2. Feature-to-code mapping — build B_all (every feature in F enabled) and B_f
+   (every feature except f), collect coverage under the test suite T = U u S
+   against both, compute D_f = L_all \\ L_f
 3. Feature selection (the analyst's step; reports and the feature graph feed it)
 4. Feature removal — blank the lines in D_f and rebuild
 5. Testing — re-run T against the debloated build and check for crashes
@@ -16,8 +18,11 @@ rebuild or a crashing test fails the workflow rather than being logged and
 ignored.
 
 :func:`run_batch_analysis` in :mod:`prat.batch` is the whole-program form of the
-same pipeline and is what Algorithm 1 describes; this module is the
-single-feature entry point it builds on.
+same pipeline (n+1 builds, one B_all shared by every feature); this module is
+the two-build slice of Algorithm 1 for a single feature and is what the Docker
+demos run. Passing ``all_features_baseline=False`` instead builds the project's
+default configuration with f forced on and off; that mode is recorded as
+``baseline_mode="project-default"`` and is not the paper's quantity.
 """
 
 from __future__ import annotations
@@ -26,7 +31,7 @@ import json
 import os
 import time
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -40,6 +45,7 @@ from .coverage import (
     test_plan_digest,
 )
 from .diff import ComparisonResult, generate_comparison_reports
+from .discovery import discover_features
 from .environment import verify_dependencies
 from .extraction import ExtractionResult, extract_from_mapping
 from .gcov import load_coverage_dir
@@ -98,6 +104,22 @@ class WorkflowResult:
     coverage_percent_disabled: float | None = None
     run_id: str | None = None
 
+    # Which baseline L_all was measured against. Algorithm 1 defines B_all as
+    # the build with *every* feature enabled and B_f as all-but-f; that is
+    # ``"all-features"``. ``"project-default"`` means the two builds were the
+    # project's default configuration with f forced on and forced off, which
+    # is an exploratory slice and not the paper's quantity.
+    baseline_mode: str = "all-features"
+    baseline_all_features: bool = True
+    # Feature -> enabled for each of the two mapping builds, in build order
+    # (B_all first, then B_f), so the exact configurations are auditable.
+    mapping_build_states: list[dict[str, bool]] = field(default_factory=list)
+    baseline_note: str | None = None
+    # Whether the same test plan T was executed against both builds. A
+    # polarity-dependent adapter workload makes this False, and the mapping
+    # then reflects the workload change as well as the feature.
+    test_plan_identical: bool | None = None
+
     # The mapping D_f. Excluded from serialization because it carries full
     # source text; ExtractionResult is the serializable projection of it.
     mapping: FeatureMapping | None = None
@@ -139,9 +161,17 @@ def run_complete_workflow(
     verify: bool = True,
     baseline_coverage_dir: str | None = None,
     reuse_baseline: bool = False,
+    all_features_baseline: bool = True,
+    feature_names: list[str] | None = None,
 ) -> WorkflowResult:
     """
     Execute the PRAT pipeline for one feature.
+
+    The two mapping builds are Algorithm 1's B_all and B_f: every discovered
+    feature is enabled in the first build, and every feature except ``feature``
+    is enabled in the second, so ``D_f = L_all \\ L_f`` is the paper's quantity
+    for this one feature. The feature set F comes from
+    :func:`prat.discovery.discover_features` unless ``feature_names`` is given.
 
     Args:
         project_path: Path to project root directory.
@@ -161,6 +191,13 @@ def run_complete_workflow(
             realizes Algorithm 1's n+1 builds.
         reuse_baseline: Whether ``baseline_coverage_dir`` should be trusted
             without rebuilding the all-features binary.
+        all_features_baseline: Build B_all / B_f over the whole feature set
+            (the paper's algorithm). When False, the two builds are the
+            project's default configuration with ``feature`` forced on and
+            off; the result is labelled ``baseline_mode="project-default"``
+            and is not accepted as a paper reproduction.
+        feature_names: The feature set F to use for B_all / B_f, overriding
+            discovery. ``feature`` is always included.
 
     Returns:
         WorkflowResult with all outputs and statistics.
@@ -260,15 +297,56 @@ def run_complete_workflow(
         else:
             print("[2/8] Symbolic test generation not requested — T = U\n")
 
-        workload_commands: list[list[str]] = []
-        seen_commands: set[tuple[str, ...]] = set()
-        for state in (True, False):
-            for command in adapter.get_execution_commands(feature, state):
-                key = tuple(command)
-                if key not in seen_commands:
-                    seen_commands.add(key)
-                    workload_commands.append(command)
-        workload_plan_id = test_plan_digest(workload_commands, symbolic_tests)
+        # --- F: the feature set the two builds range over -----------------
+        # Algorithm 1 line 4 compiles P with *all* features enabled, and line 8
+        # compiles P_f with all features except f. Both need F, not just f.
+        enabled_states: dict[str, bool] | None = None
+        disabled_states: dict[str, bool] | None = None
+        if all_features_baseline:
+            names = list(feature_names) if feature_names is not None else [
+                f.name for f in discover_features(project_path, adapter=adapter)
+            ]
+            if feature not in names:
+                names.append(feature)
+                result.baseline_note = (
+                    f"{feature} was not among the discovered features; it was "
+                    "added to F explicitly"
+                )
+            names = sorted(dict.fromkeys(names))
+            enabled_states = {name: True for name in names}
+            disabled_states = {name: name != feature for name in names}
+            result.baseline_mode = "all-features"
+            result.baseline_all_features = True
+            others = len(names) - 1
+            print(f"[+] F has {len(names)} feature(s); B_all enables all of "
+                  f"them, B_{feature} enables the other {others}\n")
+        else:
+            result.baseline_mode = "project-default"
+            result.baseline_all_features = False
+            result.baseline_note = (
+                "Builds are the project's default configuration with "
+                f"{feature} forced on and off, not Algorithm 1's B_all / B_f"
+            )
+            print(f"[!] {result.baseline_note}\n")
+        result.mapping_build_states = [
+            dict(enabled_states or {feature: True}),
+            dict(disabled_states or {feature: False}),
+        ]
+
+        # --- T: the test plan, one digest per build ------------------------
+        # T must be the same set for L_all and L_f. Adapters may return a
+        # workload that depends on the feature's polarity; that is recorded
+        # honestly as test_plan_identical=False rather than hidden behind a
+        # digest of the union of both workloads.
+        enabled_commands = list(adapter.get_execution_commands(feature, True))
+        disabled_commands = list(adapter.get_execution_commands(feature, False))
+        enabled_plan_id = test_plan_digest(enabled_commands, symbolic_tests)
+        disabled_plan_id = test_plan_digest(disabled_commands, symbolic_tests)
+        result.test_plan_identical = enabled_plan_id == disabled_plan_id
+        if not result.test_plan_identical:
+            print("[!] The adapter's test workload differs between the two "
+                  "builds; the mapping reflects that workload change as well as "
+                  "the feature\n")
 
         # --- Algorithm 1 lines 4-5: B_all and L_all -----------------------
         if reuse_baseline and baseline_coverage_dir:
@@ -276,14 +354,15 @@ def run_complete_workflow(
                   f"{baseline_coverage_dir}\n")
             enabled_coverage_dir = baseline_coverage_dir
         else:
-            print(f"[3/8] Compiling with {feature} ENABLED...")
+            print(f"[3/8] Compiling B_all ({feature} ENABLED)...")
             result.checkpoint = WorkflowCheckpoint.COMPILE_ENABLED
             comp_enabled = _compile(
-                adapter, project_path, feature, True, run_tests, build_system
+                adapter, project_path, feature, True, run_tests, build_system,
+                feature_states=enabled_states,
             )
             result.compilation_enabled = comp_enabled
             if not comp_enabled.success:
-                return fail(f"Compilation failed (enabled): {comp_enabled.error_message}")
+                return fail(f"Compilation failed (B_all): {comp_enabled.error_message}")
             print(f"[+] Compilation successful ({comp_enabled.compilation_time:.2f}s)\n")
 
             print(f"[4/8] Collecting L_all with {feature} ENABLED...")
@@ -291,7 +370,8 @@ def run_complete_workflow(
             cov_enabled = _coverage(
                 adapter, project_path, feature, True, build_system,
                 comp_enabled, output_dir, symbolic_tests,
-                test_plan_id=workload_plan_id,
+                test_plan_id=enabled_plan_id,
+                feature_states=enabled_states,
             )
             result.coverage_enabled = cov_enabled
             if not cov_enabled.success:
@@ -306,17 +386,18 @@ def run_complete_workflow(
             enabled_coverage_dir = cov_enabled.coverage_dir
 
         # --- Algorithm 1 lines 7-9: B_f and L_f ---------------------------
-        print(f"[5/8] Compiling with {feature} DISABLED...")
+        print(f"[5/8] Compiling B_f ({feature} DISABLED)...")
         result.checkpoint = WorkflowCheckpoint.COMPILE_DISABLED
         comp_disabled = _compile(
-            adapter, project_path, feature, False, run_tests, build_system
+            adapter, project_path, feature, False, run_tests, build_system,
+            feature_states=disabled_states,
         )
         result.compilation_disabled = comp_disabled
         if not comp_disabled.success:
             # Algorithm 1: "we also discard build options that result in a
             # failed compilation". Surfaced as a failure so batch analysis can
             # record the option as discarded.
-            return fail(f"Compilation failed (disabled): {comp_disabled.error_message}")
+            return fail(f"Compilation failed (B_f): {comp_disabled.error_message}")
         print(f"[+] Compilation successful ({comp_disabled.compilation_time:.2f}s)\n")
 
         print(f"[6/8] Collecting L_f with {feature} DISABLED...")
@@ -324,7 +405,8 @@ def run_complete_workflow(
         cov_disabled = _coverage(
             adapter, project_path, feature, False, build_system,
             comp_disabled, output_dir, symbolic_tests,
-            test_plan_id=workload_plan_id,
+            test_plan_id=disabled_plan_id,
+            feature_states=disabled_states,
         )
         result.coverage_disabled = cov_disabled
         if not cov_disabled.success:
@@ -483,9 +565,12 @@ def _compile(
     enabled: bool,
     run_tests: bool,
     build_system: BuildSystem | None,
+    feature_states: dict[str, bool] | None = None,
 ) -> CompilationResult:
     if adapter:
-        return compile_with_adapter(adapter, feature, enabled, run_tests)
+        return compile_with_adapter(
+            adapter, feature, enabled, run_tests, feature_states=feature_states
+        )
     return compile_project(
         project_path=project_path,
         feature=feature,
@@ -505,6 +590,7 @@ def _coverage(
     output_dir: str,
     symbolic_tests: list[str],
     test_plan_id: str | None = None,
+    feature_states: dict[str, bool] | None = None,
 ) -> CoverageResult:
     if adapter:
         return generate_coverage_with_adapter(
@@ -512,6 +598,7 @@ def _coverage(
             output_dir=output_dir,
             symbolic_tests=symbolic_tests or None,
             test_plan_id=test_plan_id,
+            feature_states=feature_states,
         )
     return generate_coverage(
         project_path=project_path,

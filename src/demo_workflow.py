@@ -82,6 +82,12 @@ def _write_manifest(
         "adapter": type(adapter).__name__ if adapter else None,
         "build_system": adapter.build_system.value if adapter else None,
         "coverage_tool": adapter.coverage_tool if adapter else None,
+        # Which baseline L_all was measured against. Algorithm 1 requires
+        # "all-features" (B_all vs B_f); "project-default" is exploratory.
+        "baseline_mode": result.baseline_mode,
+        "baseline_all_features": result.baseline_all_features,
+        "mapping_build_states": result.mapping_build_states,
+        "test_plan_identical": result.test_plan_identical,
         "python": sys.version.split()[0],
         "platform": platform.platform(),
         "environment": {
@@ -136,6 +142,12 @@ def main() -> int:
         help="Remove the mapped feature code after analysis",
     )
     parser.add_argument(
+        "--default-baseline",
+        action="store_true",
+        help="Exploratory: build the project default configuration with the "
+             "feature forced on/off instead of Algorithm 1's B_all / B_f",
+    )
+    parser.add_argument(
         "--no-verify",
         action="store_true",
         help="Skip post-removal rebuild and test replay",
@@ -168,6 +180,7 @@ def main() -> int:
         symbolic=args.symbolic,
         remove=args.remove,
         verify=not args.no_verify,
+        all_features_baseline=not args.default_baseline,
     )
 
     _write_manifest(output_dir, project_path, args.feature, result)

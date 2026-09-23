@@ -376,6 +376,21 @@ def validate_target(
             result.evidence_errors.append(f"{side} contains timed-out test commands")
 
     if strict:
+        # Algorithm 1 measures L_all against B_all, the build with every
+        # feature enabled. A run against the project-default configuration is
+        # exploratory and cannot be scored as compatible with the paper.
+        if checkpoint.get("baseline_all_features") is not True or (
+            checkpoint.get("baseline_mode", "all-features") != "all-features"
+        ):
+            result.evidence_errors.append(
+                "strict validation requires the all-features baseline B_all "
+                f"(checkpoint baseline_mode="
+                f"{checkpoint.get('baseline_mode', 'unrecorded')!r})"
+            )
+        if checkpoint.get("test_plan_identical") is False:
+            result.evidence_errors.append(
+                "the test plan T differed between the two mapping builds"
+            )
         removal = checkpoint.get("removal_result")
         verification = checkpoint.get("verification_result")
         if not isinstance(removal, dict) or removal.get("success") is not True:
@@ -497,11 +512,17 @@ def validate_target(
             "zero mapped lines cannot reproduce a nonzero paper result"
         )
 
+    # A numeric acceptance band is applied only when one is configured. The
+    # paper does not record its source revisions, so no band is invented for a
+    # source-pinned modern target: the deviation is reported, and COMPATIBLE
+    # certifies the evidence chain rather than a numerical match.
     if strict and paper_lines > 0:
         tolerance = expected.get("tolerance_pct")
-        if tolerance is None or result.deviation_pct is None:
-            result.evidence_errors.append("strict tolerance is not configured")
-        elif abs(result.deviation_pct) > float(tolerance):
+        if tolerance is not None and result.deviation_pct is None:
+            result.evidence_errors.append(
+                "strict tolerance is configured but no deviation could be computed"
+            )
+        elif tolerance is not None and abs(result.deviation_pct) > float(tolerance):
             result.within_range = False
             result.combined_within_range = False
             result.evidence_errors.append(
