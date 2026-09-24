@@ -87,6 +87,8 @@ def _write_manifest(
         "baseline_mode": result.baseline_mode,
         "baseline_all_features": result.baseline_all_features,
         "mapping_build_states": result.mapping_build_states,
+        "features_excluded": result.features_excluded,
+        "out_of_tree_sources": result.out_of_tree_sources,
         # The fixed T (Algorithm 1 line 3) and which of its commands could not
         # run against B_f (they contribute no coverage to L_f).
         "test_plan_id": result.test_plan_id,
@@ -157,6 +159,15 @@ def main() -> int:
         action="store_true",
         help="Skip post-removal rebuild and test replay",
     )
+    parser.add_argument(
+        "--skip-feature",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="Leave a discovered build option out of F because this image "
+             "cannot compile it (library not installed). Repeatable; recorded "
+             "in the checkpoint and manifest as features_excluded",
+    )
     args = parser.parse_args()
 
     project_path = Path(args.project).resolve()
@@ -186,6 +197,7 @@ def main() -> int:
         remove=args.remove,
         verify=not args.no_verify,
         all_features_baseline=not args.default_baseline,
+        skip_features=args.skip_feature or None,
     )
 
     _write_manifest(output_dir, project_path, args.feature, result)

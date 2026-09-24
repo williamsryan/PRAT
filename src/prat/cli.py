@@ -257,6 +257,7 @@ def run_analysis(
     remove: bool = False,
     verify: bool = False,
     all_features_baseline: bool = True,
+    skip_features: list[str] | None = None,
 ) -> int:
     """
     Run PRAT analysis workflow.
@@ -300,6 +301,7 @@ def run_analysis(
             remove=remove,
             verify=verify,
             all_features_baseline=all_features_baseline,
+            skip_features=skip_features,
         )
 
         if not result.success:
@@ -790,6 +792,16 @@ For more information, see docs/API.md
              "Exploratory only: the result is labelled project-default and is "
              "not accepted as a paper reproduction"
     )
+    parser.add_argument(
+        "--skip-feature",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="Leave a discovered build option out of F because this "
+             "environment cannot compile it (missing library, platform-only "
+             "option). Repeatable. Recorded in the checkpoint as "
+             "features_excluded; in --batch mode the option is also not analyzed"
+    )
 
     args = parser.parse_args()
 
@@ -828,6 +840,7 @@ For more information, see docs/API.md
             run_tests=args.tests,
             symbolic=args.symbolic,
             all_features_baseline=True if args.paper_algorithm else not args.default_baseline,
+            skip_features=args.skip_feature or None,
             remove=args.remove,
             verify=not args.no_verify,
         )
@@ -877,6 +890,7 @@ For more information, see docs/API.md
         # default once anything has been removed; --no-verify opts out.
         verify=not getattr(args, "no_verify", False),
         all_features_baseline=not args.default_baseline,
+        skip_features=args.skip_feature or None,
     )
 
 

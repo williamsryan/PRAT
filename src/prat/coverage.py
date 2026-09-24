@@ -20,7 +20,13 @@ from pathlib import Path
 
 from .adapters import ProjectAdapter
 from .compilation import BuildSystem
-from .gcov import parse_tool_function_output, write_function_sidecar
+from .gcov import (
+    _COUNT_PREFIX,
+    _GCOV_LINE,
+    _NEVER_EXECUTED,
+    parse_tool_function_output,
+    write_function_sidecar,
+)
 
 
 @dataclass
@@ -224,12 +230,90 @@ def organize_coverage_files(
         source_identity = _coverage_source_identity(cov_path)
         digest = hashlib.sha256(source_identity.encode()).hexdigest()[:16]
         dest = coverage_dir / f"{digest}-{cov_path.name}"
+        if dest.exists():
+            # The same source compiled into more than one object (Mosquitto
+            # builds lib/*.c into both libmosquitto and the broker) yields one
+            # .gcov per object. They describe the same lines under different
+            # compilation units, so their counts are unioned rather than one
+            # overwriting the other.
+            merge_gcov_files(dest, cov_path)
+            cov_path.unlink()
+            continue
         shutil.move(str(cov_path), str(dest))
         moved_files.append(str(dest))
 
     print(f"[+] Organized {len(moved_files)} coverage files in {coverage_dir}")
 
     return str(coverage_dir)
+
+
+def merge_gcov_files(target: Path, extra: Path) -> None:
+    """Union ``extra``'s execution counts into ``target`` line by line.
+
+    A line executed in either compilation unit is executed; a line that is
+    executable in one and non-executable (``-``) in the other keeps the
+    executable reading; counts are summed. Header (line 0) and ``gcov -f``
+    function lines come from ``target``.
+    """
+    counts: dict[int, str] = {}
+    sources: dict[int, str] = {}
+    header: list[str] = []
+    functions: list[str] = []
+
+    def absorb(path: Path) -> None:
+        with path.open(encoding="utf-8", errors="ignore") as handle:
+            for raw in handle:
+                line = raw.rstrip("\n")
+                match = _GCOV_LINE.match(line)
+                if not match:
+                    if path == target:
+                        functions.append(line)
+                    continue
+                count_field, line_field, text = match.groups()
+                line_no = int(line_field)
+                if line_no == 0:
+                    if path == target:
+                        header.append(line)
+                    continue
+                sources.setdefault(line_no, text)
+                counts[line_no] = _merge_count(counts.get(line_no), count_field)
+
+    absorb(target)
+    absorb(extra)
+
+    with target.open("w", encoding="utf-8") as handle:
+        for line in header:
+            handle.write(line + "\n")
+        for line_no in sorted(counts):
+            handle.write(f"{counts[line_no]:>9}:{line_no:>5}:{sources[line_no]}\n")
+        for line in functions:
+            handle.write(line + "\n")
+
+
+def _merge_count(current: str | None, incoming: str) -> str:
+    """Combine two gcov count fields for the same line."""
+    incoming = incoming.strip()
+    if current is None:
+        return incoming
+    current = current.strip()
+
+    def numeric(field: str) -> int | None:
+        prefix = _COUNT_PREFIX.match(field)
+        return int(prefix.group(1)) if prefix else None
+
+    a, b = numeric(current), numeric(incoming)
+    if a is not None and b is not None:
+        return str(a + b)
+    if a is not None:
+        return current
+    if b is not None:
+        return incoming
+    # Neither is a count: prefer "never executed" (executable) over "-".
+    if current in _NEVER_EXECUTED:
+        return current
+    if incoming in _NEVER_EXECUTED:
+        return incoming
+    return current
 
 
 def _coverage_source_identity(path: Path) -> str:
@@ -809,7 +893,11 @@ def generate_coverage_with_adapter(
             execution.symbolic_failed += symbolic_execution.symbolic_failed
             execution.errors.extend(symbolic_execution.errors)
 
-        # Organize into standard directory structure
+        # Organize into standard directory structure. One staged file per
+        # distinct source; a source compiled into several objects is merged.
+        distinct_sources = len(
+            {_coverage_source_identity(Path(path)) for path in coverage_files}
+        )
         base_dir = output_dir if output_dir else str(Path.cwd())
         coverage_dir = organize_coverage_files(
             coverage_files, feature, enabled, base_dir, label=label
@@ -823,28 +911,24 @@ def generate_coverage_with_adapter(
             if functions:
                 write_function_sidecar(coverage_dir, functions)
 
+        staged_ok = len(staged_files) == distinct_sources > 0
         return CoverageResult(
-            success=(
-                len(staged_files) == len(coverage_files) > 0
-                and execution.success
-                and not missing_files
-            ),
+            success=(staged_ok and execution.success and not missing_files),
             coverage_files=staged_files,
             coverage_dir=coverage_dir,
             missing_files=missing_files,
             error_message=(
                 None
-                if (
-                    len(staged_files) == len(coverage_files) > 0
-                    and execution.success
-                    and not missing_files
-                )
+                if (staged_ok and execution.success and not missing_files)
                 else execution.error_message()
                 if not execution.success
                 else f"Coverage generation was incomplete for "
                 f"{len(missing_files)} input(s)"
                 if missing_files
                 else "No coverage files generated"
+                if not coverage_files
+                else f"Staged {len(staged_files)} coverage file(s) for "
+                f"{distinct_sources} source(s)"
             ),
             dynamic_execution=execution.success,
             execution_commands=execution.commands,

@@ -51,7 +51,12 @@ from .discovery import discover_features
 from .environment import verify_dependencies
 from .extraction import ExtractionResult, extract_from_mapping
 from .gcov import load_coverage_dir
-from .mapping import FeatureMapping, coverage_percent, map_feature_from_coverage
+from .mapping import (
+    FeatureMapping,
+    coverage_percent,
+    map_feature_from_coverage,
+    restrict_to_project,
+)
 from .mapping import protected_lines as mapping_protected
 from .removal import RemovalResult, remove_feature_code, restore_from_backup
 from .reporting import (
@@ -118,6 +123,13 @@ class WorkflowResult:
     # (B_all first, then B_f), so the exact configurations are auditable.
     mapping_build_states: list[dict[str, bool]] = field(default_factory=list)
     baseline_note: str | None = None
+    # Discovered build options deliberately left out of F (and so out of B_all
+    # and B_f) because this environment cannot compile them, e.g. a feature
+    # whose library is not installed. Declared by the caller, recorded here.
+    features_excluded: list[str] = field(default_factory=list)
+    # Sources gcov reported that lie outside the project tree (inline code in
+    # system headers). Dropped from L_all and L_f before D_f is computed.
+    out_of_tree_sources: list[str] = field(default_factory=list)
     # The fixed test plan T (Algorithm 1 line 3): its digest, its size, and
     # whether the plan actually executed against B_f matched the one executed
     # against B_all. Tests in T that exercise f cannot pass against B_f; those
@@ -171,6 +183,7 @@ def run_complete_workflow(
     reuse_baseline: bool = False,
     all_features_baseline: bool = True,
     feature_names: list[str] | None = None,
+    skip_features: list[str] | None = None,
 ) -> WorkflowResult:
     """
     Execute the PRAT pipeline for one feature.
@@ -206,6 +219,10 @@ def run_complete_workflow(
             and is not accepted as a paper reproduction.
         feature_names: The feature set F to use for B_all / B_f, overriding
             discovery. ``feature`` is always included.
+        skip_features: Discovered build options to leave out of F because
+            this environment cannot compile them (a library that is not
+            installed, a Linux-only option on macOS). Recorded in
+            ``features_excluded``; ``feature`` itself cannot be skipped.
 
     Returns:
         WorkflowResult with all outputs and statistics.
@@ -320,6 +337,20 @@ def run_complete_workflow(
                     f"{feature} was not among the discovered features; it was "
                     "added to F explicitly"
                 )
+            excluded = sorted(
+                {name for name in (skip_features or ()) if name != feature}
+                & set(names)
+            )
+            if excluded:
+                # Paper: "we also discard build options that result in a failed
+                # compilation". An option whose dependency this environment
+                # cannot provide is such an option; the exclusion is declared
+                # up front and recorded rather than discovered by a failed
+                # B_all and silently worked around.
+                names = [name for name in names if name not in excluded]
+                result.features_excluded = excluded
+                print(f"[!] Excluded from F by request (build options this "
+                      f"environment cannot compile): {', '.join(excluded)}")
             names = sorted(dict.fromkeys(names))
             enabled_states = {name: True for name in names}
             disabled_states = {name: name != feature for name in names}
@@ -461,6 +492,18 @@ def run_complete_workflow(
             return fail(f"No parseable coverage in {enabled_coverage_dir}")
         if not disabled_cov:
             return fail(f"No parseable coverage in {cov_disabled.coverage_dir}")
+
+        # P is the project; inline code the build executed in system headers
+        # is not, and must not enter D_f (removal would otherwise edit the
+        # toolchain's headers).
+        enabled_cov, dropped_enabled = restrict_to_project(enabled_cov, project_path)
+        disabled_cov, dropped_disabled = restrict_to_project(disabled_cov, project_path)
+        result.out_of_tree_sources = sorted(set(dropped_enabled) | set(dropped_disabled))
+        if result.out_of_tree_sources:
+            print(f"[+] Ignoring {len(result.out_of_tree_sources)} source(s) outside "
+                  f"the project tree (system headers)")
+        if not enabled_cov:
+            return fail("No coverage for sources inside the project tree")
 
         result.coverage_percent_enabled = coverage_percent(enabled_cov)
         result.coverage_percent_disabled = coverage_percent(disabled_cov)

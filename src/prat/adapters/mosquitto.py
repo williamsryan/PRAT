@@ -9,6 +9,7 @@ On macOS: CMake-based build (Makefile requires CMake on Mac OS X).
 from __future__ import annotations
 
 import platform
+import subprocess
 from pathlib import Path
 
 from ..compilation import BuildSystem
@@ -137,16 +138,15 @@ class MosquittoAdapter(ProjectAdapter):
     def _write_listener_config(self, use_tls: bool) -> str:
         """Write a broker config with a plain listener, or a TLS one, and return its path."""
         root = self.project_path.resolve()
-        ssl_dir = root / "test" / "ssl"
-        use_tls = use_tls and ssl_dir.exists()
         name = "prat_tls" if use_tls else "prat_plain"
         config_path = root / "build" / f"{name}.conf"
         port = 18883 if use_tls else 11883
 
         lines = ["allow_anonymous true\n", f"listener {port}\n"]
         if use_tls:
+            ssl_dir = self._ensure_test_certificates()
             lines += [
-                f"cafile {ssl_dir}/test-root-ca.crt\n",
+                f"cafile {ssl_dir}/ca.crt\n",
                 f"certfile {ssl_dir}/server.crt\n",
                 f"keyfile {ssl_dir}/server.key\n",
             ]
@@ -155,23 +155,60 @@ class MosquittoAdapter(ProjectAdapter):
         config_path.write_text("".join(lines))
         return str(config_path)
 
+    def _ensure_test_certificates(self) -> Path:
+        """A CA and a ``localhost`` server certificate under ``build/prat_ssl``.
+
+        Mosquitto ships test certificates in ``test/ssl``, but the ones in the
+        2.0.x tags have expired, so a client that verifies them fails with
+        "certificate expired" and the TLS session contributes no coverage.
+        Mosquitto's own test harness regenerates them; PRAT generates its own
+        into the build directory instead, leaving the project tree untouched.
+        """
+        ssl_dir = self.project_path.resolve() / "build" / "prat_ssl"
+        server_crt = ssl_dir / "server.crt"
+        if server_crt.exists():
+            return ssl_dir
+        ssl_dir.mkdir(parents=True, exist_ok=True)
+        ext_file = ssl_dir / "server.ext"
+        ext_file.write_text("subjectAltName=DNS:localhost,IP:127.0.0.1\n")
+        subj = "/O=PRAT test/CN="
+        # Only options both OpenSSL and LibreSSL accept: the SAN goes through
+        # -extfile at signing time rather than -addext / -copy_extensions.
+        commands = [
+            ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "30",
+             "-subj", f"{subj}PRAT test CA",
+             "-keyout", str(ssl_dir / "ca.key"), "-out", str(ssl_dir / "ca.crt")],
+            ["openssl", "req", "-newkey", "rsa:2048", "-nodes",
+             "-subj", f"{subj}localhost",
+             "-keyout", str(ssl_dir / "server.key"), "-out", str(ssl_dir / "server.csr")],
+            ["openssl", "x509", "-req", "-days", "30", "-in", str(ssl_dir / "server.csr"),
+             "-CA", str(ssl_dir / "ca.crt"), "-CAkey", str(ssl_dir / "ca.key"),
+             "-CAcreateserial", "-extfile", str(ext_file), "-out", str(server_crt)],
+        ]
+        for command in commands:
+            subprocess.run(command, check=True, capture_output=True, text=True)
+        return ssl_dir
+
     def _broker_session(self, use_tls: bool) -> list[str]:
         """One command: start the broker, publish once, SIGTERM it.
 
         The clean SIGTERM matters: gcov's atexit handler is what writes the
-        .gcda files, so a killed broker leaves no coverage.
+        .gcda files, so a killed broker leaves no coverage. The trap runs it on
+        every exit path, including a failing client, so a build in which the
+        session cannot succeed (a TLS listener in a build without TLS) still
+        stops its broker instead of leaving it holding the port and the output
+        pipes open until the timeout.
         """
         root = self.project_path.resolve()
         broker = str(root / "build" / "src" / "mosquitto")
         pub = str(root / "build" / "client" / "mosquitto_pub")
-        ssl_dir = root / "test" / "ssl"
-        use_tls = use_tls and ssl_dir.exists()
         config_path = self._write_listener_config(use_tls)
         port = 18883 if use_tls else 11883
 
         if use_tls:
+            ssl_dir = root / "build" / "prat_ssl"
             client_cmd = (
-                f"{pub} --cafile {ssl_dir}/test-root-ca.crt --insecure"
+                f"{pub} --cafile {ssl_dir}/ca.crt"
                 f" -h localhost -p {port} -t prat/test -m hello"
             )
         else:
@@ -179,12 +216,12 @@ class MosquittoAdapter(ProjectAdapter):
 
         script = (
             f"set -e\n"
-            f"{broker} -c {config_path} &\n"
+            f"{broker} -c {config_path} >/dev/null 2>&1 &\n"
             f"BROKER_PID=$!\n"
+            f"trap 'kill -TERM $BROKER_PID 2>/dev/null; wait $BROKER_PID 2>/dev/null' EXIT\n"
             f"sleep 1\n"
+            f"kill -0 $BROKER_PID\n"
             f"{client_cmd}\n"
-            f"kill -TERM $BROKER_PID\n"
-            f"wait $BROKER_PID || true\n"
         )
         return ["bash", "-c", script]
 
@@ -203,10 +240,10 @@ class MosquittoAdapter(ProjectAdapter):
         if not _is_macos():
             test_cmd = self.get_test_command()
             return [test_cmd] if test_cmd else []
-        plan = [self._broker_session(use_tls=False)]
-        if (self.project_path.resolve() / "test" / "ssl").exists():
-            plan.append(self._broker_session(use_tls=True))
-        return plan
+        return [
+            self._broker_session(use_tls=False),
+            self._broker_session(use_tls=True),
+        ]
 
     def get_execution_commands(self, feature: str, enabled: bool) -> list:
         """

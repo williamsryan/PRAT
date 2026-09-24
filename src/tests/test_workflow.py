@@ -475,6 +475,30 @@ class TestAlgorithmOneBaseline:
             {"SRV": True, "TLS": False},
         ]
 
+    def test_skipped_features_leave_f_and_are_recorded(
+        self, recorded_builds, tmp_path
+    ):
+        """An option this environment cannot compile is left out of both builds
+        by explicit request, and the checkpoint says so. The analyzed feature
+        itself cannot be skipped."""
+        import json
+
+        _, compile_calls, _ = recorded_builds
+
+        result = run_complete_workflow(
+            str(tmp_path), "TLS", output_dir=str(tmp_path / "out"),
+            skip_features=["WEBSOCKETS", "TLS", "NOT_DISCOVERED"],
+        )
+
+        assert result.success is True
+        assert compile_calls == [
+            {"BRIDGE": True, "TLS": True},
+            {"BRIDGE": True, "TLS": False},
+        ]
+        assert result.features_excluded == ["WEBSOCKETS"]
+        data = json.loads((tmp_path / "out" / "workflow_checkpoint.json").read_text())
+        assert data["features_excluded"] == ["WEBSOCKETS"]
+
     def test_default_baseline_is_labelled_and_passes_no_feature_set(
         self, recorded_builds, tmp_path
     ):

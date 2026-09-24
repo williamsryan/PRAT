@@ -58,7 +58,12 @@ from .discovery import Feature, discover_features
 from .extraction import ExtractionResult, extract_from_mapping
 from .feature_graph import build_feature_graph, generate_feature_graph_html
 from .gcov import load_coverage_dir
-from .mapping import FeatureMapping, coverage_percent, map_feature_from_coverage
+from .mapping import (
+    FeatureMapping,
+    coverage_percent,
+    map_feature_from_coverage,
+    restrict_to_project,
+)
 from .removal import RemovalResult, remove_feature_code, restore_from_backup
 from .symbolic import (
     KleeConfig,
@@ -143,6 +148,8 @@ class BatchResult:
     #: Digest and size of the fixed test plan T run against every build.
     test_plan_id: str | None = None
     test_plan_commands: int | None = None
+    #: Sources gcov reported outside the project tree, dropped before mapping.
+    out_of_tree_sources: list[str] = field(default_factory=list)
 
     @property
     def union_removable_lines(self) -> int:
@@ -363,6 +370,15 @@ def run_batch_analysis(
         )
         print(f"    [!] {result.error_message}")
         return _finalize_batch_result(result, output_dir, start_time)
+    # Inline code the build executed in system headers is not part of P.
+    baseline_coverage, dropped = restrict_to_project(baseline_coverage, project_path)
+    result.out_of_tree_sources = list(dropped)
+    if dropped:
+        print(f"    Ignoring {len(dropped)} source(s) outside the project tree")
+    if not baseline_coverage:
+        result.error_message = "No baseline coverage for sources inside the project tree"
+        print(f"    [!] {result.error_message}")
+        return _finalize_batch_result(result, output_dir, start_time)
 
     result.baseline_coverage_percent = coverage_percent(baseline_coverage)
     print(f"    L_all: {sum(len(c.executed) for c in baseline_coverage.values())} "
@@ -463,6 +479,8 @@ def run_batch_analysis(
                 f"Coverage failed for {feature.name}; no parseable files"
             )
             return _finalize_batch_result(result, output_dir, start_time)
+        disabled_coverage, dropped = restrict_to_project(disabled_coverage, project_path)
+        result.out_of_tree_sources = sorted(set(result.out_of_tree_sources) | set(dropped))
         mapping = map_feature_from_coverage(
             feature.name, baseline_coverage, disabled_coverage
         )
@@ -661,6 +679,7 @@ def _save_batch_checkpoint(result: BatchResult, output_dir: str) -> str:
         "feature_names": result.feature_names,
         "test_plan_id": result.test_plan_id,
         "test_plan_commands": result.test_plan_commands,
+        "out_of_tree_sources": result.out_of_tree_sources,
         "baseline_all_features": result.baseline_all_features,
         "baseline_coverage_percent": result.baseline_coverage_percent,
         "baseline_coverage": (

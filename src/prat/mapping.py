@@ -29,6 +29,7 @@ rule with L_f = {} for that file, so D_f is its executed line set.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from .gcov import GcovFile, format_ranges, load_coverage_dir, merge_contiguous
 
@@ -223,6 +224,35 @@ def coverage_percent(coverage: dict[str, GcovFile]) -> float | None:
     if executable == 0:
         return None
     return 100.0 * covered / executable
+
+
+def restrict_to_project(
+    coverage: dict[str, GcovFile], project_path: str
+) -> tuple[dict[str, GcovFile], list[str]]:
+    """Drop coverage for sources outside the project tree.
+
+    gcov reports every compilation unit the build executed, which includes
+    inline functions from system headers (OpenSSL's ``x509v3.h`` under a TLS
+    build, for instance). Those lines are not part of the program P that
+    Algorithm 1 maps and removal must never touch them, so they are removed
+    from L_all and L_f before ``D_f`` is computed. Relative source paths are
+    kept: gcov records them relative to the build root, inside the tree.
+
+    Returns the filtered coverage and the source paths that were dropped.
+    """
+    root = Path(project_path).resolve()
+    kept: dict[str, GcovFile] = {}
+    dropped: list[str] = []
+    for source_path, gcov_file in coverage.items():
+        candidate = Path(source_path)
+        if candidate.is_absolute():
+            try:
+                candidate.resolve().relative_to(root)
+            except ValueError:
+                dropped.append(source_path)
+                continue
+        kept[source_path] = gcov_file
+    return kept, sorted(dropped)
 
 
 def function_totals(coverage: dict[str, GcovFile]) -> tuple[int, int]:

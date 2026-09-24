@@ -141,6 +141,31 @@ chmod -R u+w App/mosquitto
 sudo prat ...
 ```
 
+### `Compilation failed (B_all)`: a library for some option is missing
+
+`B_all` enables every discovered option, so it needs every optional dependency: for Mosquitto,
+libwebsockets, c-ares (`SRV`), jemalloc, libsystemd, libwrap, cJSON. Install them (the Docker
+images do), or leave the options this environment cannot compile out of `F` explicitly:
+
+```bash
+prat App/mosquitto TLS --skip-feature SRV --skip-feature DLT --skip-feature JEMALLOC
+```
+
+The exclusion is recorded in the checkpoint as `features_excluded`; the analyzed feature cannot be
+skipped. On macOS, Mosquitto's `PLUGINS`, `EPOLL`, `DLT`, `SYSTEMD` and `USE_LIBWRAP` options do
+not build at all and must be skipped.
+
+### `Exact removal incomplete: ... one or more mapped ranges were syntactically unsafe`
+
+The balance guard declined runs in `D_f` whose removal would leave unbalanced delimiters, and
+`require_complete` (the default) fails the removal and restores the tree rather than remove part
+of `D_f`. The declined ranges are in `RemovalResult.skipped_unbalanced`. This is usually a
+coverage symptom: `if (x) {` reached `D_f` because `T` executed it under `B_all`, but the body
+never ran (so, per the paper, it stays) and the closing brace is not an executable line. A larger
+`T` (`--symbolic`, or more commands in the adapter's `get_test_plan()`) is the fix; the local
+two-session Mosquitto plan on macOS reaches about 20% line coverage and declines roughly half of
+`D_TLS` for this reason.
+
 ## Mapping Issues
 
 The mapping is `D_f = L_all \ L_f`: the lines executed under `T` in the all-features build

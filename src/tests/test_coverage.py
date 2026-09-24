@@ -70,6 +70,45 @@ class TestOrganizeCoverageFiles:
 
         assert not (result_dir / "stale.gcov").exists()
 
+    def test_same_source_from_two_objects_is_merged_not_overwritten(self, tmp_path):
+        """Mosquitto compiles lib/*.c into both libmosquitto and the broker, so
+        gcov yields one .gcov per object for the same source. A line executed
+        in either compilation unit is executed."""
+        from prat.gcov import parse_gcov
+
+        lib_dir = tmp_path / "lib"
+        src_dir = tmp_path / "srcobj"
+        lib_dir.mkdir()
+        src_dir.mkdir()
+        header = "        -:    0:Source:lib/net.c\n"
+        (lib_dir / "net.c.gcov").write_text(
+            header
+            + "        3:    1:int a;\n"
+            + "    #####:    2:int b;\n"
+            + "        -:    3:/* only code in the broker build */\n"
+            + "        -:    4:}\n"
+        )
+        (src_dir / "net.c.gcov").write_text(
+            header
+            + "        2:    1:int a;\n"
+            + "        7:    2:int b;\n"
+            + "    #####:    3:/* only code in the broker build */\n"
+            + "        -:    4:}\n"
+        )
+
+        result_dir = organize_coverage_files(
+            [str(lib_dir / "net.c.gcov"), str(src_dir / "net.c.gcov")],
+            "TLS", True, str(tmp_path),
+        )
+
+        staged = list(Path(result_dir).glob("*-net.c.gcov"))
+        assert len(staged) == 1
+        parsed = parse_gcov(str(staged[0]))
+        assert parsed.executed == {1, 2}
+        assert parsed.never_executed == {3}
+        assert parsed.non_executable == {4}
+        assert "        5:    1:" in staged[0].read_text()
+
 
 class TestGenerateCoverage:
     """Tests for generate_coverage()."""

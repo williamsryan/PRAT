@@ -307,7 +307,12 @@ def _cmake_features_from_cache(project_path: str) -> list[Feature]:
     with tempfile.TemporaryDirectory(prefix="prat-cmake-") as build_dir:
         try:
             configure = subprocess.run(
-                ["cmake", "-S", str(project_path), "-B", build_dir],
+                # CMake >= 4 refuses projects whose cmake_minimum_required is
+                # below 3.5 (Mosquitto 2.0.x declares 3.0); this flag lets the
+                # configure proceed so the cache can be listed. It is what the
+                # Mosquitto adapter passes for the real build as well.
+                ["cmake", "-S", str(project_path), "-B", build_dir,
+                 "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"],
                 capture_output=True,
                 text=True,
                 timeout=300,

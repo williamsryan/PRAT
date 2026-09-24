@@ -88,9 +88,15 @@ Four of the eight demos analyse a feature the paper publishes no line count for;
 reports those as `OBSERVED`, never as a pass or a fail.
 
 **Known caveat.** The single-feature baseline was changed from project-defaults-±f to `B_all` vs
-`B_f` in this revision, and the all-features builds inside the pinned images have not yet been
-re-run on our side. If a target's all-features configuration does not compile in its image, the
-demo fails with `Compilation failed (B_all)` rather than silently falling back to another
+`B_f` in this revision. A local run on macOS (`prat App/mosquitto TLS --remove` with the options
+this platform cannot build skipped via `--skip-feature`) exercised the whole path: `B_all` over 19
+options, the fixed two-session `T` against both builds with the TLS session tolerated against
+`B_TLS`, `|D_TLS| = 398` lines across 14 files at 19.9% line coverage under `T`. Removal then
+stopped because the balance guard declined about half of `D_TLS` (bodies never executed by so
+small a `T`, see `docs/TROUBLESHOOTING.md`). The Docker images, which run Mosquitto's unit tests
+as `T`, have not been rebuilt on our side since the change; their Dockerfiles install the
+libraries `B_all` needs. If a target's all-features configuration does not compile in its image,
+the demo fails with `Compilation failed (B_all)` rather than silently falling back to another
 baseline. That is the intended behaviour; report it rather than working around it.
 
 ## Path 3: the full paper algorithm on one codebase (hours, optional)

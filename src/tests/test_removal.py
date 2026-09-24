@@ -346,6 +346,55 @@ class TestBuildGate:
         assert result.restored is False
         assert source.read_text() == "\ntwo();\n"
 
+    def test_restore_puts_nested_files_back_with_a_relative_project_path(
+        self, tmp_path, monkeypatch
+    ):
+        """CMake builds make gcov record absolute source paths, and the CLI is
+        usually run with a relative project path. The backup must mirror the
+        tree so the restore lands on lib/net.c, not on a new net.c at the
+        project root."""
+        project = tmp_path / "proj"
+        (project / "lib").mkdir(parents=True)
+        source = project / "lib" / "net.c"
+        source.write_text("one();\ntwo();\n")
+        monkeypatch.chdir(tmp_path)
+
+        result = remove_feature_code(
+            make_extraction({str(source.resolve()): [1]}),
+            "proj",
+            "TLS",
+            rebuild=True,
+            build_command=["false"],
+        )
+
+        assert result.restored is True
+        assert source.read_text() == "one();\ntwo();\n"
+        assert not (project / "net.c").exists()
+        assert (project / "_backup_before_remove_TLS" / "lib" / "net.c").exists()
+
+    def test_sources_outside_the_project_are_never_modified(self, tmp_path):
+        """An executed inline function in a system header can land in D_f;
+        removal must leave the toolchain alone and say so."""
+        project = tmp_path / "proj"
+        project.mkdir()
+        (project / "net.c").write_text("one();\ntwo();\n")
+        header = tmp_path / "usr" / "include" / "x509v3.h"
+        header.parent.mkdir(parents=True)
+        header.write_text("inline();\n")
+
+        result = remove_feature_code(
+            make_extraction({"net.c": [1], str(header.resolve()): [1]}),
+            str(project),
+            "TLS",
+            rebuild=False,
+        )
+
+        assert header.read_text() == "inline();\n"
+        assert result.out_of_tree_sources == [str(header.resolve())]
+        assert result.success is False
+        assert "outside the project tree" in (result.error_message or "")
+        assert not (project / "_backup_before_remove_TLS" / "x509v3.h").exists()
+
     def test_no_restore_when_disabled(self, tmp_path):
         source = tmp_path / "net.c"
         source.write_text("one();\ntwo();\n")

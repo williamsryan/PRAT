@@ -53,6 +53,27 @@ this is a major version and the committed results under `results/` must be regen
   `tolerance_pct` as an error while every published-value target sets it to `null`, so
   `make compatibility-check` could never pass. A tolerance band now applies only when one is
   configured, which is what the documentation already said.
+- **Removal never writes outside the project tree.** gcov reports inline code the build executed
+  in system headers (OpenSSL's `x509v3.h` under a TLS build); it reached `D_f`, and removal,
+  joining an absolute path onto the project root, blanked a line in the Homebrew-installed
+  header. Sources outside the project are now dropped from `L_all` and `L_f` before mapping
+  (`restrict_to_project`, recorded as `out_of_tree_sources`) and refused by removal as a second
+  line of defence.
+- **Backup and restore work with a relative project path.** The backup flattened files to their
+  basename whenever gcov recorded absolute source paths and the CLI was given a relative project
+  path (the normal CMake case), so a failed removal "restored" copies to the project root while
+  the real `lib/*.c` stayed modified. The project root is resolved once and the backup mirrors
+  the tree.
+- **A source compiled into two objects keeps both coverage readings.** Mosquitto builds `lib/*.c`
+  into both libmosquitto and the broker, so gcov yields two `.gcov` files for one source; staging
+  overwrote one with the other and then failed with "No coverage files generated". Their counts
+  are now unioned per line.
+- **Mosquitto on macOS: the TLS session actually runs.** The shipped `test/ssl` certificates in
+  the 2.0.x tags have expired, so the TLS client failed and, under `set -e`, left the broker
+  holding the port and the output pipes until the 300 s timeout. The adapter now generates its
+  own CA and `localhost` certificate under `build/prat_ssl` and stops the broker on every exit
+  path. CMake discovery passes `-DCMAKE_POLICY_VERSION_MINIMUM=3.5` so CMake 4 can list the
+  option cache.
 - **A failed rebuild now fails the removal and restores the tree.** The paper relies on a broken
   build preventing an incorrect implementation from being produced; previously the failure was
   logged and the removal still reported success.
@@ -112,6 +133,12 @@ this is a major version and the committed results under `results/` must be regen
   `tests_not_run_in_b_f` (per-feature `tests_not_run` in batch), and per-build
   `test_failures_tolerated` / `execution_errors` on coverage results.
 - `ARTIFACT.md` — the reviewer's guide: first command, runtimes, disk, what success looks like.
+- `--skip-feature NAME` (CLI and `demo_workflow.py`): leave a discovered build option out of
+  `F` because the environment cannot compile it (a library that is not installed, a Linux-only
+  option on macOS). Recorded as `features_excluded`; the analyzed feature itself cannot be
+  skipped. The Mosquitto Docker images install the libraries the non-default options need
+  (c-ares, jemalloc, systemd, libwrap) and CUnit for `make utest`, so no option needs skipping
+  there.
 - `results/README.md` is now tracked (it was linked from the README and CHANGELOG but had never
   been committed, because `results/` was ignored wholesale).
 - `BatchResult.union_removable_lines` — `|union of D_f|`, the quantity comparable to Table 4's
