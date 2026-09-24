@@ -38,6 +38,12 @@ class CoverageResult:
     execution_timed_out: int = 0
     symbolic_tests_replayed: int = 0
     test_plan_id: str | None = None
+    # Whether tests in T that could not run against this build were tolerated
+    # (Algorithm 1 runs the same T against B_f, where f's own tests cannot
+    # pass) and the messages of the tests that did fail, so the checkpoint
+    # shows exactly which part of T contributed no coverage.
+    test_failures_tolerated: bool = False
+    execution_errors: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -51,14 +57,24 @@ class ExecutionResult:
     symbolic_replayed: int = 0
     symbolic_failed: int = 0
     errors: list[str] = field(default_factory=list)
+    # The commands that were actually attempted, in order, so the executed
+    # test plan can be digested and compared across builds.
+    executed: list[list[str]] = field(default_factory=list)
+    # When True, a failing or timed-out test does not invalidate the run;
+    # coverage is taken from whatever part of T did execute.
+    failures_tolerated: bool = False
 
     @property
     def success(self) -> bool:
-        """True only when at least one execution completed and none failed."""
+        """True when at least one execution completed and, unless failures are
+        tolerated, none failed or timed out."""
         completed = self.succeeded + self.symbolic_replayed
+        if completed == 0:
+            return False
+        if self.failures_tolerated:
+            return True
         return (
-            completed > 0
-            and self.failed == 0
+            self.failed == 0
             and self.timed_out == 0
             and self.symbolic_failed == 0
         )
@@ -477,6 +493,7 @@ def execute_for_coverage(
     symbolic_tests: list[str] | None = None,
     binary_path: str | None = None,
     execution_commands: list[list[str]] | None = None,
+    allow_failures: bool = False,
 ) -> ExecutionResult:
     """
     Execute the test suite T to generate .gcda profile data.
@@ -495,16 +512,23 @@ def execute_for_coverage(
         symbolic_tests: Paths to KLEE ``.ktest`` files (the set S), replayed via
             klee-replay against ``binary_path``.
         binary_path: Instrumented binary to replay symbolic tests against.
+        execution_commands: The fixed plan U to run, unchanged, against this
+            build. Defaults to the adapter's polarity-specific workload.
+        allow_failures: Tolerate tests that fail or time out. Algorithm 1 runs
+            the same T against B_f, where the tests exercising f cannot pass;
+            their failure is recorded and coverage is taken from the rest of T.
+            The baseline B_all must never use this.
 
     Returns:
         Structured result. Coverage is valid only when at least one test or
-        symbolic replay completes successfully and none fail or time out.
+        symbolic replay completes successfully and, unless ``allow_failures``
+        is set, none fail or time out.
     """
     project_path = str(adapter.project_path)
     env = os.environ.copy()
     env.update(adapter.get_coverage_environment())
 
-    result = ExecutionResult()
+    result = ExecutionResult(failures_tolerated=allow_failures)
 
     # --- U: unit tests shipped with the project -----------------------------
     exec_cmds = (
@@ -516,6 +540,7 @@ def execute_for_coverage(
         print("    [!] Adapter provided no execution commands (U is empty)")
     for cmd in exec_cmds:
         result.commands += 1
+        result.executed.append(list(cmd))
         try:
             print(f"    Running: {' '.join(cmd)}")
             proc = subprocess.run(
@@ -533,13 +558,17 @@ def execute_for_coverage(
                 detail = (proc.stderr or proc.stdout or "").strip().splitlines()
                 message = detail[-1] if detail else f"exit code {proc.returncode}"
                 result.errors.append(f"{' '.join(cmd)}: {message}")
+                if allow_failures:
+                    print("    [!] Test failed in this build; tolerated "
+                          "(contributes no coverage)")
         except subprocess.TimeoutExpired:
             print(f"    [!] Execution timed out after {timeout}s")
             result.timed_out += 1
+            result.errors.append(f"{' '.join(cmd)}: timed out after {timeout}s")
         except (OSError, subprocess.SubprocessError) as exc:
             print(f"    [!] Execution failed: {exc}")
             result.failed += 1
-            result.errors.append(str(exc))
+            result.errors.append(f"{' '.join(cmd)}: {exc}")
 
     # --- S: symbolically generated tests ------------------------------------
     if symbolic_tests:
@@ -576,6 +605,7 @@ def generate_coverage_with_adapter(
     label: str | None = None,
     execution_commands: list[list[str]] | None = None,
     test_plan_id: str | None = None,
+    allow_test_failures: bool = False,
 ) -> CoverageResult:
     """
     Generate coverage files using a ProjectAdapter.
@@ -596,7 +626,12 @@ def generate_coverage_with_adapter(
             ``feature``/``enabled`` pair; batch analysis passes an explicit
             label such as ``all_features``.
         execution_commands: A precomputed test plan to execute unchanged.
-        test_plan_id: Digest identifying that test plan across builds.
+        test_plan_id: Digest identifying that test plan across builds. When
+            this function runs the plan itself, the recorded digest is
+            recomputed from the commands actually executed, so a build that
+            ran a different plan cannot inherit the caller's digest.
+        allow_test_failures: Tolerate tests in T that cannot pass against this
+            build (a B_f build lacking f). Never set for B_all.
 
     Returns:
         CoverageResult with paths to generated .gcov files
@@ -624,7 +659,10 @@ def generate_coverage_with_adapter(
                 enabled,
                 symbolic_tests=symbolic_tests,
                 execution_commands=execution_commands,
+                allow_failures=allow_test_failures,
             )
+            # The digest of record is what ran, not what was requested.
+            test_plan_id = test_plan_digest(execution.executed, symbolic_tests)
             if not execution.success:
                 return CoverageResult(
                     success=False,
@@ -639,8 +677,15 @@ def generate_coverage_with_adapter(
                     execution_timed_out=execution.timed_out,
                     symbolic_tests_replayed=execution.symbolic_replayed,
                     test_plan_id=test_plan_id,
+                    test_failures_tolerated=allow_test_failures,
+                    execution_errors=list(execution.errors),
                 )
-            print("    [+] Execution complete — .gcda profile data generated")
+            if execution.errors:
+                print(f"    [+] Execution complete — {execution.succeeded} of "
+                      f"{execution.commands} test command(s) ran; "
+                      f"{len(execution.errors)} could not run in this build")
+            else:
+                print("    [+] Execution complete — .gcda profile data generated")
 
         # Step 2: Run coverage tool (gcov/llvm-cov) on .gcno + .gcda files.
         # CMake builds put .gcda files under build/; use the cmake path.
@@ -808,6 +853,8 @@ def generate_coverage_with_adapter(
             execution_timed_out=execution.timed_out,
             symbolic_tests_replayed=execution.symbolic_replayed,
             test_plan_id=test_plan_id,
+            test_failures_tolerated=allow_test_failures,
+            execution_errors=list(execution.errors),
         )
 
     except Exception as e:
@@ -818,6 +865,7 @@ def generate_coverage_with_adapter(
             missing_files=[],
             error_message=f"Coverage generation with adapter failed: {e}",
             test_plan_id=test_plan_id,
+            test_failures_tolerated=allow_test_failures,
         )
 
 

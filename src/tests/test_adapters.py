@@ -5,6 +5,7 @@ from unittest.mock import patch
 import pytest
 
 from prat.adapters import get_adapter
+from prat.adapters.aom import AomAdapter
 from prat.adapters.cmake import CMakeAdapter
 from prat.adapters.ffmpeg import FFmpegAdapter
 from prat.adapters.mosquitto import MosquittoAdapter
@@ -142,6 +143,68 @@ class TestMosquittoAdapter:
             assert "--target clean" in cmd[2]
             assert "*.gcda" in cmd[2]
 
+    # --- The fixed test plan T ---
+
+    def test_linux_test_plan_is_the_unit_tests(self, adapter):
+        with patch("prat.adapters.mosquitto._is_macos", return_value=False):
+            assert adapter.get_test_plan(["TLS", "BRIDGE"]) == [
+                ["make", "utest", "-j", "WITH_COVERAGE=yes"]
+            ]
+
+    def test_macos_test_plan_has_a_plain_session_that_runs_on_every_build(
+        self, adapter, tmp_path
+    ):
+        """Against B_TLS the TLS session cannot run; the plain session must
+        still contribute coverage, or L_TLS would be empty and D_TLS = L_all."""
+        (tmp_path / "test" / "ssl").mkdir(parents=True)
+        with patch("prat.adapters.mosquitto._is_macos", return_value=True):
+            plan = adapter.get_test_plan(["TLS", "BRIDGE"])
+            again = adapter.get_test_plan(["BRIDGE"])
+
+        assert len(plan) == 2
+        plain, tls = plan
+        assert "-p 11883" in plain[2] and "cafile" not in plain[2]
+        assert "-p 18883" in tls[2] and "--cafile" in tls[2]
+        # The plan does not depend on which feature is being analysed.
+        assert again == plan
+        assert (tmp_path / "build" / "prat_plain.conf").read_text().splitlines() == [
+            "allow_anonymous true", "listener 11883",
+        ]
+        assert "cafile" in (tmp_path / "build" / "prat_tls.conf").read_text()
+
+    def test_macos_test_plan_without_certificates_is_plain_only(self, adapter):
+        with patch("prat.adapters.mosquitto._is_macos", return_value=True):
+            plan = adapter.get_test_plan(["TLS"])
+        assert len(plan) == 1
+        assert "cafile" not in plan[0][2]
+
+
+class TestAomAdapter:
+    """Tests for AomAdapter's fixed test plan."""
+
+    @pytest.fixture
+    def adapter(self, tmp_path):
+        (tmp_path / "CMakeLists.txt").touch()
+        (tmp_path / "av1").mkdir()
+        return AomAdapter(str(tmp_path))
+
+    def test_test_plan_is_fixed_and_exercises_encoder_and_decoder(self, adapter):
+        plan = adapter.get_test_plan(["CONFIG_AV1_ENCODER", "CONFIG_AV1_DECODER"])
+
+        assert plan == adapter.get_test_plan(["CONFIG_AV1_DECODER"])
+        assert plan[0][0] == "sh"
+        assert sum("aomenc" in cmd[0] for cmd in plan) == 2
+        assert sum("aomdec" in cmd[0] for cmd in plan) == 1
+
+    def test_enabled_workload_equals_the_plan_and_disabled_is_decode_only(
+        self, adapter
+    ):
+        assert adapter.get_execution_commands("CONFIG_AV1_ENCODER", True) == (
+            adapter.get_test_plan(["CONFIG_AV1_ENCODER"])
+        )
+        disabled = adapter.get_execution_commands("CONFIG_AV1_ENCODER", False)
+        assert len(disabled) == 1 and "aomdec" in disabled[0][0]
+
 
 class TestFFmpegAdapter:
     """Tests for FFmpegAdapter."""
@@ -185,6 +248,14 @@ class TestFFmpegAdapter:
         assert any("prat-dca.dts" in " ".join(command) for command in enabled)
         assert "prat-dca.dts" in " ".join(disabled[0])
         assert "not found" in disabled[0][2]
+
+    def test_dca_test_plan_is_the_positive_workload_only(self, adapter):
+        """The 'decoder is absent' assertion is a post-removal check, not
+        part of T: run against B_all it would fail by design."""
+        plan = adapter.get_test_plan(["decoder=dca"])
+
+        assert plan == adapter.get_execution_commands("decoder=dca", True)
+        assert not any("not found" in " ".join(command) for command in plan)
 
 
 class TestRustAdapter:

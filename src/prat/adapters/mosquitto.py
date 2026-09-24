@@ -134,13 +134,13 @@ class MosquittoAdapter(ProjectAdapter):
             src_dir.exists()
         )
 
-    def _write_mosquitto_config(self, feature: str, enabled: bool) -> str:
-        """Write a minimal mosquitto.conf for the PRAT test run and return its path."""
+    def _write_listener_config(self, use_tls: bool) -> str:
+        """Write a broker config with a plain listener, or a TLS one, and return its path."""
         root = self.project_path.resolve()
         ssl_dir = root / "test" / "ssl"
-        config_path = root / "build" / f"prat_{feature.lower()}_{int(enabled)}.conf"
-
-        use_tls = feature.upper() == "TLS" and enabled and ssl_dir.exists()
+        use_tls = use_tls and ssl_dir.exists()
+        name = "prat_tls" if use_tls else "prat_plain"
+        config_path = root / "build" / f"{name}.conf"
         port = 18883 if use_tls else 11883
 
         lines = ["allow_anonymous true\n", f"listener {port}\n"]
@@ -151,41 +151,32 @@ class MosquittoAdapter(ProjectAdapter):
                 f"keyfile {ssl_dir}/server.key\n",
             ]
 
+        config_path.parent.mkdir(parents=True, exist_ok=True)
         config_path.write_text("".join(lines))
         return str(config_path)
 
-    def get_execution_commands(self, feature: str, enabled: bool) -> list:
-        """
-        Get commands to exercise Mosquitto for dynamic coverage.
+    def _broker_session(self, use_tls: bool) -> list[str]:
+        """One command: start the broker, publish once, SIGTERM it.
 
-        Linux: unit tests via make utest.
-        macOS: start broker briefly with appropriate config, connect a client,
-               then SIGTERM the broker so gcda files are flushed on clean exit.
+        The clean SIGTERM matters: gcov's atexit handler is what writes the
+        .gcda files, so a killed broker leaves no coverage.
         """
-        if not _is_macos():
-            test_cmd = self.get_test_command()
-            return [test_cmd] if test_cmd else []
-
         root = self.project_path.resolve()
         broker = str(root / "build" / "src" / "mosquitto")
         pub = str(root / "build" / "client" / "mosquitto_pub")
         ssl_dir = root / "test" / "ssl"
-        config_path = self._write_mosquitto_config(feature, enabled)
-
-        use_tls = feature.upper() == "TLS" and enabled and ssl_dir.exists()
+        use_tls = use_tls and ssl_dir.exists()
+        config_path = self._write_listener_config(use_tls)
         port = 18883 if use_tls else 11883
-        ssl_dir_str = str(ssl_dir)
 
         if use_tls:
             client_cmd = (
-                f"{pub} --cafile {ssl_dir_str}/test-root-ca.crt --insecure"
+                f"{pub} --cafile {ssl_dir}/test-root-ca.crt --insecure"
                 f" -h localhost -p {port} -t prat/test -m hello"
             )
         else:
             client_cmd = f"{pub} -h localhost -p {port} -t prat/test -m hello"
 
-        # Start broker, wait for it to be ready, run a client publish, then shut down
-        # cleanly via SIGTERM so the gcov atexit handler writes .gcda files.
         script = (
             f"set -e\n"
             f"{broker} -c {config_path} &\n"
@@ -195,4 +186,39 @@ class MosquittoAdapter(ProjectAdapter):
             f"kill -TERM $BROKER_PID\n"
             f"wait $BROKER_PID || true\n"
         )
-        return [["bash", "-c", script]]
+        return ["bash", "-c", script]
+
+    def get_test_plan(self, features: list[str]) -> list[list[str]]:
+        """The fixed T for Mosquitto.
+
+        Linux: the project's unit tests (``make utest``), which do not depend on
+        the build's feature set.
+
+        macOS: two broker sessions, one on a plain listener and one on a TLS
+        listener. The plain session runs against every build; the TLS session
+        can only run where TLS is compiled in, so against B_TLS it fails (the
+        broker rejects ``cafile``) and is tolerated, and L_TLS still contains
+        the plain session's coverage instead of being empty.
+        """
+        if not _is_macos():
+            test_cmd = self.get_test_command()
+            return [test_cmd] if test_cmd else []
+        plan = [self._broker_session(use_tls=False)]
+        if (self.project_path.resolve() / "test" / "ssl").exists():
+            plan.append(self._broker_session(use_tls=True))
+        return plan
+
+    def get_execution_commands(self, feature: str, enabled: bool) -> list:
+        """
+        Polarity-specific workload, used for post-removal verification.
+
+        Linux: unit tests via make utest.
+        macOS: start broker briefly with appropriate config, connect a client,
+               then SIGTERM the broker so gcda files are flushed on clean exit.
+        """
+        if not _is_macos():
+            test_cmd = self.get_test_command()
+            return [test_cmd] if test_cmd else []
+
+        use_tls = feature.upper() == "TLS" and enabled
+        return [self._broker_session(use_tls)]

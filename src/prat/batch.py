@@ -88,6 +88,9 @@ class FeatureAnalysis:
     #: Pipeline stage responsible for a discarded or failed analysis.
     failure_stage: str | None = None
     coverage: CoverageResult | None = None
+    #: Commands of T that could not run against this B_f (the feature's own
+    #: tests, typically); they contributed no coverage to L_f.
+    tests_not_run: list[str] = field(default_factory=list)
 
     @property
     def analyzed(self) -> bool:
@@ -137,6 +140,9 @@ class BatchResult:
     run_id: str | None = None
     source_commit: str | None = None
     feature_names: list[str] = field(default_factory=list)
+    #: Digest and size of the fixed test plan T run against every build.
+    test_plan_id: str | None = None
+    test_plan_commands: int | None = None
 
     @property
     def union_removable_lines(self) -> int:
@@ -312,13 +318,20 @@ def run_batch_analysis(
     all_names = [f.name for f in active]
     result.feature_names = list(all_names)
     result.source_commit = _git_commit(project_path)
-    fixed_test_commands = _all_feature_test_commands(adapter, all_names)
+    # Algorithm 1 line 3: T is fixed once, then run unchanged against B_all
+    # and every B_f (lines 5 and 9). The adapter supplies a plan that does not
+    # depend on any single feature's polarity.
+    fixed_test_commands = (
+        [list(c) for c in adapter.get_test_plan(all_names)] if adapter else []
+    )
     plan_commands = fixed_test_commands or (
         [["adapter-managed-coverage-tests"]]
-        if adapter.coverage_command_executes_tests()
+        if adapter and adapter.coverage_command_executes_tests()
         else []
     )
     workload_plan_id = test_plan_digest(plan_commands, symbolic_tests)
+    result.test_plan_id = workload_plan_id
+    result.test_plan_commands = len(fixed_test_commands)
 
     # --- B_all <- Compile(P); L_all <- CoverageAnalysis(B_all, T) -----------
     print("\n[3] Building baseline B_all and collecting L_all...")
@@ -399,6 +412,7 @@ def run_batch_analysis(
             compilation, output_dir, symbolic_tests, states,
             execution_commands=fixed_test_commands,
             test_plan_id=workload_plan_id,
+            allow_test_failures=True,
         )
         analysis.coverage = cov
 
@@ -423,6 +437,22 @@ def run_batch_analysis(
             )
             print(f"    [!] {result.error_message}")
             return _finalize_batch_result(result, output_dir, start_time)
+        if cov.test_plan_id != (
+            result.baseline_coverage.test_plan_id
+            if result.baseline_coverage
+            else workload_plan_id
+        ):
+            reason = "the test plan run against B_f differs from the one run against B_all"
+            analysis.discarded_reason = reason
+            analysis.failure_stage = "execution"
+            result.features_failed += 1
+            result.error_message = f"Coverage failed for {feature.name}; {reason}"
+            print(f"    [!] {result.error_message}")
+            return _finalize_batch_result(result, output_dir, start_time)
+        if cov.execution_errors:
+            analysis.tests_not_run = list(cov.execution_errors)
+            print(f"    {len(cov.execution_errors)} test command(s) in T could "
+                  f"not run against B_{feature.name} (no coverage contributed)")
 
         disabled_coverage = load_coverage_dir(cov.coverage_dir)
         if not disabled_coverage:
@@ -642,6 +672,8 @@ def _save_batch_checkpoint(result: BatchResult, output_dir: str) -> str:
         "run_id": result.run_id,
         "source_commit": result.source_commit,
         "feature_names": result.feature_names,
+        "test_plan_id": result.test_plan_id,
+        "test_plan_commands": result.test_plan_commands,
         "baseline_all_features": result.baseline_all_features,
         "baseline_coverage_percent": result.baseline_coverage_percent,
         "baseline_coverage": (
@@ -660,6 +692,7 @@ def _save_batch_checkpoint(result: BatchResult, output_dir: str) -> str:
                 "affected_files": analysis.affected_files,
                 "discarded_reason": analysis.discarded_reason,
                 "failure_stage": analysis.failure_stage,
+                "tests_not_run": analysis.tests_not_run,
                 "coverage": (
                     asdict(analysis.coverage) if analysis.coverage else None
                 ),
@@ -807,6 +840,7 @@ def _coverage(
     label: str | None = None,
     execution_commands: list[list[str]] | None = None,
     test_plan_id: str | None = None,
+    allow_test_failures: bool = False,
 ) -> CoverageResult:
     if adapter:
         return generate_coverage_with_adapter(
@@ -817,6 +851,7 @@ def _coverage(
             label=label,
             execution_commands=execution_commands,
             test_plan_id=test_plan_id,
+            allow_test_failures=allow_test_failures,
         )
     return generate_coverage(
         project_path=project_path,

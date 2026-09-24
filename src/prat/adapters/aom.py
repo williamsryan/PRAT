@@ -85,25 +85,8 @@ class AomAdapter(ProjectAdapter):
             and (self.project_path / "av1").exists()
         )
 
-    def get_execution_commands(self, feature: str, enabled: bool) -> list[list[str]]:
-        """Drive a real encode/decode so coverage is DYNAMIC, not compile-time.
-
-        Static (compile-time) coverage marks every line in the dedicated encoder
-        files as removable, which massively over-counts vs. the paper's
-        KLEE/dynamic methodology (it counts even unreachable/dead code). By
-        actually exercising the encoder (and decoder), executed lines acquire
-        gcov run counts and stop being reported as removable, yielding a count
-        much closer to the paper's notion of feature-specific *reachable* code.
-
-        - feature ENABLED  (encoder built): synthesize a tiny YUV4MPEG2 clip,
-          encode it with aomenc (exercising the encoder), then decode it.
-        - feature DISABLED (decoder only): decode the clip produced during the
-          enabled run (the /tmp artifact persists for the lifetime of the
-          container, which spans both builds).
-
-        Every command is required to succeed; a missing encoder or decoder makes
-        the coverage result fail instead of yielding partial evidence.
-        """
+    def _test_clip_commands(self) -> tuple[list[str], list[list[str]], list[list[str]]]:
+        """(input generator, encoder commands, decoder commands) for the clip."""
         bd = self.cmake_build_dir
         gen_input = [
             "sh", "-c",
@@ -111,18 +94,47 @@ class AomAdapter(ProjectAdapter):
             "for i in $(seq 1 12); do printf 'FRAME\\n' >> /tmp/aom_in.y4m && "
             "head -c 38016 /dev/zero >> /tmp/aom_in.y4m; done",
         ]
+        encode = [
+            # cpu-used=2 exercises a broad set of RD/partition/transform paths
+            # without being prohibitively slow on a 12-frame clip.
+            [f"{bd}/aomenc", "--codec=av1", "--ivf", "--limit=12", "--cpu-used=2",
+             "-o", "/tmp/aom_out.ivf", "/tmp/aom_in.y4m"],
+            # A lossless pass exercises additional encoder code paths.
+            [f"{bd}/aomenc", "--codec=av1", "--ivf", "--limit=6", "--cpu-used=4",
+             "--lossless=1", "-o", "/tmp/aom_ll.ivf", "/tmp/aom_in.y4m"],
+        ]
+        decode = [
+            [f"{bd}/aomdec", "--codec=av1", "-o", "/tmp/aom_dec.y4m", "/tmp/aom_out.ivf"],
+        ]
+        return gen_input, encode, decode
+
+    def get_test_plan(self, features: list[str]) -> list[list[str]]:
+        """The fixed T: synthesize a clip, encode it twice, decode it.
+
+        The same four commands run against B_all and every B_f. In a build
+        without the encoder ``aomenc`` does not exist and those commands fail;
+        the mapping tolerates that and takes coverage from ``aomdec``, which
+        decodes the stream the B_all run left in /tmp (the container spans both
+        builds). Likewise a decoder-less build contributes encoder coverage
+        only. This is what makes coverage DYNAMIC: static (compile-time)
+        coverage marks every line in the dedicated encoder files as removable,
+        massively over-counting against the paper's KLEE/dynamic methodology.
+        """
+        gen_input, encode, decode = self._test_clip_commands()
+        return [gen_input, *encode, *decode]
+
+    def get_execution_commands(self, feature: str, enabled: bool) -> list[list[str]]:
+        """Polarity-specific workload, used for post-removal verification.
+
+        - feature ENABLED  (encoder built): the full :meth:`get_test_plan`.
+        - feature DISABLED (decoder only): decode the clip produced during the
+          enabled run, which is what a debloated decoder-only build must still
+          be able to do.
+        """
+        gen_input, encode, decode = self._test_clip_commands()
+        bd = self.cmake_build_dir
         if enabled:
-            return [
-                gen_input,
-                # cpu-used=2 exercises a broad set of RD/partition/transform paths
-                # without being prohibitively slow on a 12-frame clip.
-                [f"{bd}/aomenc", "--codec=av1", "--ivf", "--limit=12", "--cpu-used=2",
-                 "-o", "/tmp/aom_out.ivf", "/tmp/aom_in.y4m"],
-                # A lossless pass exercises additional encoder code paths.
-                [f"{bd}/aomenc", "--codec=av1", "--ivf", "--limit=6", "--cpu-used=4",
-                 "--lossless=1", "-o", "/tmp/aom_ll.ivf", "/tmp/aom_in.y4m"],
-                [f"{bd}/aomdec", "--codec=av1", "-o", "/tmp/aom_dec.y4m", "/tmp/aom_out.ivf"],
-            ]
+            return [gen_input, *encode, *decode]
         return [
             [f"{bd}/aomdec", "--codec=av1", "-o", "/tmp/aom_dec2.y4m", "/tmp/aom_out.ivf"],
         ]

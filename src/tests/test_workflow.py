@@ -6,6 +6,7 @@ import pytest
 
 from prat.compilation import BuildSystem, CompilationResult
 from prat.coverage import CoverageResult
+from prat.coverage import test_plan_digest as plan_digest
 from prat.environment import EnvironmentResult
 from prat.removal import RemovalResult
 from prat.verification import VerificationResult, VerificationStatus
@@ -38,6 +39,7 @@ def happy_path(coverage_dirs, tmp_path):
             coverage_dir=str(target),
             missing_files=[],
             dynamic_execution=True,
+            test_plan_id=kwargs.get("test_plan_id"),
         )
 
     compilation = CompilationResult(
@@ -52,6 +54,7 @@ def happy_path(coverage_dirs, tmp_path):
     adapter.build_system = BuildSystem.MAKE
     adapter.coverage_tool = "gcov"
     adapter.source_directories = ["src"]
+    adapter.get_test_plan.return_value = [["make", "test"]]
 
     with (
         patch("prat.workflow.verify_dependencies",
@@ -154,6 +157,7 @@ class TestRunCompleteWorkflow:
             coverage_tool="gcov",
             source_directories=["src"],
         )
+        adapter.get_test_plan.return_value = [["make", "test"]]
         with (
             patch("prat.workflow.verify_dependencies",
                   return_value=EnvironmentResult(success=True, available_tools={}, missing_tools=[])),
@@ -181,6 +185,7 @@ class TestRunCompleteWorkflow:
             coverage_tool="gcov",
             source_directories=["src"],
         )
+        adapter.get_test_plan.return_value = [["make", "test"]]
         with (
             patch("prat.workflow.verify_dependencies",
                   return_value=EnvironmentResult(success=True, available_tools={}, missing_tools=[])),
@@ -298,18 +303,21 @@ class TestBaselineReuse:
             compilation_time=0.0, coverage_enabled=True,
             build_system=BuildSystem.MAKE,
         )
+        plan = [["make", "test"]]
         disabled_cov = CoverageResult(
             success=True,
             coverage_files=[str(p) for p in disabled.iterdir()],
             coverage_dir=str(disabled),
             missing_files=[],
             dynamic_execution=True,
+            test_plan_id=plan_digest(plan, []),
         )
         adapter = MagicMock(
             build_system=BuildSystem.MAKE,
             coverage_tool="gcov",
             source_directories=["src"],
         )
+        adapter.get_test_plan.return_value = plan
 
         with (
             patch("prat.workflow.verify_dependencies",
@@ -380,6 +388,7 @@ class TestAlgorithmOneBaseline:
 
         def fake_coverage(adapter, feature, enabled_flag, **kwargs):
             coverage_calls.append(kwargs.get("feature_states"))
+            coverage_kwargs.append(kwargs)
             target = enabled if enabled_flag else disabled
             return CoverageResult(
                 success=True,
@@ -395,6 +404,9 @@ class TestAlgorithmOneBaseline:
         adapter.coverage_tool = "gcov"
         adapter.source_directories = ["src"]
         adapter.get_execution_commands.return_value = [["make", "test"]]
+        adapter.get_test_plan.return_value = [["make", "test"]]
+        coverage_kwargs: list[dict] = []
+        adapter.coverage_kwargs = coverage_kwargs
 
         discovered = [MagicMock(name=n) for n in ("TLS", "BRIDGE", "WEBSOCKETS")]
         for mock, name in zip(discovered, ("TLS", "BRIDGE", "WEBSOCKETS")):
@@ -503,16 +515,19 @@ class TestAlgorithmOneBaseline:
         )
 
         assert result.test_plan_identical is True
-        assert result.coverage_enabled.test_plan_id is not None
-        assert (
-            result.coverage_enabled.test_plan_id
-            == result.coverage_disabled.test_plan_id
-        )
+        assert result.test_plan_id is not None
+        assert result.test_plan_commands == 1
+        assert result.coverage_enabled.test_plan_id == result.test_plan_id
+        assert result.coverage_disabled.test_plan_id == result.test_plan_id
 
-    def test_polarity_dependent_workload_is_flagged(
+    def test_the_same_t_is_run_against_both_builds(
         self, recorded_builds, tmp_path
     ):
+        """Algorithm 1 fixes T once (line 3) and runs it against B_all and
+        B_f (lines 5, 9). The polarity-specific workload is never used for
+        mapping, and only B_f may tolerate tests that cannot run."""
         adapter, _, _ = recorded_builds
+        adapter.get_test_plan.return_value = [["run", "everything"]]
         adapter.get_execution_commands.side_effect = (
             lambda feature, enabled: [["run", "on" if enabled else "off"]]
         )
@@ -522,8 +537,67 @@ class TestAlgorithmOneBaseline:
         )
 
         assert result.success is True
+        adapter.get_test_plan.assert_called_once_with(["BRIDGE", "TLS", "WEBSOCKETS"])
+        b_all, b_f = adapter.coverage_kwargs
+        assert b_all["execution_commands"] == [["run", "everything"]]
+        assert b_f["execution_commands"] == [["run", "everything"]]
+        assert b_all["allow_test_failures"] is False
+        assert b_f["allow_test_failures"] is True
+        assert result.test_plan_identical is True
+
+    def test_a_divergent_executed_plan_fails_the_run(
+        self, recorded_builds, tmp_path
+    ):
+        adapter, _, _ = recorded_builds
+
+        def divergent_coverage(adapter_, feature, enabled_flag, **kwargs):
+            plan_id = kwargs.get("test_plan_id") if enabled_flag else "other"
+            return CoverageResult(
+                success=True,
+                coverage_files=["x.gcov"],
+                coverage_dir=str(tmp_path),
+                missing_files=[],
+                dynamic_execution=True,
+                test_plan_id=plan_id,
+            )
+
+        with patch("prat.workflow.generate_coverage_with_adapter",
+                   side_effect=divergent_coverage):
+            result = run_complete_workflow(
+                str(tmp_path), "TLS", output_dir=str(tmp_path / "out")
+            )
+
+        assert result.success is False
         assert result.test_plan_identical is False
-        assert (
-            result.coverage_enabled.test_plan_id
-            != result.coverage_disabled.test_plan_id
-        )
+        assert "same T" in (result.error_message or "")
+
+    def test_tests_that_cannot_run_against_b_f_are_recorded(
+        self, recorded_builds, tmp_path, coverage_dirs
+    ):
+        enabled, disabled = coverage_dirs
+
+        def tolerant_coverage(adapter_, feature, enabled_flag, **kwargs):
+            target = enabled if enabled_flag else disabled
+            return CoverageResult(
+                success=True,
+                coverage_files=[str(p) for p in target.iterdir()],
+                coverage_dir=str(target),
+                missing_files=[],
+                dynamic_execution=True,
+                test_plan_id=kwargs.get("test_plan_id"),
+                test_failures_tolerated=kwargs.get("allow_test_failures", False),
+                execution_errors=(
+                    [] if enabled_flag else ["tls_test: exit code 1"]
+                ),
+            )
+
+        with patch("prat.workflow.generate_coverage_with_adapter",
+                   side_effect=tolerant_coverage):
+            result = run_complete_workflow(
+                str(tmp_path), "TLS", output_dir=str(tmp_path / "out")
+            )
+
+        assert result.success is True
+        assert result.tests_not_run_in_b_f == ["tls_test: exit code 1"]
+        assert result.coverage_disabled.test_failures_tolerated is True
+        assert result.coverage_enabled.test_failures_tolerated is False

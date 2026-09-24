@@ -6,8 +6,9 @@ Runs the paper's five-step pipeline for a single feature:
 1. Feature identification (see :mod:`prat.discovery`; F is discovered here so
    the two builds can range over every feature, and the target f is given)
 2. Feature-to-code mapping — build B_all (every feature in F enabled) and B_f
-   (every feature except f), collect coverage under the test suite T = U u S
-   against both, compute D_f = L_all \\ L_f
+   (every feature except f), run the *same* test suite T = U u S against
+   both (tests exercising f cannot pass against B_f and are tolerated there),
+   compute D_f = L_all \\ L_f
 3. Feature selection (the analyst's step; reports and the feature graph feed it)
 4. Feature removal — blank the lines in D_f and rebuild
 5. Testing — re-run T against the debloated build and check for crashes
@@ -115,10 +116,15 @@ class WorkflowResult:
     # (B_all first, then B_f), so the exact configurations are auditable.
     mapping_build_states: list[dict[str, bool]] = field(default_factory=list)
     baseline_note: str | None = None
-    # Whether the same test plan T was executed against both builds. A
-    # polarity-dependent adapter workload makes this False, and the mapping
-    # then reflects the workload change as well as the feature.
+    # The fixed test plan T (Algorithm 1 line 3): its digest, its size, and
+    # whether the plan actually executed against B_f matched the one executed
+    # against B_all. Tests in T that exercise f cannot pass against B_f; those
+    # are listed so the checkpoint shows which part of T contributed no L_f
+    # coverage.
+    test_plan_id: str | None = None
+    test_plan_commands: int | None = None
     test_plan_identical: bool | None = None
+    tests_not_run_in_b_f: list[str] = field(default_factory=list)
 
     # The mapping D_f. Excluded from serialization because it carries full
     # source text; ExtractionResult is the serializable projection of it.
@@ -333,20 +339,19 @@ def run_complete_workflow(
             dict(disabled_states or {feature: False}),
         ]
 
-        # --- T: the test plan, one digest per build ------------------------
-        # T must be the same set for L_all and L_f. Adapters may return a
-        # workload that depends on the feature's polarity; that is recorded
-        # honestly as test_plan_identical=False rather than hidden behind a
-        # digest of the union of both workloads.
-        enabled_commands = list(adapter.get_execution_commands(feature, True))
-        disabled_commands = list(adapter.get_execution_commands(feature, False))
-        enabled_plan_id = test_plan_digest(enabled_commands, symbolic_tests)
-        disabled_plan_id = test_plan_digest(disabled_commands, symbolic_tests)
-        result.test_plan_identical = enabled_plan_id == disabled_plan_id
-        if not result.test_plan_identical:
-            print("[!] The adapter's test workload differs between the two "
-                  "builds; the mapping reflects that workload change as well as "
-                  "the feature\n")
+        # --- T: the test plan, fixed once, run unchanged against every build
+        # Algorithm 1 line 3 fixes T; lines 5 and 9 run that same T against
+        # B_all and B_f. The plan comes from the adapter's feature-set-level
+        # workload, not from the polarity of f. Tests exercising f cannot pass
+        # against B_f; their failure is tolerated there (recorded in the
+        # coverage result) and never for B_all.
+        plan_features = sorted(enabled_states) if enabled_states else [feature]
+        test_plan = [list(c) for c in adapter.get_test_plan(plan_features)]
+        result.test_plan_commands = len(test_plan)
+        result.test_plan_id = test_plan_digest(test_plan, symbolic_tests)
+        print(f"[+] T has {len(test_plan)} test command(s) plus "
+              f"{len(symbolic_tests)} symbolic test(s); the same T runs "
+              f"against both builds\n")
 
         # --- Algorithm 1 lines 4-5: B_all and L_all -----------------------
         if reuse_baseline and baseline_coverage_dir:
@@ -370,8 +375,9 @@ def run_complete_workflow(
             cov_enabled = _coverage(
                 adapter, project_path, feature, True, build_system,
                 comp_enabled, output_dir, symbolic_tests,
-                test_plan_id=enabled_plan_id,
+                test_plan_id=result.test_plan_id,
                 feature_states=enabled_states,
+                execution_commands=test_plan,
             )
             result.coverage_enabled = cov_enabled
             if not cov_enabled.success:
@@ -405,8 +411,10 @@ def run_complete_workflow(
         cov_disabled = _coverage(
             adapter, project_path, feature, False, build_system,
             comp_disabled, output_dir, symbolic_tests,
-            test_plan_id=disabled_plan_id,
+            test_plan_id=result.test_plan_id,
             feature_states=disabled_states,
+            execution_commands=test_plan,
+            allow_test_failures=True,
         )
         result.coverage_disabled = cov_disabled
         if not cov_disabled.success:
@@ -417,7 +425,28 @@ def run_complete_workflow(
                 "Coverage generation did not execute the test set T "
                 "for the disabled build"
             )
+        if cov_disabled.execution_errors:
+            result.tests_not_run_in_b_f = list(cov_disabled.execution_errors)
+            print(f"[!] {len(cov_disabled.execution_errors)} test command(s) in T "
+                  f"could not run against B_{feature} and contributed no "
+                  f"coverage (recorded in the checkpoint)")
         print(f"[+] Generated {len(cov_disabled.coverage_files)} coverage file(s)\n")
+
+        # The digest of record is what each build actually ran.
+        enabled_plan_id = (
+            cov_enabled.test_plan_id
+            if not (reuse_baseline and baseline_coverage_dir)
+            else result.test_plan_id
+        )
+        result.test_plan_identical = (
+            enabled_plan_id is not None
+            and enabled_plan_id == cov_disabled.test_plan_id
+        )
+        if not result.test_plan_identical:
+            return fail(
+                "The test plan executed against B_f differs from the one "
+                "executed against B_all; Algorithm 1 requires the same T"
+            )
 
         # --- Algorithm 1 line 10: D_f = L_all \ L_f -----------------------
         print("[7/8] Mapping feature to code: D_f = L_all \\ L_f ...")
@@ -591,6 +620,8 @@ def _coverage(
     symbolic_tests: list[str],
     test_plan_id: str | None = None,
     feature_states: dict[str, bool] | None = None,
+    execution_commands: list[list[str]] | None = None,
+    allow_test_failures: bool = False,
 ) -> CoverageResult:
     if adapter:
         return generate_coverage_with_adapter(
@@ -599,6 +630,8 @@ def _coverage(
             symbolic_tests=symbolic_tests or None,
             test_plan_id=test_plan_id,
             feature_states=feature_states,
+            execution_commands=execution_commands,
+            allow_test_failures=allow_test_failures,
         )
     return generate_coverage(
         project_path=project_path,

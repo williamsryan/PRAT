@@ -87,7 +87,12 @@ def _write_manifest(
         "baseline_mode": result.baseline_mode,
         "baseline_all_features": result.baseline_all_features,
         "mapping_build_states": result.mapping_build_states,
+        # The fixed T (Algorithm 1 line 3) and which of its commands could not
+        # run against B_f (they contribute no coverage to L_f).
+        "test_plan_id": result.test_plan_id,
+        "test_plan_commands": result.test_plan_commands,
         "test_plan_identical": result.test_plan_identical,
+        "tests_not_run_in_b_f": result.tests_not_run_in_b_f,
         "python": sys.version.split()[0],
         "platform": platform.platform(),
         "environment": {
