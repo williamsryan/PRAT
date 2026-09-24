@@ -119,6 +119,7 @@ from .symbolic import (
 )
 from .variants import Variant, VariantChain, build_variant_chain
 from .verification import (
+    ReferenceOutcome,
     VerificationResult,
     VerificationStatus,
     capture_reference_outputs,
@@ -163,6 +164,7 @@ __all__ = [
     "KleeConfig",
     "MosquittoAdapter",
     "ProjectAdapter",
+    "ReferenceOutcome",
     "RemovalResult",
     "RustAdapter",
     "SymbolicResult",

@@ -522,7 +522,11 @@ def run_batch_analysis(
             )
             return _finalize_batch_result(result, output_dir, start_time)
 
-        test_commands = _all_feature_test_commands(adapter, all_names)
+        # Paper: verification re-runs T, the same fixed plan the mapping ran.
+        # Against the all-features-disabled reference build every feature's
+        # own tests already fail; the debloated build must fail them the same
+        # way and pass everything else identically.
+        test_commands = fixed_test_commands
         try:
             references = capture_reference_outputs(
                 project_path,
@@ -619,23 +623,6 @@ def _union_extraction(
             counts[path] for path in feature_only if path in counts
         ),
     )
-
-
-def _all_feature_test_commands(
-    adapter: ProjectAdapter,
-    features: list[str],
-) -> list[list[str]]:
-    """Union adapter test commands without running duplicates."""
-    commands: list[list[str]] = []
-    seen: set[tuple[str, ...]] = set()
-    for feature in features:
-        for enabled in (True, False):
-            for command in adapter.get_execution_commands(feature, enabled):
-                key = tuple(command)
-                if key not in seen:
-                    seen.add(key)
-                    commands.append(command)
-    return commands
 
 
 def _finalize_batch_result(

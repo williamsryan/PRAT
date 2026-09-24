@@ -3,11 +3,13 @@
 from unittest.mock import MagicMock, patch
 
 from prat.verification import (
+    ReferenceOutcome,
     SuiteResult,
     VerificationStatus,
     _discover_test_commands,
     _parse_test_output,
     _run_test_suite,
+    capture_reference_outputs,
     verify_correctness,
 )
 
@@ -102,6 +104,239 @@ class TestRunTestSuite:
         result = _run_test_suite("unit", ["make", "test"], "/fake", 60)
         assert result.success is False
         assert "Timed out" in result.error_message
+
+
+class TestReferenceOracle:
+    """Verification re-runs the *fixed* T (paper, Feature Removal), so T
+    contains the removed feature's own tests. The oracle is the pre-removal
+    build in the same configuration: every outcome must be reproduced."""
+
+    @patch("prat.verification.subprocess.run")
+    def test_capture_records_failures_as_expected_outcomes(self, mock_run):
+        mock_run.side_effect = [
+            MagicMock(returncode=0, stdout="plain ok\n", stderr=""),
+            MagicMock(returncode=1, stdout="", stderr="tls: unknown option cafile\n"),
+        ]
+
+        refs = capture_reference_outputs(
+            "/fake", test_commands=[["plain"], ["tls"]]
+        )
+
+        assert refs["custom-0"].passed is True
+        assert refs["custom-0"].output == "plain ok"
+        assert refs["custom-1"].passed is False
+        assert refs["custom-1"].returncode == 1
+        assert "unknown option" in refs["custom-1"].output
+
+    @patch("prat.verification.subprocess.run")
+    def test_capture_records_a_command_that_cannot_run(self, mock_run):
+        mock_run.side_effect = [
+            MagicMock(returncode=0, stdout="ok", stderr=""),
+            FileNotFoundError("aom_build/aomenc: No such file"),
+        ]
+
+        refs = capture_reference_outputs(
+            "/fake", test_commands=[["aomdec"], ["aomenc"]]
+        )
+
+        assert refs["custom-1"].returncode is None
+        assert "aomenc" in (refs["custom-1"].error or "")
+
+    @patch("prat.verification.subprocess.run")
+    def test_capture_refuses_a_reference_in_which_nothing_passes(self, mock_run):
+        import pytest
+
+        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="boom")
+
+        with pytest.raises(RuntimeError, match="no behaviour .* to preserve"):
+            capture_reference_outputs("/fake", test_commands=[["tls"]])
+
+    @patch("prat.verification.subprocess.run")
+    def test_expected_failure_reproduced_is_preserved_behaviour(self, mock_run):
+        mock_run.return_value = MagicMock(
+            returncode=1, stdout="", stderr="tls: unknown option cafile\n"
+        )
+        reference = ReferenceOutcome(returncode=1, output="tls: unknown option cafile")
+
+        result = _run_test_suite("tls", ["tls"], "/fake", 60, reference=reference)
+
+        assert result.expected_failure is True
+        assert result.output_diverged is False
+        assert result.success is True
+        assert result.reference_returncode == 1
+
+    @patch("prat.verification.subprocess.run")
+    def test_expected_failure_that_now_passes_is_divergence(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0, stdout="tls ok\n", stderr="")
+        reference = ReferenceOutcome(returncode=1, output="tls: unknown option cafile")
+
+        result = _run_test_suite("tls", ["tls"], "/fake", 60, reference=reference)
+
+        assert result.expected_failure is True
+        assert result.output_diverged is True
+        assert result.success is False
+
+    @patch("prat.verification.subprocess.run")
+    def test_passing_reference_that_now_fails_is_divergence(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=2, stdout="", stderr="assert\n")
+
+        result = _run_test_suite(
+            "unit", ["make", "test"], "/fake", 60,
+            reference=ReferenceOutcome(returncode=0, output="Ran 5 tests\nOK"),
+        )
+
+        assert result.expected_failure is False
+        assert result.output_diverged is True
+        assert result.success is False
+
+    @patch("prat.verification.subprocess.run")
+    def test_same_output_different_exit_code_is_divergence(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=1, stdout="Ran 5 tests\nOK\n", stderr="")
+
+        result = _run_test_suite(
+            "unit", ["make", "test"], "/fake", 60,
+            reference=ReferenceOutcome(returncode=0, output="Ran 5 tests\nOK"),
+        )
+
+        assert result.output_diverged is True
+
+    @patch("prat.verification.subprocess.run")
+    def test_legacy_string_reference_means_a_passing_run(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0, stdout="Ran 5 tests\nOK\n", stderr="")
+
+        result = _run_test_suite(
+            "unit", ["make", "test"], "/fake", 60, reference="Ran 5 tests\nOK"
+        )
+
+        assert result.success is True
+        assert result.output_diverged is False
+        assert result.expected_failure is False
+
+    @patch("prat.verification.subprocess.run")
+    def test_a_binary_missing_before_and_after_is_preserved(self, mock_run):
+        mock_run.side_effect = FileNotFoundError("aom_build/aomenc: No such file")
+        reference = ReferenceOutcome(
+            returncode=None, output="", error="aom_build/aomenc: No such file"
+        )
+
+        result = _run_test_suite("enc", ["aomenc"], "/fake", 60, reference=reference)
+
+        assert result.success is True
+        assert result.expected_failure is True
+        assert result.output_diverged is False
+
+    @patch("prat.verification.subprocess.run")
+    def test_a_binary_that_removal_made_disappear_is_divergence(self, mock_run):
+        mock_run.side_effect = FileNotFoundError("aom_build/aomdec: No such file")
+
+        result = _run_test_suite(
+            "dec", ["aomdec"], "/fake", 60,
+            reference=ReferenceOutcome(returncode=0, output="decoded"),
+        )
+
+        assert result.success is False
+        assert result.output_diverged is True
+        assert result.tests_failed == 1
+
+    @patch("prat.verification.subprocess.run")
+    def test_crash_present_before_removal_is_preexisting(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=-11, stdout="", stderr="")
+        reference = ReferenceOutcome(
+            returncode=-11, output="", crash_signal="SIGSEGV"
+        )
+
+        result = _run_test_suite("t", ["t"], "/fake", 60, reference=reference)
+
+        assert result.crashed is True
+        assert result.crash_preexisting is True
+        assert result.success is True
+
+    @patch("prat.verification._run_test_suite")
+    @patch("prat.verification._discover_test_commands")
+    @patch("prat.verification._rebuild")
+    def test_expected_failures_do_not_count_against_the_verdict(
+        self, mock_rebuild, mock_discover, mock_suite
+    ):
+        mock_rebuild.return_value = True
+        mock_discover.return_value = [("plain", ["plain"]), ("tls", ["tls"])]
+        mock_suite.side_effect = [
+            SuiteResult(
+                name="plain", success=True, tests_run=5, tests_passed=5,
+                tests_failed=0, execution_time=1.0,
+            ),
+            SuiteResult(
+                name="tls", success=True, tests_run=1, tests_passed=0,
+                tests_failed=1, execution_time=1.0, counts_inferred=True,
+                expected_failure=True, reference_returncode=1,
+            ),
+        ]
+
+        result = verify_correctness(
+            "/fake/project",
+            test_commands=[["plain"], ["tls"]],
+            reference_outputs={
+                "plain": ReferenceOutcome(0, "ok"),
+                "tls": ReferenceOutcome(1, "unknown option"),
+            },
+        )
+
+        assert result.status is VerificationStatus.PASSED
+        assert result.expected_failures == ["tls"]
+        assert result.total_tests_run == 5
+        assert result.total_tests_failed == 0
+        assert result.pass_rate == 100.0
+
+    @patch("prat.verification._run_test_suite")
+    @patch("prat.verification._discover_test_commands")
+    @patch("prat.verification._rebuild")
+    def test_expected_failure_that_diverged_fails_the_verdict(
+        self, mock_rebuild, mock_discover, mock_suite
+    ):
+        mock_rebuild.return_value = True
+        mock_discover.return_value = [("plain", ["plain"]), ("tls", ["tls"])]
+        mock_suite.side_effect = [
+            SuiteResult(
+                name="plain", success=True, tests_run=5, tests_passed=5,
+                tests_failed=0, execution_time=1.0,
+            ),
+            SuiteResult(
+                name="tls", success=False, tests_run=1, tests_passed=1,
+                tests_failed=0, execution_time=1.0, counts_inferred=True,
+                expected_failure=True, output_diverged=True,
+            ),
+        ]
+
+        result = verify_correctness("/fake/project", test_commands=[["plain"], ["tls"]])
+
+        assert result.status is VerificationStatus.FAILED
+        assert result.diverged_suites == ["tls"]
+
+    @patch("prat.verification._run_test_suite")
+    @patch("prat.verification._discover_test_commands")
+    @patch("prat.verification._rebuild")
+    def test_preexisting_crash_is_reported_but_is_not_a_new_crash(
+        self, mock_rebuild, mock_discover, mock_suite
+    ):
+        mock_rebuild.return_value = True
+        mock_discover.return_value = [("plain", ["plain"]), ("t", ["t"])]
+        mock_suite.side_effect = [
+            SuiteResult(
+                name="plain", success=True, tests_run=5, tests_passed=5,
+                tests_failed=0, execution_time=1.0,
+            ),
+            SuiteResult(
+                name="t", success=True, tests_run=1, tests_passed=0,
+                tests_failed=1, execution_time=1.0, crashed=True,
+                crash_signal="SIGSEGV", crash_preexisting=True,
+                expected_failure=True,
+            ),
+        ]
+
+        result = verify_correctness("/fake/project", test_commands=[["plain"], ["t"]])
+
+        assert result.status is VerificationStatus.PASSED
+        assert result.crashes == []
+        assert result.preexisting_crashes == ["t: SIGSEGV"]
 
 
 class TestVerifyCorrectness:

@@ -68,6 +68,7 @@ def happy_path(coverage_dirs, tmp_path):
         patch("prat.workflow.generate_html_report", return_value="report.html"),
         patch("prat.workflow.generate_dot_graph", return_value="FDG.dot"),
         patch("prat.workflow.generate_json_report", return_value="report.json"),
+        patch("prat.workflow.capture_reference_outputs", return_value={}),
     ):
         yield
 
@@ -601,3 +602,42 @@ class TestAlgorithmOneBaseline:
         assert result.tests_not_run_in_b_f == ["tls_test: exit code 1"]
         assert result.coverage_disabled.test_failures_tolerated is True
         assert result.coverage_enabled.test_failures_tolerated is False
+
+    def test_verification_reruns_the_fixed_t_in_b_f_configuration(
+        self, recorded_builds, tmp_path
+    ):
+        """Paper: verification "re-runs the test suite, T, generated during
+        feature-to-code-mapping". The reference is captured and the debloated
+        build tested with the same fixed T, rebuilt as B_f."""
+        adapter, _, _ = recorded_builds
+        adapter.get_test_plan.return_value = [["plain"], ["tls"]]
+        adapter.get_build_commands_for_set.return_value = [["make", "all-but-tls"]]
+        removal = RemovalResult(
+            success=True, lines_removed=1, files_modified=1, files_stubbed=0
+        )
+        verification = VerificationResult(
+            success=True, compiles=True, status=VerificationStatus.PASSED,
+            total_tests_run=1, total_tests_passed=1,
+        )
+
+        with (
+            patch("prat.workflow.capture_reference_outputs",
+                  return_value={"custom-0": "ok"}) as capture,
+            patch("prat.workflow.remove_feature_code", return_value=removal) as remove,
+            patch("prat.workflow.verify_correctness",
+                  return_value=verification) as verify,
+        ):
+            result = run_complete_workflow(
+                str(tmp_path), "TLS", output_dir=str(tmp_path / "out"),
+                remove=True, verify=True,
+            )
+
+        assert result.success is True
+        assert capture.call_args.kwargs["test_commands"] == [["plain"], ["tls"]]
+        assert verify.call_args.kwargs["test_commands"] == [["plain"], ["tls"]]
+        adapter.get_execution_commands.assert_not_called()
+        adapter.get_build_commands_for_set.assert_called_once_with(
+            {"BRIDGE": True, "TLS": False, "WEBSOCKETS": True}, with_coverage=False
+        )
+        assert remove.call_args.kwargs["build_commands"] == [["make", "all-but-tls"]]
+        assert verify.call_args.kwargs["build_commands"] == [["make", "all-but-tls"]]

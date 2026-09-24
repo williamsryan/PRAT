@@ -32,6 +32,7 @@ import json
 import os
 import time
 import uuid
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -60,6 +61,7 @@ from .reporting import (
 )
 from .symbolic import KleeConfig, SymbolicResult, check_klee_available, generate_symbolic_tests
 from .verification import (
+    ReferenceOutcome,
     VerificationResult,
     capture_reference_outputs,
     verify_correctness,
@@ -497,13 +499,25 @@ def run_complete_workflow(
             print(f"Feature Removal: {feature}")
             print(f"{'=' * 70}")
 
-            reference_outputs: dict[str, str] | None = None
+            reference_outputs: Mapping[str, ReferenceOutcome | str] | None = None
             test_commands: list[list[str]] | None = None
             build_commands: list[list[str]] | None = None
             if adapter:
-                test_commands = adapter.get_execution_commands(feature, False)
-                build_commands = adapter.get_build_commands(
-                    feature, False, with_coverage=False
+                # Paper: "re-runs the test suite, T, generated during
+                # feature-to-code-mapping". The same fixed plan the mapping
+                # ran; tests of f fail before removal and must fail the same
+                # way after it.
+                test_commands = test_plan
+                # Rebuild in B_f's configuration, so the only difference
+                # between the reference and the debloated build is D_f.
+                build_commands = (
+                    adapter.get_build_commands_for_set(
+                        disabled_states, with_coverage=False
+                    )
+                    if disabled_states
+                    else adapter.get_build_commands(
+                        feature, False, with_coverage=False
+                    )
                 )
 
             if verify:
