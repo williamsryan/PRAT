@@ -32,18 +32,19 @@ for each f in F:
 | Parse gcov execution counts into line sets | `src/prat/gcov.py` | `parse_gcov()`, `load_coverage_dir()` |
 | `D_f = L_all \ L_f` | `src/prat/mapping.py` | `map_feature_from_coverage()` |
 | Algorithm 1 over all features (n+1 builds) | `src/prat/batch.py` | `run_batch_analysis()` |
-| Single-feature pipeline | `src/prat/workflow.py` | `run_complete_workflow()` |
+| Single-feature pipeline (`B_all` vs `B_f`, two builds) | `src/prat/workflow.py` | `run_complete_workflow()` |
 | Compile with a given feature set | `src/prat/compilation.py` | `compile_with_adapter(feature_states=...)` |
-| Execute T for dynamic coverage | `src/prat/coverage.py` | `execute_for_coverage()` |
+| The fixed test plan `T` | `src/prat/adapters/base.py` | `ProjectAdapter.get_test_plan()` |
+| Execute `T` for dynamic coverage | `src/prat/coverage.py` | `execute_for_coverage(execution_commands=..., allow_failures=...)` |
 | Package D_f for reporting/removal | `src/prat/extraction.py` | `extract_from_mapping()` |
 
 The mapping is a **set difference over executed lines**, not a textual diff of gcov files. This matters: gcov marks a line that is compiled but never run as `#####`, and marks a line the preprocessor removed as `-`. A line that is feature code in the paper's sense appears as a *count* in the feature-enabled build and as `-` or `#####` in the disabled build, so it produces no `#####` marker of its own. Selecting `#####` lines would therefore both miss the code the paper targets and remove code the paper explicitly excludes.
 
-**Tests**: `src/tests/test_mapping.py` pins all three line classes — executed-only-when-enabled (removed), executed-when-disabled (kept, it is shared), and never-executed-in-either (kept, per the conservatism claim). `src/tests/test_gcov.py` pins the gcov parsing. `src/tests/test_batch.py::TestAlgorithmOneBuildCount` asserts the build count is n+1 and that each build leaves exactly one feature off.
+**Tests**: `src/tests/test_mapping.py` pins all three line classes — executed-only-when-enabled (removed), executed-when-disabled (kept, it is shared), and never-executed-in-either (kept, per the conservatism claim). `src/tests/test_gcov.py` pins the gcov parsing. `src/tests/test_batch.py::TestAlgorithmOneBuildCount` asserts the build count is n+1 and that each build leaves exactly one feature off. `src/tests/test_workflow.py::TestAlgorithmOneBaseline` asserts the single-feature path builds `B_all` and `B_f` over the discovered feature set and runs one `T` against both.
 
 **Reproduce**:
 ```bash
-prat App/mosquitto TLS          # one feature
+prat App/mosquitto TLS          # one feature: B_all vs B_TLS
 prat App/mosquitto --batch      # Algorithm 1 over every discovered feature
 ```
 
@@ -52,6 +53,16 @@ prat App/mosquitto --batch      # Algorithm 1 over every discovered feature
 `run_batch_analysis` compiles `B_all` once, collects `L_all` once, and reuses it for every feature — n+1 builds for n features, as the paper specifies. `BatchResult.builds_performed` records the count so it can be checked.
 
 `B_all` enables **every discovered feature**, and `B_i` enables all but `f_i`. If the all-features build does not compile, the Algorithm 1 run fails instead of silently changing the baseline. Build options whose leave-one-out build fails are discarded, as the paper describes, and listed in `BatchResult.discarded_options`.
+
+The single-feature path (`prat <project> <feature>`, and every Docker demo) is the two-build slice of the same algorithm: it discovers `F`, builds `B_all` with every feature on and `B_f` with every feature but `f`, and records both configurations in `mapping_build_states` and `baseline_mode = "all-features"`. Earlier revisions built the project's *default* configuration with `f` forced on and off, which is not the paper's quantity; that mode still exists as `--default-baseline`, is labelled `baseline_mode = "project-default"`, and is rejected by the strict validator.
+
+### One test plan, run against every build
+
+Algorithm 1 fixes `T = U u S` once (line 3) and runs that same `T` against `B_all` and each `B_f` (lines 5 and 9). The adapter supplies `T` through `get_test_plan(features)`, which must not depend on which feature is being analysed. Both paths run it unchanged against every build and record a digest of the commands actually executed per build; a run whose `B_f` digest differs from its `B_all` digest fails, and the checkpoint records `test_plan_id` and `test_plan_identical`.
+
+Because `T` is fixed, it contains the tests that exercise `f`, and those cannot pass against `B_f`. Against `B_all` every command of `T` must succeed. Against `B_f` a failing command is tolerated: it is listed in the checkpoint (`tests_not_run_in_b_f`, or per-feature `tests_not_run` in batch) and contributes no coverage, and `L_f` comes from the rest of `T`. At least one command must still run, or `L_f` would be empty and `D_f = L_all`. Adapters whose whole workload needs the feature therefore provide a plan with a feature-independent part; the Mosquitto adapter's plain-listener session alongside its TLS session is the pattern. The polarity-specific `get_execution_commands(feature, enabled=False)` is no longer used for mapping.
+
+Earlier revisions ran a different workload per build (the single-feature path) or the union of both polarities in every build (the batch path); the mapping then reflected the workload change as well as the feature.
 
 The explicit `--default-baseline` mode is available for exploratory analysis, but its output is not accepted by the strict Algorithm 1 validator.
 
@@ -151,20 +162,26 @@ prat App/mosquitto TLS --remove    # removes, rebuilds, then verifies
 
 | Paper concept | Code | Key function |
 |---|---|---|
-| Rebuild the debloated tree | `src/prat/verification.py` | `verify_correctness()` |
-| Re-run U | `src/prat/verification.py` | `_discover_test_commands()`, `_run_test_suite()` |
+| Rebuild the debloated tree in `B_f`'s configuration | `src/prat/verification.py` | `verify_correctness(build_commands=...)` |
+| Re-run the same fixed `T` | `src/prat/verification.py` | `verify_correctness(test_commands=...)`, `_run_test_suite()` |
 | Replay S (KLEE tests) | `src/prat/verification.py` | `verify_correctness(symbolic_result=...)` |
 | Crash detection | `src/prat/verification.py` | `_signal_name()` |
-| Unexpected-behaviour oracle | `src/prat/verification.py` | `capture_reference_outputs()` |
+| Unexpected-behaviour oracle | `src/prat/verification.py` | `capture_reference_outputs()`, `ReferenceOutcome` |
 | Side-by-side comparison reports | `src/prat/diff.py` | `generate_comparison_reports()` |
 
-Verification runs by default after `--remove`; `--no-verify` opts out. A test that exits non-zero *failed*; a test killed by a signal *crashed*, and the signal is named. Divergence from pre-removal behaviour is only reported when a reference was captured beforehand — otherwise the result says the check was not performed rather than implying it passed.
+Verification runs by default after `--remove`; `--no-verify` opts out.
 
-A run that compiles but finds **no tests** is reported as `INCONCLUSIVE`, not as a pass: compiling is necessary but not sufficient evidence of correctness.
+**The suite re-run is `T`**, the fixed plan the mapping ran, not a different workload. Before removal, `capture_reference_outputs()` runs every command of `T` against the pre-removal build in the removal configuration (`B_f` for one feature, all-features-disabled for batch union removal) and records each outcome: exit code and normalized output, or the reason the command could not run. After removal and rebuild in the same configuration, `verify_correctness()` runs `T` again and requires every outcome to be reproduced.
+
+Because `T` contains the tests of the removed feature, some of those reference outcomes are failures. That is the expected result of removing `f`, and the debloated build is required to fail those tests **the same way**: same exit code, same normalized output. A test that failed before removal and fails identically after it is an *expected failure* (`VerificationResult.expected_failures`), counts as preserved behaviour, and is excluded from the pass rate. A test that now passes where it failed, fails where it passed, prints something different, or can no longer be started, *diverged*, and the verification fails. A test killed by a signal *crashed*, and the signal is named; a crash the reference build also produced with the same signal is reported as `preexisting_crashes` rather than as a crash introduced by removal.
+
+A reference in which no command of `T` passes is refused before removal starts: there would be nothing for verification to preserve. A run that compiles but finds **no tests** is reported as `INCONCLUSIVE`, not as a pass: compiling is necessary but not sufficient evidence of correctness. Divergence is only reported when a reference was captured beforehand; otherwise the result says the check was not performed rather than implying it passed.
+
+Earlier revisions verified with the adapter's `enabled=False` workload (a different suite from the one that produced `D_f`) and required every reference command to pass, which a fixed `T` cannot satisfy.
 
 The paper's "code comparison reports which display, side-by-side, the original code and the code post-debloating, highlighting feature-relevant code" are produced by `prat.diff` in two forms: a coverage comparison (per line, its state in both builds, with `D_f` marked) for auditing the *mapping*, and a source comparison (original against post-removal) for auditing the *removal*.
 
-**Tests**: `src/tests/test_verification.py`, `src/tests/test_diff.py`.
+**Tests**: `src/tests/test_verification.py` (including `TestReferenceOracle`), `src/tests/test_workflow.py::TestAlgorithmOneBaseline::test_verification_reruns_the_fixed_t_in_b_f_configuration`, `src/tests/test_diff.py`.
 
 ---
 
@@ -243,7 +260,7 @@ The paper evaluates seven codebases (Table 5, Table 4): Mosquitto, azure-uamqp-c
 | 1 | `mosquitto-tls` | Mosquitto v2.0.15 | make | `TLS` | **790** LOC (`paper/results/code_removal.csv`) |
 | 2 | `mosquitto-bridge` | Mosquitto v2.0.15 | make | `Bridge` | **640** LOC |
 | 3 | `ffmpeg-dca` | FFmpeg n5.1.4 | autotools | `decoder=dca` | none — the paper reports no per-feature LOC for FFmpeg |
-| 4 | `uamqp-websockets` | azure-uamqp-c | cmake | `use_wsio` | **26** LOC |
+| 4 | `uamqp-websockets` | azure-uamqp-c v1.2.0 | cmake | `use_wsio` | **26** LOC |
 | 5 | `opendds-content-filtered-topic` | OpenDDS DDS-3.25 | MPC | `content-filtered-topic` | **73** LOC |
 | 6 | `quiche-qlog` | quiche 0.20.1 | cargo | `qlog` | none — no per-feature LOC for Quiche |
 | 7 | `rav1e-serialize` | rav1e v0.7.1 | cargo | `serialize` | none — no per-feature LOC for rav1e |

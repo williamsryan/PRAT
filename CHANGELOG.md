@@ -23,6 +23,36 @@ this is a major version and the committed results under `results/` must be regen
 - **Batch analysis performs Algorithm 1's `n+1` builds** against a single all-features baseline,
   rather than two builds per feature against project defaults. `BatchResult.builds_performed`
   reports the count; an all-features baseline failure now fails the Algorithm 1 run.
+- **The single-feature path builds `B_all` and `B_f`, not default ± f.** `run_complete_workflow`
+  (and therefore every Docker demo) discovers the feature set and builds every feature on versus
+  every feature but `f`, as Algorithm 1 lines 4 and 8 specify. Previously it built the project's
+  default configuration with `f` forced on and off while its documentation presented the result
+  as `L_all \ L_f`. The checkpoint and demo manifest record `baseline_mode` (`"all-features"`) and
+  the exact configuration of both builds in `mapping_build_states`; the old behaviour remains as
+  `--default-baseline`, is labelled `"project-default"`, and strict validation rejects it.
+- **One fixed test plan `T` runs against every build.** Algorithm 1 fixes `T` once (line 3) and
+  runs it against `B_all` and each `B_f`. The single-feature path instead ran a polarity-specific
+  workload per build, and the batch path ran the union of both polarities in every build, so for
+  libaom, FFmpeg and Mosquitto-on-macOS the two coverage runs executed different commands and the
+  mapping reflected the workload change as well as the feature. `ProjectAdapter.get_test_plan()`
+  now supplies `T` independently of any feature's polarity; libaom and Mosquitto override it so
+  part of `T` runs on every build. Tests of `f` that cannot pass against `B_f` are tolerated there
+  and listed in the checkpoint (`tests_not_run_in_b_f`); against `B_all` every command must pass.
+  The recorded digest is computed from the commands actually run, and a run whose `B_f` plan
+  differs from its `B_all` plan fails.
+- **Post-removal verification re-runs the same fixed `T`.** The workflow verified with the
+  adapter's `enabled=False` workload and the batch path with the polarity union, and the
+  reference oracle rejected any command that failed before removal, which a fixed `T` cannot
+  satisfy. `capture_reference_outputs()` now records every command's outcome (`ReferenceOutcome`:
+  exit code, normalized output, or why it could not run), and `verify_correctness()` requires each
+  outcome to be reproduced. Tests of the removed feature are expected failures: failing identically
+  is preserved behaviour, passing instead is divergence. A crash the reference also produced is
+  reported as pre-existing. The single-feature path rebuilds the debloated program in `B_f`'s
+  configuration, so the reference and the debloated build differ only by `D_f`.
+- **Strict validation is satisfiable.** `validate_paper_results.py --strict` treated a missing
+  `tolerance_pct` as an error while every published-value target sets it to `null`, so
+  `make compatibility-check` could never pass. A tolerance band now applies only when one is
+  configured, which is what the documentation already said.
 - **A failed rebuild now fails the removal and restores the tree.** The paper relies on a broken
   build preventing an incorrect implementation from being produced; previously the failure was
   logged and the removal still reported success.
@@ -72,6 +102,18 @@ this is a major version and the committed results under `results/` must be regen
   mapping, and an original-vs-debloated source comparison for auditing the removal.
 - Multi-feature builds (`compile_with_adapter(feature_states=...)`,
   `ProjectAdapter.get_build_commands_for_set()`), needed for the all-features baseline.
+- `ProjectAdapter.get_test_plan(features)` — the fixed test plan `T` for a feature set. The
+  default derives it from the all-features workload; libaom and Mosquitto override it.
+- `prat.verification.ReferenceOutcome` — one command's pre-removal outcome (exit code,
+  normalized output, or why it could not run), the unit the post-removal oracle compares.
+  `VerificationResult.expected_failures` and `preexisting_crashes` report what was preserved.
+- Checkpoint and manifest fields that make a run auditable: `baseline_mode`,
+  `mapping_build_states`, `test_plan_id`, `test_plan_commands`, `test_plan_identical`,
+  `tests_not_run_in_b_f` (per-feature `tests_not_run` in batch), and per-build
+  `test_failures_tolerated` / `execution_errors` on coverage results.
+- `ARTIFACT.md` — the reviewer's guide: first command, runtimes, disk, what success looks like.
+- `results/README.md` is now tracked (it was linked from the README and CHANGELOG but had never
+  been committed, because `results/` was ignored wholesale).
 - `BatchResult.union_removable_lines` — `|union of D_f|`, the quantity comparable to Table 4's
   PRAT column, since a line attributable to two features must be counted once.
 - Removal and verification are part of `run_complete_workflow`; verification runs by default
@@ -112,13 +154,21 @@ this is a major version and the committed results under `results/` must be regen
 - `prat.extraction.count_removable_lines` — counted `#####` lines.
 - `prat.reporting.generate_html_diffs` — pygmentize colouring of those diffs, superseded by the
   comparison reports.
+- `docs/sample-results/` — the committed "reviewer snapshot" was produced by the superseded
+  mapping rule and scored against the invented per-feature values; it showed dead target slugs and
+  `success: false` while labelled as evidence. No results are committed; see `results/README.md`.
 
 ### Notes
 
-- `results/` and `docs/sample-results/` predate the mapping correction; see `results/README.md`.
-- Rust coverage uses `cargo-llvm-cov` rather than the paper's `kcov`; the substitution and its
-  reason are recorded in `REPRODUCIBILITY.md` §3 and `docs/PAPER_ALIGNMENT.md`.
+- `results/` is not committed (`results/README.md` explains why and how to regenerate). Rust
+  coverage uses `cargo-llvm-cov` rather than the paper's `kcov`; the substitution and its reason
+  are recorded in `REPRODUCIBILITY.md` §3 and `docs/PAPER_ALIGNMENT.md`.
 - Eight compatibility demos cover all seven paper codebases.
+- `ARTIFACT.md` gives reviewers the fastest trust path, the evidence path, runtime and disk
+  expectations, and what success looks like.
+- The `B_all` builds inside the pinned Docker images have not been re-run since the baseline
+  correction. A demo whose all-features build does not compile fails loudly rather than
+  substituting a different baseline.
 
 ## [1.0.0] — 2026-06-26
 

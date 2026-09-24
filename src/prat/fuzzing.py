@@ -1,10 +1,11 @@
 """
 MQTT fuzzing harness for PRAT.
 
-Paper, Correctness: "we built a custom MQTT fuzzing engine based on the popular
-Boofuzz fuzzer. Fuzzing as a testing strategy was not considered or employed
-during the design and implementation of PRAT; therefore, we consider it a useful
-'sanity check' with potential to uncover issues not otherwise identified."
+Paper, Evaluation (Correctness): "we built a custom MQTT fuzzing engines [sic]
+based on the popular Boofuzz fuzzer. Fuzzing as a testing strategy was not
+considered or employed during the design and implementation of PRAT; therefore,
+we consider it a useful ``sanity check'' with potential to uncover issues not
+otherwise identified."
 
 This module launches a Mosquitto broker built by PRAT, fuzzes it over MQTT, and
 reports the line and function coverage the session reached plus any crash the

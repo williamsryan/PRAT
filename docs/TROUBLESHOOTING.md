@@ -141,43 +141,78 @@ chmod -R u+w App/mosquitto
 sudo prat ...
 ```
 
-## Diff Analysis Issues
+## Mapping Issues
 
-### All Diffs Are Empty
+The mapping is `D_f = L_all \ L_f`: the lines executed under `T` in the all-features build
+`B_all` that are not executed in the all-but-`f` build `B_f`. There is no textual diff of gcov
+files and no `#####` selection rule; a line that is compiled but never run (`#####`) is kept in
+both builds, by design. See `docs/PAPER_ALIGNMENT.md` §C1.
 
-**Symptom:** `Generated 0 diff files` or all diffs removed as empty
+### `|D_f| = 0` (nothing mapped)
 
 **Diagnosis:**
-Feature may not affect code execution paths
+1. `T` never reaches the feature's code, so it is absent from `L_all` as well as `L_f`
+2. The feature flag does not change what is compiled or executed
+3. The feature is runtime-configured rather than compile-time
 
 **Solution:**
-1. Run with test suite to execute more code:
+1. Check the line coverage `T` achieved against `B_all`, printed after the mapping step and stored
+   as `coverage_percent_enabled` in `workflow_checkpoint.json`. If it is low, `T` needs to
+   exercise more of the program: add tests to the adapter's `get_test_plan()`, or generate `S`
+   with `--symbolic`.
+2. Verify the flag changes the build (`mapping_build_states` in the checkpoint shows the exact
+   configuration of each build):
 ```bash
-prat App/mosquitto TLS --tests
+ls -lh App/mosquitto/src/mosquitto     # sizes should differ between the two builds
+```
+3. Inspect the two coverage sets directly (`--batch` labels the baseline
+   `coverage_files_all_features/` instead):
+```bash
+ls coverage_files_WITH_TLS_yes/ coverage_files_WITH_TLS_no/
+grep -c -v '#####\|^ *-:' coverage_files_WITH_TLS_yes/net.c.gcov   # executed lines
 ```
 
-2. Verify feature flag actually changes compilation:
-```bash
-# Check binary sizes differ
-ls -lh App/mosquitto/src/mosquitto
-```
+### Tests in `T` fail against `B_f`
 
-3. Check if feature is runtime-only (not compile-time)
+**Symptom:** `N test command(s) in T could not run against B_TLS and contributed no coverage`
+
+This is expected, not an error. `T` is fixed (Algorithm 1 line 3) and runs unchanged against
+every build, so the tests that exercise `f` cannot pass in a build without `f`. Those commands are
+listed in `tests_not_run_in_b_f` (workflow checkpoint) or `tests_not_run` (batch checkpoint).
+Coverage for `L_f` comes from the rest of `T`.
+
+It becomes a problem only if *every* command fails, because then `L_f` is empty and `D_f = L_all`.
+The run fails in that case (`Coverage generation failed (disabled)`). Fix the adapter's
+`get_test_plan()` so at least part of `T` runs on every build; the Mosquitto adapter's plain-listener
+session alongside its TLS session is the pattern.
+
+### Tests in `T` fail against `B_all`
+
+**Symptom:** `Coverage generation failed (enabled): 1 command(s) failed`
+
+Not tolerated: `L_all` is the baseline every `D_f` is measured against, so every command of `T`
+must pass there. Run the failing command by hand against the instrumented build and fix the
+workload or the environment.
+
+### `The test plan executed against B_f differs from the one executed against B_all`
+
+The digest recorded for each build is computed from the commands that actually ran. This
+message means an adapter or a caller changed the plan between builds; `get_test_plan()` must not
+depend on which feature is being analysed.
 
 ### File Matching Fails
 
-**Symptom:** `No matching coverage files found`
+**Symptom:** `No parseable coverage in ...`
 
 **Diagnosis:**
-Coverage file names don't match between enabled/disabled builds
+gcov produced no `.gcov` files, or produced them somewhere the collector does not look.
 
 **Solution:**
-Check coverage directory structure:
+Check the coverage directory structure:
 ```bash
 ls coverage_files_WITH_TLS_yes/
 ls coverage_files_WITH_TLS_no/
-
-# Files should have same base names
+# Files should have the same base names; each maps to one source file
 ```
 
 ## Extraction Issues
@@ -187,14 +222,13 @@ ls coverage_files_WITH_TLS_no/
 **Symptom:** `Identified 0 removable lines`
 
 **Diagnosis:**
-1. Feature may be very small
-2. Diffs may not contain `#####` markers
-3. Feature may be runtime-only
+`D_f` was empty (see "Mapping Issues" above), or every run in `D_f` was declined by the
+delimiter-balance guard (`RemovalResult.skipped_unbalanced`).
 
 **Solution:**
-Manually inspect diff files:
+Read the mapping report, which lists every line in `D_f` with its state in both builds:
 ```bash
-grep "#####" diff_TLS/*.gcov
+ls <output-dir>/report.html <output-dir>/coverage_comparison/
 ```
 
 ### HTML Report Not Generated
