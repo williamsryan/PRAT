@@ -488,7 +488,7 @@ def _write_demo_manifest(
     path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
 
-def _command_output(command: list[str], cwd: Path | None = None) -> str | None:
+def _command_output(command: list[str], cwd: Optional[Path] = None) -> Optional[str]:
     try:
         proc = subprocess.run(
             command,

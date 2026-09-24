@@ -554,7 +554,7 @@ def run_validation(
     results_dir: Path,
     expected_path: Path,
     strict: bool = False,
-    target_names: list[str] | None = None,
+    target_names: Optional[list[str]] = None,
 ) -> ValidationReport:
     """Run full validation against all expected targets."""
 
