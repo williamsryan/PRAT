@@ -120,7 +120,8 @@ Each run writes, under its output directory:
 |---|---|
 | `workflow_checkpoint.json` / `batch_checkpoint.json` | The run's full record: `baseline_mode`, the exact feature configuration of every build (`mapping_build_states`), the test plan digest and size (`test_plan_id`, `test_plan_commands`), whether both builds ran the same plan (`test_plan_identical`), which tests of `T` could not run against `B_f` (`tests_not_run_in_b_f`), coverage percentages, `|D_f|`, removal and verification results |
 | `manifest.json` (demos) | Source commit, tool versions, platform, and the same baseline and test-plan fields |
-| `report.html`, `report.json`, `FDG.dot` | The mapping and the feature graph |
+| `report.html`, `report.json`, `FDG.dot` | The mapping: removable lines per file, with inline source |
+| `feature_graph.html` | The paper's three-tier feature graph (feature → files → line sets), interactive and fully offline (D3 is inlined). Open this first to see *what* `D_f` is before reading the removal result |
 | `comparison_reports/` | The paper's side-by-side reports: per-line coverage state in both builds with `D_f` marked, and original versus debloated source |
 
 ## Reading a verification result

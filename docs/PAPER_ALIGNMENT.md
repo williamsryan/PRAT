@@ -122,9 +122,16 @@ A line range attributed to two features is one vertex with both features recorde
 **Reproduce**:
 ```bash
 prat App/mosquitto --batch --output results/batch/
-# → results/batch/feature_graph.html   (interactive, all three tiers)
+# → results/batch/feature_graph.html   (interactive, all three tiers, offline)
 # → results/batch/FDG.dot              (Graphviz)
+
+prat App/mosquitto TLS --output results/tls/
+# → results/tls/feature_graph.html     (same graph, one root: TLS → files → line sets)
 ```
+
+Both graphs are single self-contained HTML files. D3 v7.9.0 is vendored in `src/prat/web/`
+(`d3.v7.min.js`, SHA-256 pinned and checked on load, licence in `D3-LICENSE`) and inlined at
+generation time, so the page renders on an air-gapped machine.
 
 ---
 

@@ -38,6 +38,7 @@ class ExtractionResult:
     file_line_content: dict[str, list[str]]  # source path -> line content
     html_report_path: str | None = None
     dot_graph_path: str | None = None
+    feature_graph_path: str | None = None
     error_message: str | None = None
 
     # Partition of D_f over files that exist only in the feature-enabled build.

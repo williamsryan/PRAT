@@ -111,6 +111,14 @@ this is a major version and the committed results under `results/` must be regen
 
 ### Added
 
+- **Single-feature runs emit the feature graph.** `build_feature_graph_from_single()` existed but
+  nothing called it, so every single-feature run (and therefore every Docker demo) produced a
+  report but no `feature_graph.html`; only `--batch` did. `run_complete_workflow` now writes the
+  one-root graph next to `report.html` and records it as `ExtractionResult.feature_graph_path`.
+- **The feature graph is fully offline.** `generate_feature_graph_html` loaded D3 from
+  `cdn.jsdelivr.net`, contradicting the report's self-contained design goal. D3 v7.9.0 is now
+  vendored (`prat/web/d3.v7.min.js`, ISC licence in `prat/web/D3-LICENSE`, SHA-256 verified by
+  `prat.web.load_d3_bundle()`) and inlined into the generated page.
 - `prat.gcov` — gcov parsing, contiguous-run merging, and function-coverage extraction
   (`gcov -f`, with a sidecar for tools that report functions on stdout).
 - `prat.mapping` — Algorithm 1's set difference, plus coverage and function-coverage statistics.

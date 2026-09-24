@@ -297,7 +297,18 @@ class TestGenerateHtml:
 
         with open(path) as f:
             html = f.read()
-        assert "d3.js" in html or "d3@7" in html
+        # D3 is inlined from the vendored build so the graph renders offline.
+        assert "d3js.org v7.9.0" in html
+        assert "<script>__PRAT_D3_SOURCE__" not in html
+        assert "cdn.jsdelivr.net" not in html
+        assert "https://" not in html.replace("https://d3js.org", "")
+
+    def test_vendored_d3_digest_is_enforced(self, monkeypatch):
+        from prat import web
+
+        monkeypatch.setattr(web, "D3_SHA256", "0" * 64)
+        with pytest.raises(RuntimeError, match="does not match the recorded digest"):
+            web.load_d3_bundle()
 
     def test_html_contains_graph_data(self, tmp_path):
         batch = _make_batch({"TLS": {"net.c": 50}})

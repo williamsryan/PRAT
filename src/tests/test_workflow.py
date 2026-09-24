@@ -115,6 +115,20 @@ class TestRunCompleteWorkflow:
 
         assert (output / "workflow_checkpoint.json").exists()
 
+    def test_single_feature_run_writes_the_feature_graph(self, happy_path, tmp_path):
+        output = tmp_path / "out"
+        result = run_complete_workflow(str(tmp_path), "TLS", output_dir=str(output))
+
+        graph_path = output / "feature_graph.html"
+        assert result.extraction_result.feature_graph_path == str(graph_path)
+        assert graph_path.exists()
+        html = graph_path.read_text()
+        # The paper's three-tier graph rooted at the analysed feature, offline.
+        assert "TLS" in html
+        assert "net.c" in html
+        assert "d3js.org v7.9.0" in html
+        assert "cdn.jsdelivr.net" not in html
+
     def test_does_not_remove_unless_asked(self, happy_path, tmp_path):
         result = run_complete_workflow(
             str(tmp_path), "TLS", output_dir=str(tmp_path / "out")

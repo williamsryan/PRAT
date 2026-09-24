@@ -50,6 +50,7 @@ from .diff import ComparisonResult, generate_comparison_reports
 from .discovery import discover_features
 from .environment import verify_dependencies
 from .extraction import ExtractionResult, extract_from_mapping
+from .feature_graph import build_feature_graph_from_single, generate_feature_graph_html
 from .gcov import load_coverage_dir
 from .mapping import (
     FeatureMapping,
@@ -629,6 +630,8 @@ def run_complete_workflow(
             print(f"HTML report: {extraction_result.html_report_path}")
         if extraction_result.dot_graph_path:
             print(f"DOT graph: {extraction_result.dot_graph_path}")
+        if extraction_result.feature_graph_path:
+            print(f"Feature graph: {extraction_result.feature_graph_path}")
         if result.comparison_result and result.comparison_result.index_path:
             print(f"Comparison reports: {result.comparison_result.index_path}")
         print(f"{'=' * 70}\n")
@@ -722,6 +725,16 @@ def _generate_reports(
     dot_path = str(base / "FDG.dot")
     generate_dot_graph(extraction_result, feature, output_path=dot_path)
     extraction_result.dot_graph_path = dot_path
+
+    # The paper's three-tier feature graph (feature -> files -> line sets) is
+    # the decision-support artifact an analyst inspects before removal. The
+    # batch path already emits it; a single-feature run gets a one-root graph.
+    graph = build_feature_graph_from_single(
+        extraction_result, feature, project=result.project
+    )
+    graph_path = str(base / "feature_graph.html")
+    generate_feature_graph_html(graph, graph_path)
+    extraction_result.feature_graph_path = graph_path
 
     result.comparison_result = generate_comparison_reports(
         mapping,

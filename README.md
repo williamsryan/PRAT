@@ -175,7 +175,9 @@ PRAT generates:
   for a batch run's baseline
 - `report.html` — removable lines per source file
 - `FDG.dot` — the feature graph as Graphviz (feature → file → line-range)
-- `feature_graph.html` — interactive three-tier graph (batch runs)
+- `feature_graph.html` — interactive three-tier graph (feature → files → line sets); a
+  single-feature run yields a one-root graph, a batch run the whole DAG. Self-contained: D3
+  is vendored and inlined, so the page opens offline
 - `comparison_reports/` — the paper's side-by-side reports: per-line execution state in both
   builds with `D_f` marked, and original-vs-debloated source after a removal
 - `report.json` and `workflow_checkpoint.json` — machine-readable results
