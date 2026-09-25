@@ -46,6 +46,9 @@ _archive/
 
 App/mosquitto_Ryan/
 
+# Local agent/IDE settings
+.kiro/
+
 # No result snapshot is committed. Every result file under results/ is produced
 # by a run on the reviewer's own machine; only the explanatory README is tracked.
 !results/README.md
