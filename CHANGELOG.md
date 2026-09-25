@@ -130,6 +130,9 @@ this is a major version and the committed results under `results/` must be regen
 
 ### Added
 
+- **`scripts/replay_removal_plan.py`** replays the removal planner offline against the coverage
+  pair a run retained, reporting every kept range in its category (`SKIPPED`, `STRUCT`, `GUARD`)
+  with the source line, so "why was this mapped line kept?" is answerable without rebuilding.
 - **Single-feature runs emit the feature graph.** `build_feature_graph_from_single()` existed but
   nothing called it, so every single-feature run (and therefore every Docker demo) produced a
   report but no `feature_graph.html`; only `--batch` did. `run_complete_workflow` now writes the
