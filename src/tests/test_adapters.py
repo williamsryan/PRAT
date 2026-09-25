@@ -154,7 +154,7 @@ class TestMosquittoAdapter:
     def test_macos_test_plan_has_a_plain_session_that_runs_on_every_build(
         self, adapter, tmp_path
     ):
-        """Against B_TLS the TLS session cannot run; the plain session must
+        """Against B_TLS the TLS sessions cannot run; the plain session must
         still contribute coverage, or L_TLS would be empty and D_TLS = L_all."""
         with (
             patch("prat.adapters.mosquitto._is_macos", return_value=True),
@@ -166,16 +166,52 @@ class TestMosquittoAdapter:
             plan = adapter.get_test_plan(["TLS", "BRIDGE"])
             again = adapter.get_test_plan(["BRIDGE"])
 
-        assert len(plan) == 2
-        plain, tls = plan
-        assert "-p 11883" in plain[2] and "cafile" not in plain[2]
-        assert "-p 18883" in tls[2] and "--cafile" in tls[2]
+        assert len(plan) == 7
+        plain = plan[0][2]
+        assert "-p 11883" in plain and "cafile" not in plain
+        assert "mosquitto_sub" in plain and "mosquitto_pub" in plain
+        for tls_session in plan[1:6]:
+            assert "-p 18883" in tls_session[2]
         # The plan does not depend on which feature is being analysed.
         assert again == plan
-        assert (tmp_path / "build" / "prat_plain.conf").read_text().splitlines() == [
-            "allow_anonymous true", "listener 11883",
-        ]
-        assert "cafile" in (tmp_path / "build" / "prat_tls.conf").read_text()
+        # Both listener configs carry a string-valued option so the generic
+        # string parser is shared code, not D_TLS.
+        plain_conf = (tmp_path / "build" / "prat_plain.conf").read_text().splitlines()
+        assert plain_conf[0] == "allow_anonymous true"
+        assert plain_conf[1].startswith("pid_file ")
+        assert plain_conf[2] == "listener 11883"
+        tls_conf = (tmp_path / "build" / "prat_tls.conf").read_text()
+        assert "cafile" in tls_conf and "pid_file" in tls_conf
+
+    def test_macos_test_plan_exercises_tls_options_and_error_paths(
+        self, adapter, tmp_path
+    ):
+        with (
+            patch("prat.adapters.mosquitto._is_macos", return_value=True),
+            patch.object(
+                MosquittoAdapter, "_ensure_test_certificates",
+                return_value=tmp_path / "build" / "prat_ssl",
+            ),
+        ):
+            plan = adapter.get_test_plan(["TLS"])
+        scripts = [command[2] for command in plan]
+
+        assert "--tls-version tlsv1.2 --ciphers HIGH --insecure" in scripts[2]
+        assert "-h 127.0.0.1" in scripts[2]
+        assert "--cert " in scripts[3] and "--key " in scripts[3]
+        assert "--capath " in scripts[4]
+        # Expected failures are asserted, not merely tolerated.
+        assert scripts[5].count("then exit 1; fi") == 3
+        assert "other_ca.crt" in scripts[5] and "missing.crt" in scripts[5]
+        assert "does-not-exist.crt" in (
+            tmp_path / "build" / "prat_tls_bad_certfile.conf").read_text()
+        assert "exit 1" in scripts[6]
+
+        options_conf = (tmp_path / "build" / "prat_tls_options.conf").read_text()
+        assert "tls_version tlsv1.2" in options_conf and "ciphers HIGH:!aNULL" in options_conf
+        mutual_conf = (tmp_path / "build" / "prat_tls_mutual.conf").read_text()
+        assert "require_certificate true" in mutual_conf
+        assert "use_subject_as_username true" in mutual_conf
 
     def test_macos_session_always_stops_its_broker(self, adapter, tmp_path):
         """A failing client must not leave the broker holding the port and the
@@ -187,15 +223,20 @@ class TestMosquittoAdapter:
                 return_value=tmp_path / "build" / "prat_ssl",
             ),
         ):
-            script = adapter._broker_session(use_tls=True)[2]
+            scripts = [command[2] for command in adapter.get_test_plan(["TLS"])]
 
-        assert "trap 'kill -TERM $BROKER_PID" in script
-        assert ">/dev/null 2>&1 &" in script
-        assert script.startswith("set -e\n")
+        for script in scripts[:6]:
+            assert "trap 'kill -TERM $BROKER_PID" in script
+            assert ">/dev/null 2>&1 &" in script
+            assert script.startswith("set -e\n")
+        # The must-not-start probe has no trap because the broker is expected
+        # to have exited; if it is alive it is stopped before failing.
+        assert "kill -TERM $BROKER_PID; wait $BROKER_PID" in scripts[6]
 
     def test_macos_generates_its_own_certificates(self, adapter):
         """Mosquitto's shipped test certificates have expired; PRAT generates a
-        CA and a localhost server certificate under build/ instead."""
+        CA, a localhost server certificate, a client certificate, an unrelated
+        CA and a capath layout under build/ instead."""
         import shutil
 
         import pytest
@@ -205,14 +246,34 @@ class TestMosquittoAdapter:
         with patch("prat.adapters.mosquitto._is_macos", return_value=True):
             ssl_dir = adapter._ensure_test_certificates()
 
-        assert (ssl_dir / "ca.crt").exists()
-        assert (ssl_dir / "server.crt").exists()
-        assert (ssl_dir / "server.key").exists()
+        for name in ("ca.crt", "server.crt", "server.key", "client.crt", "client.key",
+                     "other_ca.crt", "ready"):
+            assert (ssl_dir / name).exists(), name
+        hashed = list((ssl_dir / "capath").glob("*.0"))
+        assert len(hashed) == 1
+        assert hashed[0].read_bytes() == (ssl_dir / "ca.crt").read_bytes()
         assert ssl_dir == adapter.project_path.resolve() / "build" / "prat_ssl"
         # Idempotent: a second call reuses the files.
         before = (ssl_dir / "server.crt").read_bytes()
         assert adapter._ensure_test_certificates() == ssl_dir
         assert (ssl_dir / "server.crt").read_bytes() == before
+
+    def test_partial_certificate_directory_is_regenerated(self, adapter):
+        """A directory from an older PRAT (server.crt but no client.crt or
+        marker) is regenerated instead of trusted."""
+        import shutil
+
+        import pytest
+
+        if not shutil.which("openssl"):
+            pytest.skip("openssl is not installed")
+        ssl_dir = adapter.project_path.resolve() / "build" / "prat_ssl"
+        ssl_dir.mkdir(parents=True)
+        (ssl_dir / "server.crt").write_text("stale")
+        with patch("prat.adapters.mosquitto._is_macos", return_value=True):
+            adapter._ensure_test_certificates()
+        assert (ssl_dir / "server.crt").read_text() != "stale"
+        assert (ssl_dir / "client.crt").exists()
 
 
 class TestAomAdapter:

@@ -135,62 +135,95 @@ class MosquittoAdapter(ProjectAdapter):
             src_dir.exists()
         )
 
-    def _write_listener_config(self, use_tls: bool) -> str:
-        """Write a broker config with a plain listener, or a TLS one, and return its path."""
+    PLAIN_PORT = 11883
+    TLS_PORT = 18883
+
+    def _write_listener_config(self, name: str, port: int, extra: list[str]) -> str:
+        """Write a broker config under ``build/`` and return its path.
+
+        Every config carries a string-valued global option (``pid_file``, inert
+        when the broker is not daemonised). Without one, the generic string
+        parser (``conf__parse_string`` -> ``misc__trimblanks``) runs only for
+        the TLS listeners' ``cafile``/``certfile``/``keyfile`` and so lands in
+        D_TLS although it is not TLS code.
+        """
         root = self.project_path.resolve()
-        name = "prat_tls" if use_tls else "prat_plain"
         config_path = root / "build" / f"{name}.conf"
-        port = 18883 if use_tls else 11883
-
-        lines = ["allow_anonymous true\n", f"listener {port}\n"]
-        if use_tls:
-            ssl_dir = self._ensure_test_certificates()
-            lines += [
-                f"cafile {ssl_dir}/ca.crt\n",
-                f"certfile {ssl_dir}/server.crt\n",
-                f"keyfile {ssl_dir}/server.key\n",
-            ]
-
+        lines = [
+            "allow_anonymous true\n",
+            f"pid_file {root}/build/{name}.pid\n",
+            f"listener {port}\n",
+            *[f"{line}\n" for line in extra],
+        ]
         config_path.parent.mkdir(parents=True, exist_ok=True)
         config_path.write_text("".join(lines))
         return str(config_path)
 
+    def _tls_listener_lines(self, ssl_dir: Path, *extra: str) -> list[str]:
+        return [
+            f"cafile {ssl_dir}/ca.crt",
+            f"certfile {ssl_dir}/server.crt",
+            f"keyfile {ssl_dir}/server.key",
+            *extra,
+        ]
+
     def _ensure_test_certificates(self) -> Path:
-        """A CA and a ``localhost`` server certificate under ``build/prat_ssl``.
+        """The certificate set T needs, generated under ``build/prat_ssl``.
 
         Mosquitto ships test certificates in ``test/ssl``, but the ones in the
         2.0.x tags have expired, so a client that verifies them fails with
         "certificate expired" and the TLS session contributes no coverage.
         Mosquitto's own test harness regenerates them; PRAT generates its own
         into the build directory instead, leaving the project tree untouched.
+
+        Files: ``ca.crt``/``ca.key`` (the trusted CA), ``server.crt``/``.key``
+        (``localhost``, SAN for ``127.0.0.1``), ``client.crt``/``.key`` (signed
+        by the CA, for mutual TLS), ``other_ca.crt`` (an unrelated CA, for the
+        wrong-CA probe) and ``capath/<hash>.0`` (the CA in ``--capath`` layout).
+        The ``ready`` marker is written last so a partial directory left by an
+        interrupted run is regenerated rather than trusted.
         """
         ssl_dir = self.project_path.resolve() / "build" / "prat_ssl"
-        server_crt = ssl_dir / "server.crt"
-        if server_crt.exists():
+        marker = ssl_dir / "ready"
+        if marker.exists():
             return ssl_dir
         ssl_dir.mkdir(parents=True, exist_ok=True)
+        capath = ssl_dir / "capath"
+        capath.mkdir(exist_ok=True)
         ext_file = ssl_dir / "server.ext"
         ext_file.write_text("subjectAltName=DNS:localhost,IP:127.0.0.1\n")
         subj = "/O=PRAT test/CN="
-        # Only options both OpenSSL and LibreSSL accept: the SAN goes through
-        # -extfile at signing time rather than -addext / -copy_extensions.
-        commands = [
-            ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "30",
-             "-subj", f"{subj}PRAT test CA",
-             "-keyout", str(ssl_dir / "ca.key"), "-out", str(ssl_dir / "ca.crt")],
-            ["openssl", "req", "-newkey", "rsa:2048", "-nodes",
-             "-subj", f"{subj}localhost",
-             "-keyout", str(ssl_dir / "server.key"), "-out", str(ssl_dir / "server.csr")],
-            ["openssl", "x509", "-req", "-days", "30", "-in", str(ssl_dir / "server.csr"),
-             "-CA", str(ssl_dir / "ca.crt"), "-CAkey", str(ssl_dir / "ca.key"),
-             "-CAcreateserial", "-extfile", str(ext_file), "-out", str(server_crt)],
-        ]
-        for command in commands:
-            subprocess.run(command, check=True, capture_output=True, text=True)
+
+        def run(command: list[str]) -> str:
+            return subprocess.run(command, check=True, capture_output=True, text=True).stdout
+
+        def self_signed(stem: str, cn: str) -> None:
+            run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "30",
+                 "-subj", f"{subj}{cn}",
+                 "-keyout", str(ssl_dir / f"{stem}.key"), "-out", str(ssl_dir / f"{stem}.crt")])
+
+        def signed_by_ca(stem: str, cn: str, ext: Path | None) -> None:
+            # Only options both OpenSSL and LibreSSL accept: the SAN goes through
+            # -extfile at signing time rather than -addext / -copy_extensions.
+            run(["openssl", "req", "-newkey", "rsa:2048", "-nodes", "-subj", f"{subj}{cn}",
+                 "-keyout", str(ssl_dir / f"{stem}.key"), "-out", str(ssl_dir / f"{stem}.csr")])
+            run(["openssl", "x509", "-req", "-days", "30", "-in", str(ssl_dir / f"{stem}.csr"),
+                 "-CA", str(ssl_dir / "ca.crt"), "-CAkey", str(ssl_dir / "ca.key"),
+                 "-CAcreateserial", *(["-extfile", str(ext)] if ext else []),
+                 "-out", str(ssl_dir / f"{stem}.crt")])
+
+        self_signed("ca", "PRAT test CA")
+        self_signed("other_ca", "PRAT unrelated CA")
+        signed_by_ca("server", "localhost", ext_file)
+        signed_by_ca("client", "prat-client", None)
+        ca_hash = run(["openssl", "x509", "-noout", "-subject_hash",
+                       "-in", str(ssl_dir / "ca.crt")]).strip()
+        (capath / f"{ca_hash}.0").write_bytes((ssl_dir / "ca.crt").read_bytes())
+        marker.write_text("v2\n")
         return ssl_dir
 
-    def _broker_session(self, use_tls: bool) -> list[str]:
-        """One command: start the broker, publish once, SIGTERM it.
+    def _session(self, config_path: str, body: str) -> list[str]:
+        """One command: start the broker on ``config_path``, run ``body``, SIGTERM it.
 
         The clean SIGTERM matters: gcov's atexit handler is what writes the
         .gcda files, so a killed broker leaves no coverage. The trap runs it on
@@ -201,19 +234,6 @@ class MosquittoAdapter(ProjectAdapter):
         """
         root = self.project_path.resolve()
         broker = str(root / "build" / "src" / "mosquitto")
-        pub = str(root / "build" / "client" / "mosquitto_pub")
-        config_path = self._write_listener_config(use_tls)
-        port = 18883 if use_tls else 11883
-
-        if use_tls:
-            ssl_dir = root / "build" / "prat_ssl"
-            client_cmd = (
-                f"{pub} --cafile {ssl_dir}/ca.crt"
-                f" -h localhost -p {port} -t prat/test -m hello"
-            )
-        else:
-            client_cmd = f"{pub} -h localhost -p {port} -t prat/test -m hello"
-
         script = (
             f"set -e\n"
             f"{broker} -c {config_path} >/dev/null 2>&1 &\n"
@@ -221,41 +241,125 @@ class MosquittoAdapter(ProjectAdapter):
             f"trap 'kill -TERM $BROKER_PID 2>/dev/null; wait $BROKER_PID 2>/dev/null' EXIT\n"
             f"sleep 1\n"
             f"kill -0 $BROKER_PID\n"
-            f"{client_cmd}\n"
+            f"{body}"
         )
         return ["bash", "-c", script]
 
+    def _pub_sub(self, pub: str, sub: str, port: int, client_opts: str,
+                 host: str = "localhost") -> str:
+        """Subscribe, publish one message, wait for the subscriber to receive it."""
+        return (
+            f"{sub} -h {host} -p {port} {client_opts} -t prat/test -C 1 -W 5 &\n"
+            f"SUB_PID=$!\n"
+            f"sleep 1\n"
+            f"{pub} -h {host} -p {port} {client_opts} -t prat/test -m hello\n"
+            f"wait $SUB_PID\n"
+        )
+
+    def _macos_test_plan(self) -> list[list[str]]:
+        root = self.project_path.resolve()
+        pub = str(root / "build" / "client" / "mosquitto_pub")
+        sub = str(root / "build" / "client" / "mosquitto_sub")
+        ssl = self._ensure_test_certificates()
+        tls = self._tls_listener_lines(ssl)
+        cafile = f"--cafile {ssl}/ca.crt"
+        plain_port, tls_port = self.PLAIN_PORT, self.TLS_PORT
+
+        def must_fail(command: str) -> str:
+            # Under ``set -e`` a ``!`` command never aborts the script, so an
+            # expected failure that unexpectedly succeeds is made explicit.
+            return f"if {command}; then exit 1; fi\n"
+
+        plain = self._write_listener_config("prat_plain", plain_port, [])
+        tls_default = self._write_listener_config("prat_tls", tls_port, tls)
+        tls_options = self._write_listener_config(
+            "prat_tls_options", tls_port,
+            self._tls_listener_lines(ssl, "tls_version tlsv1.2", "ciphers HIGH:!aNULL"),
+        )
+        tls_mutual = self._write_listener_config(
+            "prat_tls_mutual", tls_port,
+            self._tls_listener_lines(ssl, "require_certificate true",
+                                     "use_subject_as_username true"),
+        )
+        tls_bad_cert = self._write_listener_config(
+            "prat_tls_bad_certfile", tls_port,
+            [f"cafile {ssl}/ca.crt", f"certfile {ssl}/does-not-exist.crt",
+             f"keyfile {ssl}/server.key"],
+        )
+        broker = str(root / "build" / "src" / "mosquitto")
+
+        return [
+            # 1. Plain listener: subscribe + publish. Runs against every build.
+            self._session(plain, self._pub_sub(pub, sub, plain_port, "")),
+            # 2. TLS listener with default protocol/ciphers: subscribe + publish.
+            self._session(tls_default, self._pub_sub(pub, sub, tls_port, cafile)),
+            # 3. TLS listener pinned to TLS 1.2 and a cipher list; the client
+            #    pins the same, skips hostname verification and connects by IP.
+            self._session(
+                tls_options,
+                self._pub_sub(pub, sub, tls_port,
+                              f"{cafile} --tls-version tlsv1.2 --ciphers HIGH --insecure",
+                              host="127.0.0.1"),
+            ),
+            # 4. Mutual TLS: the broker requires a client certificate and takes
+            #    the username from its subject.
+            self._session(
+                tls_mutual,
+                self._pub_sub(pub, sub, tls_port,
+                              f"{cafile} --cert {ssl}/client.crt --key {ssl}/client.key"),
+            ),
+            # 5. The CA supplied as a directory (--capath) instead of a file.
+            self._session(
+                tls_default,
+                f"{pub} -h localhost -p {tls_port} --capath {ssl}/capath"
+                f" -t prat/test -m hello\n",
+            ),
+            # 6. Handshakes that must fail, driving the TLS error paths on both
+            #    sides: a plain client on the TLS port, a client trusting an
+            #    unrelated CA, and a client whose cafile does not exist.
+            self._session(
+                tls_default,
+                must_fail(f"{pub} -h localhost -p {tls_port} -t prat/test -m hello")
+                + must_fail(f"{pub} -h localhost -p {tls_port} --cafile {ssl}/other_ca.crt"
+                            f" -t prat/test -m hello")
+                + must_fail(f"{pub} -h localhost -p {tls_port} --cafile {ssl}/missing.crt"
+                            f" -t prat/test -m hello"),
+            ),
+            # 7. A broker whose certfile does not exist must refuse to start.
+            #    In a build without TLS ``certfile`` is only a warning, so the
+            #    broker starts and this command fails there: recorded, tolerated
+            #    against B_TLS, and part of the verification reference.
+            ["bash", "-c",
+             f"{broker} -c {tls_bad_cert} >/dev/null 2>&1 &\n"
+             f"BROKER_PID=$!\n"
+             f"sleep 1\n"
+             f"if kill -0 $BROKER_PID 2>/dev/null; then\n"
+             f"  kill -TERM $BROKER_PID; wait $BROKER_PID 2>/dev/null; exit 1\n"
+             f"fi\n"
+             f"wait $BROKER_PID 2>/dev/null && exit 1 || true\n"],
+        ]
+
     def get_test_plan(self, features: list[str]) -> list[list[str]]:
-        """The fixed T for Mosquitto.
+        """The fixed T for Mosquitto; it does not depend on ``features``.
 
         Linux: the project's unit tests (``make utest``), which do not depend on
         the build's feature set.
 
-        macOS: two broker sessions, one on a plain listener and one on a TLS
-        listener. The plain session runs against every build; the TLS session
-        can only run where TLS is compiled in, so against B_TLS it fails (the
-        broker rejects ``cafile``) and is tolerated, and L_TLS still contains
-        the plain session's coverage instead of being empty.
+        macOS: seven broker sessions (see :meth:`_macos_test_plan`): a plain
+        listener, three TLS listeners (defaults, pinned version and ciphers,
+        mutual TLS), a ``--capath`` client, three handshakes that must fail,
+        and a broker that must refuse a missing certificate. Every session runs
+        against every build. Against B_TLS the TLS sessions fail (the client
+        refuses ``--cafile``) and are tolerated; the plain session guarantees
+        L_TLS is not empty. The expected-failure sessions exist so that the TLS
+        error branches execute in B_all and become part of D_TLS instead of
+        remaining guards of code no test reaches.
         """
         if not _is_macos():
             test_cmd = self.get_test_command()
             return [test_cmd] if test_cmd else []
-        return [
-            self._broker_session(use_tls=False),
-            self._broker_session(use_tls=True),
-        ]
+        return self._macos_test_plan()
 
     def get_execution_commands(self, feature: str, enabled: bool) -> list:
-        """
-        Polarity-specific workload, used for post-removal verification.
-
-        Linux: unit tests via make utest.
-        macOS: start broker briefly with appropriate config, connect a client,
-               then SIGTERM the broker so gcda files are flushed on clean exit.
-        """
-        if not _is_macos():
-            test_cmd = self.get_test_command()
-            return [test_cmd] if test_cmd else []
-
-        use_tls = feature.upper() == "TLS" and enabled
-        return [self._broker_session(use_tls)]
+        """The workload no longer depends on polarity: this is the fixed T."""
+        return self.get_test_plan([feature])

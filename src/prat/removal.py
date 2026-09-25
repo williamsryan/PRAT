@@ -35,7 +35,8 @@ from pathlib import Path
 
 from .extraction import ExtractionResult
 from .gcov import merge_contiguous
-from .mapping import FeatureMapping
+from .mapping import FeatureMapping, GuardContext
+from .mapping import guard_context as mapping_guard_context
 from .mapping import protected_lines as mapping_protected
 
 
@@ -54,15 +55,29 @@ class RemovalResult:
     per_file_stats: dict[str, int] = field(default_factory=dict)
 
     # Runs the balance guard declined to remove, as
-    # ``source_path -> [(start, end), ...]``. These lines stay in the source.
+    # ``source_path -> [(start, end), ...]``. These lines stay in the source and
+    # count against exact removal.
     skipped_unbalanced: dict[str, list[tuple[int, int]]] = field(default_factory=dict)
-    # Non-executable structural lines absorbed to keep delimiters balanced.
+    # Delimiter-only lines in D_f (a ``}`` gcov charged with a function's
+    # epilogue) that shared code still needs. Kept; no code is retained.
+    retained_structural: dict[str, list[tuple[int, int]]] = field(default_factory=dict)
+    # Guard lines in D_f whose bodies the reduced build compiles but neither
+    # build executed. Kept with their bodies, per the paper's rule against
+    # removing unexecuted code.
+    guards_shared_code: dict[str, list[tuple[int, int]]] = field(default_factory=dict)
+    # Non-code lines absorbed to keep delimiters and conditionals balanced.
     absorbed_structural: int = 0
+    # Unexecuted feature-only lines (no code in the reduced build) absorbed
+    # because a run could not close without them. Disclosed, never in |D_f|.
+    absorbed_unexecuted: int = 0
     missing_source_files: list[str] = field(default_factory=list)
     # Sources in D_f that lie outside the project tree (system headers whose
     # inline code the build executed). Never modified.
     out_of_tree_sources: list[str] = field(default_factory=list)
     target_lines: int = 0
+    # Mapped lines kept by design (structural + guards of shared code), counted
+    # exactly rather than from run spans, which can include bridged gap lines.
+    retained_lines: int = 0
 
     @property
     def skipped_line_count(self) -> int:
@@ -161,43 +176,347 @@ def _is_structural(text: str) -> bool:
     return all(char in "()[]{};, \t" for char in stripped)
 
 
-def _bridge_structural_gaps(
-    lines: list[str],
-    runs: list[tuple[int, int]],
-    protected: set[int],
-) -> list[tuple[int, int]]:
-    """Join runs separated only by non-executable structural lines.
+def _directive_kind(text: str) -> str | None:
+    """Classify a preprocessor conditional line: ``if``, ``elif``, ``else``,
+    ``endif``; None for anything else (including other directives)."""
+    stripped = text.strip()
+    if not stripped.startswith("#"):
+        return None
+    word = stripped[1:].lstrip().split(None, 1)[0] if stripped[1:].strip() else ""
+    if word in ("if", "ifdef", "ifndef"):
+        return "if"
+    if word in ("elif", "else", "endif"):
+        return word
+    return None
 
-    gcov attributes a function's entry block to its *signature* line while the
-    opening brace on the next line gets ``-:``. So a removable function arrives
-    as the runs ``[(sig, sig), (body_start, body_end)]`` with the ``{`` sitting in
-    the gap. Checking those runs independently finds each balanced and approves
-    both, leaving an orphaned ``{ ... }`` that does not compile.
 
-    Bridging the gap makes the function one run, whose net delta is then +1 and
-    whose closing brace the caller absorbs — so the whole function goes or none
-    of it does. Only gaps made entirely of unprotected structural lines are
-    bridged; those carry no coverage in either build, so they belong to whichever
-    block encloses them.
+@dataclass
+class _ConditionalGroup:
+    """One ``#if ... [#elif/#else ...] #endif`` group, by 1-indexed line."""
+
+    opener: int
+    branches: list[int] = field(default_factory=list)  # #elif / #else lines
+    closer: int = 0
+
+    @property
+    def directives(self) -> set[int]:
+        return {self.opener, self.closer, *self.branches}
+
+    def arms(self) -> list[range]:
+        """Line ranges of each arm, excluding the directive lines."""
+        bounds = [self.opener, *self.branches, self.closer]
+        return [range(a + 1, b) for a, b in zip(bounds, bounds[1:])]
+
+
+def _conditional_groups(lines: list[str]) -> dict[int, _ConditionalGroup]:
+    """Map every conditional directive line to its group.
+
+    Unterminated or stray directives are left out; a run touching one of those
+    fails the preprocessor check, which is the conservative outcome.
     """
-    if not runs:
-        return runs
+    stack: list[_ConditionalGroup] = []
+    by_line: dict[int, _ConditionalGroup] = {}
+    for number, text in enumerate(lines, start=1):
+        kind = _directive_kind(text)
+        if kind == "if":
+            stack.append(_ConditionalGroup(opener=number))
+        elif kind in ("elif", "else") and stack:
+            stack[-1].branches.append(number)
+        elif kind == "endif" and stack:
+            group = stack.pop()
+            group.closer = number
+            for line in group.directives:
+                by_line[line] = group
+    return by_line
 
-    bridged: list[tuple[int, int]] = [runs[0]]
 
-    for start, end in runs[1:]:
-        previous_start, previous_end = bridged[-1]
-        gap = range(previous_end + 1, start)
+@dataclass
+class RemovalPlan:
+    """Outcome of :func:`plan_removal` for one file.
 
-        if gap and all(
-            index not in protected and _is_structural(lines[index - 1])
-            for index in gap
-        ):
-            bridged[-1] = (previous_start, end)
-        else:
-            bridged.append((start, end))
+    ``approved`` is every line to blank: candidates plus whatever the guard had
+    to pull in. Declined candidate runs are split by why they stay:
 
-    return bridged
+    * ``skipped``: could not be balanced without touching code the reduced
+      build keeps. These are genuine failures of exact removal.
+    * ``retained_structural``: runs made only of delimiter text (a ``}`` gcov
+      charged with a function epilogue) that shared code still needs. No code
+      is kept by leaving them.
+    * ``guards_shared_code``: a guard whose body is executable in the reduced
+      build but was never executed in either build. Removing the guard would
+      make that body unconditional; the paper's rule against removing
+      unexecuted code means the guard must stay with it.
+    """
+
+    approved: set[int] = field(default_factory=set)
+    skipped: list[tuple[int, int]] = field(default_factory=list)
+    retained_structural: list[tuple[int, int]] = field(default_factory=list)
+    guards_shared_code: list[tuple[int, int]] = field(default_factory=list)
+    # Lines pulled in that carry no code in either build: delimiters, blanks,
+    # comments, preprocessor lines, preprocessed-out alternatives.
+    absorbed_structural: int = 0
+    # Lines executable in the full build, never executed, and carrying no code
+    # in the reduced build. Pulled in only when a run cannot otherwise close.
+    absorbed_unexecuted: int = 0
+    # Candidate lines inside each declined category.
+    skipped_lines: int = 0
+    retained_structural_lines: int = 0
+    guards_shared_code_lines: int = 0
+
+    @property
+    def all_skipped(self) -> list[tuple[int, int]]:
+        return sorted(self.skipped + self.retained_structural + self.guards_shared_code)
+
+    @property
+    def absorbed(self) -> int:
+        return self.absorbed_structural + self.absorbed_unexecuted
+
+
+class _Planner:
+    """State for one :func:`plan_removal` call."""
+
+    def __init__(
+        self,
+        lines: list[str],
+        candidates: set[int],
+        protected: set[int],
+        absorbable: set[int],
+        unexecuted_feature_only: set[int],
+        unexecuted_shared: set[int],
+        executable_disabled: set[int] | None = None,
+    ) -> None:
+        self.lines = lines
+        self.total = len(lines)
+        self.deltas = compute_line_deltas(lines)
+        self.candidates = candidates
+        self.protected = protected
+        self.absorbable = absorbable
+        self.unexecuted_feature_only = unexecuted_feature_only - protected - candidates
+        self.unexecuted_shared = unexecuted_shared
+        self.executable_disabled = executable_disabled or set()
+        self.groups = _conditional_groups(lines)
+        self.claimed: set[int] = set()
+
+    # -- line classification -------------------------------------------------
+
+    def is_noncode(self, line: int) -> bool:
+        """A line the guard may blank because it carries no code in either
+        build: delimiter-only text, or a line the coverage marks as such."""
+        if line < 1 or line > self.total:
+            return False
+        if line in self.protected or line in self.candidates or line in self.claimed:
+            return False
+        return line in self.absorbable or _is_structural(self.lines[line - 1])
+
+    def is_unexecuted_feature_only(self, line: int) -> bool:
+        return line in self.unexecuted_feature_only and line not in self.claimed
+
+    def is_directive(self, line: int) -> bool:
+        return 1 <= line <= self.total and _directive_kind(self.lines[line - 1]) is not None
+
+    def is_blank_or_comment(self, line: int) -> bool:
+        if not (1 <= line <= self.total):
+            return False
+        text = self.lines[line - 1].strip()
+        return not text or text.startswith("//") or (text.startswith("/*") and text.endswith("*/"))
+
+    # -- runs ------------------------------------------------------------------
+
+    def bridge_gaps(self, runs: list[tuple[int, int]]) -> list[tuple[int, int]]:
+        """Join runs separated only by lines carrying no code.
+
+        gcov attributes a function's entry block to its *signature* line while
+        the opening brace on the next line gets ``-:``. Checking those runs
+        independently finds each balanced and approves both, leaving an orphaned
+        ``{ ... }`` that does not compile. Bridging makes the function one run,
+        so the whole function goes or none of it does. Gaps are bridged only over
+        lines that carry no code in either build; unexecuted feature code is not
+        bridged over, it is absorbed only when a run cannot otherwise close.
+
+        A run whose own delimiters are net closing (a ``}`` gcov charged to the
+        last executed statement of a block) is never bridged *forward*: it has
+        nothing open for the following lines to close, and joining it to the
+        next block would pair that ``}`` with the next block's ``{`` and shift
+        every closer below by one block. Such a run closes backward on its own.
+        """
+        if not runs:
+            return runs
+        bridged = [runs[0]]
+        for start, end in runs[1:]:
+            previous_start, previous_end = bridged[-1]
+            gap = range(previous_end + 1, start)
+            previous_balance = self.balance(set(range(previous_start, previous_end + 1)))
+            if (
+                gap
+                and previous_balance >= 0
+                and all(self.is_noncode(index) for index in gap)
+            ):
+                bridged[-1] = (previous_start, end)
+            else:
+                bridged.append((start, end))
+        return bridged
+
+    def balance(self, chosen: set[int]) -> int:
+        return sum(self.deltas[line - 1] for line in chosen)
+
+    # -- repairs -----------------------------------------------------------------
+
+    def try_arm_swap(
+        self, start: int, end: int, run: set[int]
+    ) -> tuple[set[int], int] | None:
+        """Remove the full-build arm of ``#if A / #else / #endif`` and keep the
+        other arm as unconditional code.
+
+        Mosquitto writes ``#ifdef WITH_TLS if(a || ssl){ #else if(a){ #endif``.
+        The TLS header is in D_f, the plain header is live in the reduced build,
+        and neither arm balances on its own. The rewrite is exact when the kept
+        arm contributes the same delimiter delta as the removed one: the
+        compiled text then keeps the structure the reduced build already had.
+        """
+        opener = start - 1
+        while opener >= 1 and self.is_blank_or_comment(opener) and not self.is_directive(opener):
+            opener -= 1
+        if opener < 1 or _directive_kind(self.lines[opener - 1]) != "if":
+            return None
+        group = self.groups.get(opener)
+        if group is None or len(group.branches) != 1:
+            return None
+        branch = group.branches[0]
+        if _directive_kind(self.lines[branch - 1]) != "else":
+            return None
+        between = range(end + 1, branch)
+        if not all(self.is_blank_or_comment(index) and not self.is_directive(index) for index in between):
+            return None
+        sibling = range(branch + 1, group.closer)
+        if not sibling:
+            return None
+        for index in sibling:
+            if index in self.candidates or index in self.claimed:
+                return None
+            if index not in self.protected and not self.is_noncode(index):
+                return None
+        if self.balance(set(sibling)) != self.balance(run):
+            return None
+        directives = {opener, branch, group.closer}
+        if any(line in self.protected or line in self.candidates for line in directives):
+            return None
+        return run | directives, len(directives)
+
+    def walk(
+        self,
+        run: set[int],
+        balance: int,
+        forward: bool,
+        run_at: dict[int, int],
+        runs: list[tuple[int, int]],
+        consumed: set[int],
+    ) -> tuple[set[int], list[int], list[int], set[int]] | str:
+        """Extend ``run`` in one direction until its delimiters close.
+
+        Lines met on the way are handled by kind: lines carrying no code are
+        absorbed; unexecuted feature-only code is absorbed (it has no code in
+        the reduced build, so removing it with its guard changes nothing the
+        reduced build does); another candidate run is merged (forward only);
+        protected lines are stepped over but their delta is tracked, and the
+        walk succeeds only when that tracked delta is zero, so shared code is
+        never re-nested — the one shape this admits is ``if(f){A}else{B}``
+        collapsing to ``B``. Any other line is a wall: exact removal would need
+        code the reduced build keeps.
+
+        Returns the extended set with the absorbed lines by kind and the runs
+        consumed, or a failure reason.
+        """
+        chosen = set(run)
+        absorbed_noncode: list[int] = []
+        absorbed_unexecuted: list[int] = []
+        merged: set[int] = set()
+        protected_delta = 0
+        cursor = (max(run) + 1) if forward else (min(run) - 1)
+        step = 1 if forward else -1
+
+        while 1 <= cursor <= self.total:
+            if balance == 0 and protected_delta == 0:
+                return chosen, absorbed_noncode, absorbed_unexecuted, merged
+            if cursor in self.claimed:
+                return "unbalanced"
+            if cursor in self.protected:
+                protected_delta += self.deltas[cursor - 1]
+                cursor += step
+                continue
+            if cursor in self.candidates:
+                index = run_at.get(cursor)
+                if not forward or index is None or index in consumed:
+                    return "unbalanced"
+                other_start, other_end = runs[index]
+                other = set(range(other_start, other_end + 1))
+                chosen |= other
+                balance += self.balance(other)
+                merged.add(index)
+                cursor = other_end + 1
+                continue
+            if self.is_noncode(cursor):
+                chosen.add(cursor)
+                absorbed_noncode.append(cursor)
+                balance += self.deltas[cursor - 1]
+                cursor += step
+                continue
+            if self.is_unexecuted_feature_only(cursor):
+                chosen.add(cursor)
+                absorbed_unexecuted.append(cursor)
+                balance += self.deltas[cursor - 1]
+                cursor += step
+                continue
+            if cursor in self.unexecuted_shared:
+                return "shared-unexecuted"
+            return "unbalanced"
+
+        if balance == 0 and protected_delta == 0:
+            return chosen, absorbed_noncode, absorbed_unexecuted, merged
+        return "unbalanced"
+
+    def close_conditionals(self, chosen: set[int]) -> tuple[set[int], int] | None:
+        """Make ``chosen`` consistent with the preprocessor structure.
+
+        Every ``#if`` group with a directive in ``chosen`` must end up either
+        fully removed (no non-directive line of the group survives) or with all
+        surviving lines in a single arm, which then becomes unconditional. In
+        both cases every directive of the group is blanked. Anything else means
+        the removal would leave two arms compiled, and the run is declined.
+
+        Returns the completed set and the number of directive lines added, or
+        None when the structure cannot be closed.
+        """
+        added = 0
+        pending = {line for line in chosen if line in self.groups}
+        seen: set[int] = set()
+        while pending:
+            line = pending.pop()
+            group = self.groups[line]
+            if group.opener in seen:
+                continue
+            seen.add(group.opener)
+            survivors_by_arm = [
+                [index for index in arm if index not in chosen and index not in group.directives]
+                for arm in group.arms()
+            ]
+            arms_with_survivors = [arm for arm in survivors_by_arm if arm]
+            if len(arms_with_survivors) > 1:
+                return None
+            for directive in group.directives:
+                if directive in self.protected or directive in self.candidates:
+                    return None
+                if directive in self.claimed:
+                    return None
+                if directive not in chosen:
+                    chosen.add(directive)
+                    added += 1
+            # Directives inside surviving arms belong to nested groups that were
+            # untouched; directives of removed arms are all in ``chosen`` now and
+            # may themselves belong to nested groups, which must close too.
+            for index in list(chosen):
+                if index in self.groups and self.groups[index].opener not in seen:
+                    pending.add(index)
+        return chosen, added
 
 
 def plan_removal(
@@ -205,79 +524,182 @@ def plan_removal(
     candidates: set[int],
     protected: set[int] | None = None,
     absorb_structural: bool = True,
+    absorbable: set[int] | None = None,
+    unexecuted_feature_only: set[int] | None = None,
+    unexecuted_shared: set[int] | None = None,
+    executable_disabled: set[int] | None = None,
 ) -> tuple[set[int], list[tuple[int, int]], int]:
     """Decide which candidate lines can be removed without unbalancing the file.
 
-    Candidate lines are grouped into runs, runs separated only by non-executable
-    structural lines are joined (see :func:`_bridge_structural_gaps`), and each
-    run is then checked for delimiter balance. A run whose net delta is non-zero
-    is repaired by absorbing the adjacent structural lines needed to close it;
-    one that cannot be balanced that way is dropped rather than risking a
-    corrupted file.
+    Thin wrapper over :func:`plan_removal_detailed` that keeps the historical
+    ``(approved, skipped_runs, absorbed)`` shape. ``skipped_runs`` is every
+    declined run regardless of category; ``absorbed`` counts every line pulled
+    in that was not a candidate.
+    """
+    plan = plan_removal_detailed(
+        lines,
+        candidates,
+        protected,
+        absorb_structural,
+        absorbable=absorbable,
+        unexecuted_feature_only=unexecuted_feature_only,
+        unexecuted_shared=unexecuted_shared,
+        executable_disabled=executable_disabled,
+    )
+    return plan.approved, plan.all_skipped, plan.absorbed
+
+
+def plan_removal_detailed(
+    lines: list[str],
+    candidates: set[int],
+    protected: set[int] | None = None,
+    absorb_structural: bool = True,
+    absorbable: set[int] | None = None,
+    unexecuted_feature_only: set[int] | None = None,
+    unexecuted_shared: set[int] | None = None,
+    executable_disabled: set[int] | None = None,
+) -> RemovalPlan:
+    """Decide which candidate lines can be removed without corrupting the file.
+
+    Candidate lines are grouped into runs; runs separated only by lines carrying
+    no code are joined; each run is then checked for delimiter balance. A run
+    whose net delta is non-zero is repaired, in order of preference, by:
+
+    1. the ``#if / #else / #endif`` arm swap (see ``_Planner.try_arm_swap``);
+    2. walking outward, absorbing lines that carry no code in the reduced build
+       and merging further candidate runs, stepping over shared code only when
+       the stepped-over code is itself balanced (``if(f){A}else{B}`` to ``B``).
+
+    Every approved set is then made consistent with the preprocessor structure:
+    a conditional group touched by the removal is blanked entirely, and it may
+    leave at most one arm's lines behind. A run that cannot be repaired is
+    declined and classified (see :class:`RemovalPlan`).
 
     Args:
         lines: File content.
         candidates: 1-indexed line numbers in D_f for this file.
-        protected: 1-indexed lines that must never be removed (typically L_f,
-            the lines still executed with the feature disabled).
-
-    Returns:
-        ``(approved, skipped_runs, absorbed)`` where ``approved`` is the set of
-        1-indexed lines to remove, ``skipped_runs`` lists the ``(start, end)``
-        runs declined, and ``absorbed`` counts extra lines pulled in.
+        protected: Lines that must never be removed (L_f, the lines still
+            executed with the feature disabled).
+        absorb_structural: Permit any absorption at all. When False, only runs
+            that balance on their own are approved.
+        absorbable: Lines carrying no code in either build (gcov ``-`` in the
+            full build and not executable in the reduced build). Delimiter-only
+            lines are always absorbable; this widens the set to comments,
+            preprocessor lines and preprocessed-out alternatives.
+        unexecuted_feature_only: Lines executable in the full build, never
+            executed, and carrying no code in the reduced build. Absorbed only
+            when a run cannot otherwise close.
+        unexecuted_shared: Lines executable in both builds and executed in
+            neither. Never removed; a run that would need one is declined as
+            guarding shared code.
     """
-    protected = protected or set()
-    deltas = compute_line_deltas(lines)
+    protected = set(protected or ())
     total = len(lines)
-
-    approved: set[int] = set()
-    skipped: list[tuple[int, int]] = []
-    absorbed = 0
-
     candidate_lines = {
         line for line in candidates if 1 <= line <= total and line not in protected
     }
-    raw_runs = merge_contiguous(sorted(candidate_lines))
-    runs = (
-        _bridge_structural_gaps(lines, raw_runs, protected)
-        if absorb_structural
-        else raw_runs
+    plan = RemovalPlan()
+
+    # A candidate the reduced build compiles is part of a skeleton B_f keeps:
+    # the signature of a function whose ``#else`` arm is a stub, the header of
+    # a ``switch`` whose other cases are shared. Removing it would change text
+    # B_f compiles, so it stays, and it must not be grouped with the feature
+    # code around it or that code is declined along with it.
+    skeleton = candidate_lines & set(executable_disabled or ())
+    if skeleton:
+        candidate_lines -= skeleton
+        protected |= skeleton
+        for start, end in merge_contiguous(sorted(skeleton)):
+            plan.guards_shared_code.append((start, end))
+            plan.guards_shared_code_lines += end - start + 1
+
+    planner = _Planner(
+        lines,
+        candidate_lines,
+        protected,
+        set(absorbable or ()),
+        set(unexecuted_feature_only or ()),
+        set(unexecuted_shared or ()),
+        set(executable_disabled or ()),
     )
 
-    for start, end in runs:
-        run = set(range(start, end + 1))
-        balance = sum(deltas[line - 1] for line in run)
+    raw_runs = merge_contiguous(sorted(candidate_lines))
+    runs = planner.bridge_gaps(raw_runs) if absorb_structural else raw_runs
+    run_at = {
+        line: index for index, (start, end) in enumerate(runs)
+        for line in range(start, end + 1)
+    }
+    consumed: set[int] = set()
 
-        if balance > 0 and absorb_structural:
-            # Unclosed openers: absorb following structural lines.
-            cursor = end + 1
-            while balance > 0 and cursor <= total:
-                if cursor in protected or not _is_structural(lines[cursor - 1]):
-                    break
-                run.add(cursor)
-                balance += deltas[cursor - 1]
-                cursor += 1
-        elif balance < 0 and absorb_structural:
-            # Unmatched closers: absorb preceding structural lines.
-            cursor = start - 1
-            while balance < 0 and cursor >= 1:
-                if cursor in protected or not _is_structural(lines[cursor - 1]):
-                    break
-                run.add(cursor)
-                balance += deltas[cursor - 1]
-                cursor -= 1
+    def decline(index: int, reason: str) -> None:
+        start, end = runs[index]
+        run_candidates = candidate_lines & set(range(start, end + 1))
+        if all(_is_structural(lines[line - 1]) for line in run_candidates):
+            plan.retained_structural.append((start, end))
+            plan.retained_structural_lines += len(run_candidates)
+        elif reason == "shared-unexecuted":
+            # Closing the run needs code the reduced build compiles and never
+            # executed. That code stays, so its guard stays with it.
+            plan.guards_shared_code.append((start, end))
+            plan.guards_shared_code_lines += len(run_candidates)
+        else:
+            plan.skipped.append((start, end))
+            plan.skipped_lines += len(run_candidates)
+
+    def approve(chosen: set[int], noncode: int, unexecuted: int, merged: set[int]) -> None:
+        plan.approved |= chosen
+        planner.claimed |= chosen
+        plan.absorbed_structural += noncode
+        plan.absorbed_unexecuted += unexecuted
+        consumed.update(merged)
+
+    for index, (start, end) in enumerate(runs):
+        if index in consumed:
+            continue
+        run = set(range(start, end + 1))
+        # Gap lines bridged into the run are absorbed non-code.
+        bridged = len(run - candidate_lines)
+        balance = planner.balance(run)
+        merged: set[int] = set()
 
         if balance == 0:
-            approved |= run
-            # Lines pulled in that were not themselves candidates: bridged gaps
-            # plus absorbed delimiters. Counted only for runs actually removed.
-            absorbed += len(run - candidate_lines)
+            chosen, noncode, unexecuted = set(run), bridged, 0
+        elif not absorb_structural:
+            decline(index, "unbalanced")
+            continue
         else:
-            # Cannot remove this run without corrupting the file. Leaving the
-            # code in place is the conservative outcome the paper prefers.
-            skipped.append((start, end))
+            swapped = planner.try_arm_swap(start, end, run)
+            if swapped is not None:
+                chosen, noncode, unexecuted = swapped[0], bridged + swapped[1], 0
+            else:
+                walked = planner.walk(
+                    run, balance, forward=balance > 0, run_at=run_at,
+                    runs=runs, consumed=consumed,
+                )
+                if isinstance(walked, str):
+                    decline(index, walked)
+                    continue
+                chosen, absorbed_noncode, absorbed_unexecuted, merged = walked
+                noncode = bridged + len(absorbed_noncode)
+                unexecuted = len(absorbed_unexecuted)
 
-    return approved, skipped, absorbed
+        if absorb_structural:
+            closed = planner.close_conditionals(set(chosen))
+            if closed is None:
+                # Runs merged during the walk are NOT consumed: they are
+                # processed on their own turn so every candidate line lands in
+                # exactly one category.
+                decline(index, "unbalanced")
+                continue
+            chosen, added = closed
+            noncode += added
+        elif any(planner.is_directive(line) for line in chosen if line not in candidate_lines):
+            decline(index, "unbalanced")
+            continue
+
+        approve(chosen, noncode, unexecuted, merged)
+
+    return plan
 
 
 # ---------------------------------------------------------------------------
@@ -291,6 +713,7 @@ def remove_feature_code(
     feature: str,
     mapping: FeatureMapping | None = None,
     protected_lines: dict[str, set[int]] | None = None,
+    guard_context: dict[str, GuardContext] | None = None,
     stub_feature_only_files: bool = False,
     backup: bool = True,
     rebuild: bool = True,
@@ -311,6 +734,10 @@ def remove_feature_code(
             the feature disabled are derived from it and protected.
         protected_lines: Explicit ``source_path -> lines`` that must survive.
             Merged with anything derived from ``mapping``.
+        guard_context: Per-file line classes for the balance guard (see
+            :func:`prat.mapping.guard_context`). Derived from ``mapping`` when
+            not given. Without it the guard can only absorb delimiter-only
+            lines, so exact removal fails more often.
         stub_feature_only_files: Legacy opt-in that replaces dedicated files.
             Disabled by default because whole-file stubbing removes lines that
             are outside D_f.
@@ -325,7 +752,12 @@ def remove_feature_code(
             non-executable delimiter lines, recorded separately from mapped
             lines. Enabled by default because gcov does not mark braces as
             executable even when their containing block is removed.
-        require_complete: Fail and restore unless every mapped line is removed.
+        require_complete: Fail and restore unless every mapped line is either
+            removed or kept by design. Kept by design means a delimiter-only
+            line shared code still needs, or a guard whose body the reduced
+            build compiles but no test executed (removing it would strip
+            unexecuted shared code, which the paper forbids). Both are listed
+            in the result. Any other declined run fails the removal.
         restore_on_build_failure: Restore from backup when the rebuild fails.
 
     Returns:
@@ -341,18 +773,25 @@ def remove_feature_code(
     files_stubbed = 0
     per_file_stats: dict[str, int] = {}
     skipped_unbalanced: dict[str, list[tuple[int, int]]] = {}
+    retained_structural: dict[str, list[tuple[int, int]]] = {}
+    guards_shared_code: dict[str, list[tuple[int, int]]] = {}
+    retained_lines = 0
     absorbed_total = 0
+    absorbed_unexecuted_total = 0
     missing_source_files: list[str] = []
     out_of_tree_sources: list[str] = []
     backup_dir: str | None = None
 
     protected = {path: set(lines) for path, lines in (protected_lines or {}).items()}
+    context: dict[str, GuardContext] = dict(guard_context or {})
     if mapping is not None:
         # Lines still executed with the feature disabled are shared code. D_f
         # already excludes them; protecting them explicitly also stops the
         # balance guard from absorbing them while repairing a run.
         for source_path, shared in mapping_protected(mapping).items():
             protected.setdefault(source_path, set()).update(shared)
+        for source_path, file_context in mapping_guard_context(mapping).items():
+            context.setdefault(source_path, file_context)
 
     feature_only = set(extraction_result.feature_only_source_paths)
 
@@ -392,27 +831,46 @@ def remove_feature_code(
 
             _backup_file(source_file, project, backup_dir, backup)
 
-            removed, skipped, absorbed = _remove_lines_from_file(
+            plan = _remove_lines_from_file(
                 source_file,
                 set(line_numbers),
                 protected=protected.get(source_path),
                 balance_guard=balance_guard,
                 allow_structural_absorption=allow_structural_absorption,
+                context=context.get(source_path),
             )
+            removed = len(plan.approved & set(line_numbers))
 
-            absorbed_total += absorbed
-            if skipped:
-                skipped_unbalanced[source_path] = skipped
+            absorbed_total += plan.absorbed_structural
+            absorbed_unexecuted_total += plan.absorbed_unexecuted
+            if plan.skipped:
+                skipped_unbalanced[source_path] = plan.skipped
+            if plan.retained_structural:
+                retained_structural[source_path] = plan.retained_structural
+            if plan.guards_shared_code:
+                guards_shared_code[source_path] = plan.guards_shared_code
+            retained_lines += plan.retained_structural_lines + plan.guards_shared_code_lines
 
             if removed > 0:
                 files_modified += 1
                 total_removed += removed
                 per_file_stats[source_path] = removed
-                note = f" ({absorbed} structural absorbed)" if absorbed else ""
+                notes = []
+                if plan.absorbed_structural:
+                    notes.append(f"{plan.absorbed_structural} structural absorbed")
+                if plan.absorbed_unexecuted:
+                    notes.append(f"{plan.absorbed_unexecuted} unexecuted feature-only absorbed")
+                note = f" ({', '.join(notes)})" if notes else ""
                 print(f"    {source_path}: removed {removed} lines{note}")
 
-            if skipped:
-                print(f"    {source_path}: declined {len(skipped)} unbalanced run(s)")
+            if plan.retained_structural:
+                print(f"    {source_path}: kept {plan.retained_structural_lines} "
+                      f"delimiter line(s) shared code still needs")
+            if plan.guards_shared_code:
+                print(f"    {source_path}: kept {plan.guards_shared_code_lines} "
+                      f"guard line(s) whose unexecuted bodies the reduced build compiles")
+            if plan.skipped:
+                print(f"    {source_path}: declined {len(plan.skipped)} unbalanced run(s)")
 
         if stub_feature_only_files:
             for source_path in sorted(feature_only):
@@ -430,8 +888,12 @@ def remove_feature_code(
                 files_stubbed += 1
                 print(f"    {source_path}: stubbed (dedicated feature file)")
 
+        # Exact removal: every mapped line is removed, or kept for one of the
+        # two disclosed reasons. Kept lines are counted from the plans, not
+        # from run spans, so bridged gap lines never inflate the figure.
+        accounted = total_removed + retained_lines
         incomplete = (
-            total_removed != extraction_result.total_removable_lines
+            accounted != extraction_result.total_removable_lines
             or bool(skipped_unbalanced)
             or bool(missing_source_files)
         )
@@ -440,6 +902,8 @@ def remove_feature_code(
                 f"Exact removal incomplete: removed {total_removed} of "
                 f"{extraction_result.total_removable_lines} mapped line(s)"
             )
+            if retained_lines:
+                message += f" ({retained_lines} kept by design)"
             if missing_source_files:
                 message += f"; {len(missing_source_files)} source file(s) missing"
             if out_of_tree_sources:
@@ -460,14 +924,26 @@ def remove_feature_code(
                 error_message=message,
                 per_file_stats=per_file_stats,
                 skipped_unbalanced=skipped_unbalanced,
+                retained_structural=retained_structural,
+                guards_shared_code=guards_shared_code,
                 absorbed_structural=absorbed_total,
+                absorbed_unexecuted=absorbed_unexecuted_total,
                 missing_source_files=missing_source_files,
                 out_of_tree_sources=out_of_tree_sources,
                 target_lines=extraction_result.total_removable_lines,
+                retained_lines=retained_lines,
             )
 
         print(f"\n    Summary: {total_removed} lines removed, "
               f"{files_modified} file(s) modified, {files_stubbed} file(s) stubbed")
+        if absorbed_unexecuted_total:
+            print(f"    Absorbed {absorbed_unexecuted_total} unexecuted feature-only "
+                  f"line(s) (no code in the reduced build) to close runs")
+        if retained_lines:
+            print(f"    Kept {retained_lines} mapped line(s) by design: "
+                  f"{sum(len(v) for v in retained_structural.values())} delimiter run(s), "
+                  f"{sum(len(v) for v in guards_shared_code.values())} guard(s) of "
+                  f"unexecuted shared code")
         if skipped_unbalanced:
             count = sum(len(v) for v in skipped_unbalanced.values())
             print(f"    Balance guard declined {count} run(s) across "
@@ -481,10 +957,14 @@ def remove_feature_code(
             backup_dir=backup_dir,
             per_file_stats=per_file_stats,
             skipped_unbalanced=skipped_unbalanced,
+            retained_structural=retained_structural,
+            guards_shared_code=guards_shared_code,
             absorbed_structural=absorbed_total,
+            absorbed_unexecuted=absorbed_unexecuted_total,
             missing_source_files=missing_source_files,
             out_of_tree_sources=out_of_tree_sources,
             target_lines=extraction_result.total_removable_lines,
+            retained_lines=retained_lines,
         )
 
         if not rebuild:
@@ -531,7 +1011,10 @@ def remove_feature_code(
             error_message=f"Feature removal failed: {exc}",
             per_file_stats=per_file_stats,
             skipped_unbalanced=skipped_unbalanced,
+            retained_structural=retained_structural,
+            guards_shared_code=guards_shared_code,
             absorbed_structural=absorbed_total,
+            absorbed_unexecuted=absorbed_unexecuted_total,
             missing_source_files=missing_source_files,
             out_of_tree_sources=out_of_tree_sources,
             target_lines=extraction_result.total_removable_lines,
@@ -642,7 +1125,8 @@ def _remove_lines_from_file(
     protected: set[int] | None = None,
     balance_guard: bool = True,
     allow_structural_absorption: bool = False,
-) -> tuple[int, list[tuple[int, int]], int]:
+    context: GuardContext | None = None,
+) -> RemovalPlan:
     """Blank the given lines in a source file.
 
     Lines are replaced with a bare newline rather than deleted so that line
@@ -650,34 +1134,40 @@ def _remove_lines_from_file(
     line mapping valid against the modified file.
 
     Returns:
-        ``(removed, skipped_runs, absorbed)``.
+        The :class:`RemovalPlan` that was applied. ``approved`` is empty when
+        the file could not be read or written.
     """
     try:
         with open(file_path, encoding="utf-8", errors="ignore") as handle:
             lines = handle.readlines()
     except OSError as exc:
         print(f"    [!] Error reading {file_path}: {exc}")
-        return 0, [], 0
+        return RemovalPlan()
 
     if balance_guard:
-        approved, skipped, absorbed = plan_removal(
+        plan = plan_removal_detailed(
             lines,
             line_numbers,
             protected,
             absorb_structural=allow_structural_absorption,
+            absorbable=set(context.absorbable) if context else None,
+            unexecuted_feature_only=(
+                set(context.unexecuted_feature_only) if context else None
+            ),
+            unexecuted_shared=set(context.unexecuted_shared) if context else None,
+            executable_disabled=set(context.executable_disabled) if context else None,
         )
     else:
         total = len(lines)
         blocked = protected or set()
-        approved = {
+        plan = RemovalPlan(approved={
             line for line in line_numbers if 1 <= line <= total and line not in blocked
-        }
-        skipped, absorbed = [], 0
+        })
 
-    if not approved:
-        return 0, skipped, absorbed
+    if not plan.approved:
+        return plan
 
-    for line in approved:
+    for line in plan.approved:
         lines[line - 1] = "\n"
 
     try:
@@ -685,9 +1175,10 @@ def _remove_lines_from_file(
             handle.writelines(lines)
     except OSError as exc:
         print(f"    [!] Error writing {file_path}: {exc}")
-        return 0, skipped, absorbed
+        plan.approved = set()
+        return plan
 
-    return len(approved & line_numbers), skipped, absorbed
+    return plan
 
 
 def _rebuild_project(
