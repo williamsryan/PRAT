@@ -228,6 +228,12 @@ class ProjectAdapter(ABC):
         (or its test suite) so that .gcda profile data is generated.
         Override this in project-specific adapters.
 
+        This is the *polarity-specific* workload: what makes sense to run when
+        ``feature`` is on or off. The mapping step does not call it directly;
+        it runs :meth:`get_test_plan`, which is the same for every build. The
+        ``enabled=False`` workload remains the post-removal check, where the
+        debloated program is expected to lack the feature.
+
         Args:
             feature: Feature being analyzed
             enabled: Whether the feature is enabled in this build
@@ -241,6 +247,39 @@ class ProjectAdapter(ABC):
         if test_cmd:
             return [test_cmd]
         return []
+
+    def get_test_plan(self, features: list[str]) -> list[list[str]]:
+        """The fixed test set U, run unchanged against B_all and every B_f.
+
+        Algorithm 1 line 3 fixes ``T = U u S`` once and lines 5 and 9 run that
+        same T against every build. Tests that exercise f cannot pass against
+        B_f; the mapping tolerates their failure there and takes coverage from
+        the rest of T, so this plan must not depend on which feature is being
+        removed.
+
+        The default is the workload the adapter runs for the all-features
+        build: :meth:`get_execution_commands` with ``enabled=True`` for each
+        feature in ``features``, deduplicated in order. Adapters whose
+        ``enabled=False`` workload is a negative check (asserting the feature is
+        absent) get the right plan from this default, because such checks
+        belong to post-removal verification rather than to T. Override when
+        the enabled workload itself only works with the feature present, so
+        that at least part of T runs against every B_f.
+
+        Args:
+            features: The feature set F. Must be non-empty.
+        """
+        if not features:
+            raise ValueError("features must not be empty")
+        commands: list[list[str]] = []
+        seen: set[tuple[str, ...]] = set()
+        for feature in features:
+            for command in self.get_execution_commands(feature, True):
+                key = tuple(command)
+                if key not in seen:
+                    seen.add(key)
+                    commands.append(list(command))
+        return commands
 
     def coverage_command_executes_tests(self) -> bool:
         """Whether coverage generation itself executes and gates the tests."""

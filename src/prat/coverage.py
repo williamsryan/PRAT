@@ -20,7 +20,13 @@ from pathlib import Path
 
 from .adapters import ProjectAdapter
 from .compilation import BuildSystem
-from .gcov import parse_tool_function_output, write_function_sidecar
+from .gcov import (
+    _COUNT_PREFIX,
+    _GCOV_LINE,
+    _NEVER_EXECUTED,
+    parse_tool_function_output,
+    write_function_sidecar,
+)
 
 
 @dataclass
@@ -38,6 +44,12 @@ class CoverageResult:
     execution_timed_out: int = 0
     symbolic_tests_replayed: int = 0
     test_plan_id: str | None = None
+    # Whether tests in T that could not run against this build were tolerated
+    # (Algorithm 1 runs the same T against B_f, where f's own tests cannot
+    # pass) and the messages of the tests that did fail, so the checkpoint
+    # shows exactly which part of T contributed no coverage.
+    test_failures_tolerated: bool = False
+    execution_errors: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -51,14 +63,24 @@ class ExecutionResult:
     symbolic_replayed: int = 0
     symbolic_failed: int = 0
     errors: list[str] = field(default_factory=list)
+    # The commands that were actually attempted, in order, so the executed
+    # test plan can be digested and compared across builds.
+    executed: list[list[str]] = field(default_factory=list)
+    # When True, a failing or timed-out test does not invalidate the run;
+    # coverage is taken from whatever part of T did execute.
+    failures_tolerated: bool = False
 
     @property
     def success(self) -> bool:
-        """True only when at least one execution completed and none failed."""
+        """True when at least one execution completed and, unless failures are
+        tolerated, none failed or timed out."""
         completed = self.succeeded + self.symbolic_replayed
+        if completed == 0:
+            return False
+        if self.failures_tolerated:
+            return True
         return (
-            completed > 0
-            and self.failed == 0
+            self.failed == 0
             and self.timed_out == 0
             and self.symbolic_failed == 0
         )
@@ -208,12 +230,90 @@ def organize_coverage_files(
         source_identity = _coverage_source_identity(cov_path)
         digest = hashlib.sha256(source_identity.encode()).hexdigest()[:16]
         dest = coverage_dir / f"{digest}-{cov_path.name}"
+        if dest.exists():
+            # The same source compiled into more than one object (Mosquitto
+            # builds lib/*.c into both libmosquitto and the broker) yields one
+            # .gcov per object. They describe the same lines under different
+            # compilation units, so their counts are unioned rather than one
+            # overwriting the other.
+            merge_gcov_files(dest, cov_path)
+            cov_path.unlink()
+            continue
         shutil.move(str(cov_path), str(dest))
         moved_files.append(str(dest))
 
     print(f"[+] Organized {len(moved_files)} coverage files in {coverage_dir}")
 
     return str(coverage_dir)
+
+
+def merge_gcov_files(target: Path, extra: Path) -> None:
+    """Union ``extra``'s execution counts into ``target`` line by line.
+
+    A line executed in either compilation unit is executed; a line that is
+    executable in one and non-executable (``-``) in the other keeps the
+    executable reading; counts are summed. Header (line 0) and ``gcov -f``
+    function lines come from ``target``.
+    """
+    counts: dict[int, str] = {}
+    sources: dict[int, str] = {}
+    header: list[str] = []
+    functions: list[str] = []
+
+    def absorb(path: Path) -> None:
+        with path.open(encoding="utf-8", errors="ignore") as handle:
+            for raw in handle:
+                line = raw.rstrip("\n")
+                match = _GCOV_LINE.match(line)
+                if not match:
+                    if path == target:
+                        functions.append(line)
+                    continue
+                count_field, line_field, text = match.groups()
+                line_no = int(line_field)
+                if line_no == 0:
+                    if path == target:
+                        header.append(line)
+                    continue
+                sources.setdefault(line_no, text)
+                counts[line_no] = _merge_count(counts.get(line_no), count_field)
+
+    absorb(target)
+    absorb(extra)
+
+    with target.open("w", encoding="utf-8") as handle:
+        for line in header:
+            handle.write(line + "\n")
+        for line_no in sorted(counts):
+            handle.write(f"{counts[line_no]:>9}:{line_no:>5}:{sources[line_no]}\n")
+        for line in functions:
+            handle.write(line + "\n")
+
+
+def _merge_count(current: str | None, incoming: str) -> str:
+    """Combine two gcov count fields for the same line."""
+    incoming = incoming.strip()
+    if current is None:
+        return incoming
+    current = current.strip()
+
+    def numeric(field: str) -> int | None:
+        prefix = _COUNT_PREFIX.match(field)
+        return int(prefix.group(1)) if prefix else None
+
+    a, b = numeric(current), numeric(incoming)
+    if a is not None and b is not None:
+        return str(a + b)
+    if a is not None:
+        return current
+    if b is not None:
+        return incoming
+    # Neither is a count: prefer "never executed" (executable) over "-".
+    if current in _NEVER_EXECUTED:
+        return current
+    if incoming in _NEVER_EXECUTED:
+        return incoming
+    return current
 
 
 def _coverage_source_identity(path: Path) -> str:
@@ -477,6 +577,7 @@ def execute_for_coverage(
     symbolic_tests: list[str] | None = None,
     binary_path: str | None = None,
     execution_commands: list[list[str]] | None = None,
+    allow_failures: bool = False,
 ) -> ExecutionResult:
     """
     Execute the test suite T to generate .gcda profile data.
@@ -495,16 +596,23 @@ def execute_for_coverage(
         symbolic_tests: Paths to KLEE ``.ktest`` files (the set S), replayed via
             klee-replay against ``binary_path``.
         binary_path: Instrumented binary to replay symbolic tests against.
+        execution_commands: The fixed plan U to run, unchanged, against this
+            build. Defaults to the adapter's polarity-specific workload.
+        allow_failures: Tolerate tests that fail or time out. Algorithm 1 runs
+            the same T against B_f, where the tests exercising f cannot pass;
+            their failure is recorded and coverage is taken from the rest of T.
+            The baseline B_all must never use this.
 
     Returns:
         Structured result. Coverage is valid only when at least one test or
-        symbolic replay completes successfully and none fail or time out.
+        symbolic replay completes successfully and, unless ``allow_failures``
+        is set, none fail or time out.
     """
     project_path = str(adapter.project_path)
     env = os.environ.copy()
     env.update(adapter.get_coverage_environment())
 
-    result = ExecutionResult()
+    result = ExecutionResult(failures_tolerated=allow_failures)
 
     # --- U: unit tests shipped with the project -----------------------------
     exec_cmds = (
@@ -516,6 +624,7 @@ def execute_for_coverage(
         print("    [!] Adapter provided no execution commands (U is empty)")
     for cmd in exec_cmds:
         result.commands += 1
+        result.executed.append(list(cmd))
         try:
             print(f"    Running: {' '.join(cmd)}")
             proc = subprocess.run(
@@ -533,13 +642,17 @@ def execute_for_coverage(
                 detail = (proc.stderr or proc.stdout or "").strip().splitlines()
                 message = detail[-1] if detail else f"exit code {proc.returncode}"
                 result.errors.append(f"{' '.join(cmd)}: {message}")
+                if allow_failures:
+                    print("    [!] Test failed in this build; tolerated "
+                          "(contributes no coverage)")
         except subprocess.TimeoutExpired:
             print(f"    [!] Execution timed out after {timeout}s")
             result.timed_out += 1
+            result.errors.append(f"{' '.join(cmd)}: timed out after {timeout}s")
         except (OSError, subprocess.SubprocessError) as exc:
             print(f"    [!] Execution failed: {exc}")
             result.failed += 1
-            result.errors.append(str(exc))
+            result.errors.append(f"{' '.join(cmd)}: {exc}")
 
     # --- S: symbolically generated tests ------------------------------------
     if symbolic_tests:
@@ -576,6 +689,7 @@ def generate_coverage_with_adapter(
     label: str | None = None,
     execution_commands: list[list[str]] | None = None,
     test_plan_id: str | None = None,
+    allow_test_failures: bool = False,
 ) -> CoverageResult:
     """
     Generate coverage files using a ProjectAdapter.
@@ -596,7 +710,12 @@ def generate_coverage_with_adapter(
             ``feature``/``enabled`` pair; batch analysis passes an explicit
             label such as ``all_features``.
         execution_commands: A precomputed test plan to execute unchanged.
-        test_plan_id: Digest identifying that test plan across builds.
+        test_plan_id: Digest identifying that test plan across builds. When
+            this function runs the plan itself, the recorded digest is
+            recomputed from the commands actually executed, so a build that
+            ran a different plan cannot inherit the caller's digest.
+        allow_test_failures: Tolerate tests in T that cannot pass against this
+            build (a B_f build lacking f). Never set for B_all.
 
     Returns:
         CoverageResult with paths to generated .gcov files
@@ -624,7 +743,10 @@ def generate_coverage_with_adapter(
                 enabled,
                 symbolic_tests=symbolic_tests,
                 execution_commands=execution_commands,
+                allow_failures=allow_test_failures,
             )
+            # The digest of record is what ran, not what was requested.
+            test_plan_id = test_plan_digest(execution.executed, symbolic_tests)
             if not execution.success:
                 return CoverageResult(
                     success=False,
@@ -639,8 +761,15 @@ def generate_coverage_with_adapter(
                     execution_timed_out=execution.timed_out,
                     symbolic_tests_replayed=execution.symbolic_replayed,
                     test_plan_id=test_plan_id,
+                    test_failures_tolerated=allow_test_failures,
+                    execution_errors=list(execution.errors),
                 )
-            print("    [+] Execution complete — .gcda profile data generated")
+            if execution.errors:
+                print(f"    [+] Execution complete — {execution.succeeded} of "
+                      f"{execution.commands} test command(s) ran; "
+                      f"{len(execution.errors)} could not run in this build")
+            else:
+                print("    [+] Execution complete — .gcda profile data generated")
 
         # Step 2: Run coverage tool (gcov/llvm-cov) on .gcno + .gcda files.
         # CMake builds put .gcda files under build/; use the cmake path.
@@ -764,7 +893,11 @@ def generate_coverage_with_adapter(
             execution.symbolic_failed += symbolic_execution.symbolic_failed
             execution.errors.extend(symbolic_execution.errors)
 
-        # Organize into standard directory structure
+        # Organize into standard directory structure. One staged file per
+        # distinct source; a source compiled into several objects is merged.
+        distinct_sources = len(
+            {_coverage_source_identity(Path(path)) for path in coverage_files}
+        )
         base_dir = output_dir if output_dir else str(Path.cwd())
         coverage_dir = organize_coverage_files(
             coverage_files, feature, enabled, base_dir, label=label
@@ -778,28 +911,24 @@ def generate_coverage_with_adapter(
             if functions:
                 write_function_sidecar(coverage_dir, functions)
 
+        staged_ok = len(staged_files) == distinct_sources > 0
         return CoverageResult(
-            success=(
-                len(staged_files) == len(coverage_files) > 0
-                and execution.success
-                and not missing_files
-            ),
+            success=(staged_ok and execution.success and not missing_files),
             coverage_files=staged_files,
             coverage_dir=coverage_dir,
             missing_files=missing_files,
             error_message=(
                 None
-                if (
-                    len(staged_files) == len(coverage_files) > 0
-                    and execution.success
-                    and not missing_files
-                )
+                if (staged_ok and execution.success and not missing_files)
                 else execution.error_message()
                 if not execution.success
                 else f"Coverage generation was incomplete for "
                 f"{len(missing_files)} input(s)"
                 if missing_files
                 else "No coverage files generated"
+                if not coverage_files
+                else f"Staged {len(staged_files)} coverage file(s) for "
+                f"{distinct_sources} source(s)"
             ),
             dynamic_execution=execution.success,
             execution_commands=execution.commands,
@@ -808,6 +937,8 @@ def generate_coverage_with_adapter(
             execution_timed_out=execution.timed_out,
             symbolic_tests_replayed=execution.symbolic_replayed,
             test_plan_id=test_plan_id,
+            test_failures_tolerated=allow_test_failures,
+            execution_errors=list(execution.errors),
         )
 
     except Exception as e:
@@ -818,6 +949,7 @@ def generate_coverage_with_adapter(
             missing_files=[],
             error_message=f"Coverage generation with adapter failed: {e}",
             test_plan_id=test_plan_id,
+            test_failures_tolerated=allow_test_failures,
         )
 
 

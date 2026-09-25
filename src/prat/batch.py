@@ -58,7 +58,12 @@ from .discovery import Feature, discover_features
 from .extraction import ExtractionResult, extract_from_mapping
 from .feature_graph import build_feature_graph, generate_feature_graph_html
 from .gcov import load_coverage_dir
-from .mapping import FeatureMapping, coverage_percent, map_feature_from_coverage
+from .mapping import (
+    FeatureMapping,
+    coverage_percent,
+    map_feature_from_coverage,
+    restrict_to_project,
+)
 from .removal import RemovalResult, remove_feature_code, restore_from_backup
 from .symbolic import (
     KleeConfig,
@@ -88,6 +93,9 @@ class FeatureAnalysis:
     #: Pipeline stage responsible for a discarded or failed analysis.
     failure_stage: str | None = None
     coverage: CoverageResult | None = None
+    #: Commands of T that could not run against this B_f (the feature's own
+    #: tests, typically); they contributed no coverage to L_f.
+    tests_not_run: list[str] = field(default_factory=list)
 
     @property
     def analyzed(self) -> bool:
@@ -137,6 +145,11 @@ class BatchResult:
     run_id: str | None = None
     source_commit: str | None = None
     feature_names: list[str] = field(default_factory=list)
+    #: Digest and size of the fixed test plan T run against every build.
+    test_plan_id: str | None = None
+    test_plan_commands: int | None = None
+    #: Sources gcov reported outside the project tree, dropped before mapping.
+    out_of_tree_sources: list[str] = field(default_factory=list)
 
     @property
     def union_removable_lines(self) -> int:
@@ -312,13 +325,20 @@ def run_batch_analysis(
     all_names = [f.name for f in active]
     result.feature_names = list(all_names)
     result.source_commit = _git_commit(project_path)
-    fixed_test_commands = _all_feature_test_commands(adapter, all_names)
+    # Algorithm 1 line 3: T is fixed once, then run unchanged against B_all
+    # and every B_f (lines 5 and 9). The adapter supplies a plan that does not
+    # depend on any single feature's polarity.
+    fixed_test_commands = (
+        [list(c) for c in adapter.get_test_plan(all_names)] if adapter else []
+    )
     plan_commands = fixed_test_commands or (
         [["adapter-managed-coverage-tests"]]
-        if adapter.coverage_command_executes_tests()
+        if adapter and adapter.coverage_command_executes_tests()
         else []
     )
     workload_plan_id = test_plan_digest(plan_commands, symbolic_tests)
+    result.test_plan_id = workload_plan_id
+    result.test_plan_commands = len(fixed_test_commands)
 
     # --- B_all <- Compile(P); L_all <- CoverageAnalysis(B_all, T) -----------
     print("\n[3] Building baseline B_all and collecting L_all...")
@@ -348,6 +368,15 @@ def run_batch_analysis(
         result.error_message = (
             f"No parseable coverage in baseline {baseline_cov.coverage_dir}"
         )
+        print(f"    [!] {result.error_message}")
+        return _finalize_batch_result(result, output_dir, start_time)
+    # Inline code the build executed in system headers is not part of P.
+    baseline_coverage, dropped = restrict_to_project(baseline_coverage, project_path)
+    result.out_of_tree_sources = list(dropped)
+    if dropped:
+        print(f"    Ignoring {len(dropped)} source(s) outside the project tree")
+    if not baseline_coverage:
+        result.error_message = "No baseline coverage for sources inside the project tree"
         print(f"    [!] {result.error_message}")
         return _finalize_batch_result(result, output_dir, start_time)
 
@@ -399,6 +428,7 @@ def run_batch_analysis(
             compilation, output_dir, symbolic_tests, states,
             execution_commands=fixed_test_commands,
             test_plan_id=workload_plan_id,
+            allow_test_failures=True,
         )
         analysis.coverage = cov
 
@@ -423,6 +453,22 @@ def run_batch_analysis(
             )
             print(f"    [!] {result.error_message}")
             return _finalize_batch_result(result, output_dir, start_time)
+        if cov.test_plan_id != (
+            result.baseline_coverage.test_plan_id
+            if result.baseline_coverage
+            else workload_plan_id
+        ):
+            reason = "the test plan run against B_f differs from the one run against B_all"
+            analysis.discarded_reason = reason
+            analysis.failure_stage = "execution"
+            result.features_failed += 1
+            result.error_message = f"Coverage failed for {feature.name}; {reason}"
+            print(f"    [!] {result.error_message}")
+            return _finalize_batch_result(result, output_dir, start_time)
+        if cov.execution_errors:
+            analysis.tests_not_run = list(cov.execution_errors)
+            print(f"    {len(cov.execution_errors)} test command(s) in T could "
+                  f"not run against B_{feature.name} (no coverage contributed)")
 
         disabled_coverage = load_coverage_dir(cov.coverage_dir)
         if not disabled_coverage:
@@ -433,6 +479,8 @@ def run_batch_analysis(
                 f"Coverage failed for {feature.name}; no parseable files"
             )
             return _finalize_batch_result(result, output_dir, start_time)
+        disabled_coverage, dropped = restrict_to_project(disabled_coverage, project_path)
+        result.out_of_tree_sources = sorted(set(result.out_of_tree_sources) | set(dropped))
         mapping = map_feature_from_coverage(
             feature.name, baseline_coverage, disabled_coverage
         )
@@ -492,7 +540,11 @@ def run_batch_analysis(
             )
             return _finalize_batch_result(result, output_dir, start_time)
 
-        test_commands = _all_feature_test_commands(adapter, all_names)
+        # Paper: verification re-runs T, the same fixed plan the mapping ran.
+        # Against the all-features-disabled reference build every feature's
+        # own tests already fail; the debloated build must fail them the same
+        # way and pass everything else identically.
+        test_commands = fixed_test_commands
         try:
             references = capture_reference_outputs(
                 project_path,
@@ -591,23 +643,6 @@ def _union_extraction(
     )
 
 
-def _all_feature_test_commands(
-    adapter: ProjectAdapter,
-    features: list[str],
-) -> list[list[str]]:
-    """Union adapter test commands without running duplicates."""
-    commands: list[list[str]] = []
-    seen: set[tuple[str, ...]] = set()
-    for feature in features:
-        for enabled in (True, False):
-            for command in adapter.get_execution_commands(feature, enabled):
-                key = tuple(command)
-                if key not in seen:
-                    seen.add(key)
-                    commands.append(command)
-    return commands
-
-
 def _finalize_batch_result(
     result: BatchResult,
     output_dir: str,
@@ -642,6 +677,9 @@ def _save_batch_checkpoint(result: BatchResult, output_dir: str) -> str:
         "run_id": result.run_id,
         "source_commit": result.source_commit,
         "feature_names": result.feature_names,
+        "test_plan_id": result.test_plan_id,
+        "test_plan_commands": result.test_plan_commands,
+        "out_of_tree_sources": result.out_of_tree_sources,
         "baseline_all_features": result.baseline_all_features,
         "baseline_coverage_percent": result.baseline_coverage_percent,
         "baseline_coverage": (
@@ -660,6 +698,7 @@ def _save_batch_checkpoint(result: BatchResult, output_dir: str) -> str:
                 "affected_files": analysis.affected_files,
                 "discarded_reason": analysis.discarded_reason,
                 "failure_stage": analysis.failure_stage,
+                "tests_not_run": analysis.tests_not_run,
                 "coverage": (
                     asdict(analysis.coverage) if analysis.coverage else None
                 ),
@@ -807,6 +846,7 @@ def _coverage(
     label: str | None = None,
     execution_commands: list[list[str]] | None = None,
     test_plan_id: str | None = None,
+    allow_test_failures: bool = False,
 ) -> CoverageResult:
     if adapter:
         return generate_coverage_with_adapter(
@@ -817,6 +857,7 @@ def _coverage(
             label=label,
             execution_commands=execution_commands,
             test_plan_id=test_plan_id,
+            allow_test_failures=allow_test_failures,
         )
     return generate_coverage(
         project_path=project_path,

@@ -105,7 +105,13 @@ class FFmpegAdapter(ProjectAdapter):
         return ["make", "fate", "-j3", "SAMPLES=fate-suite/"]
 
     def get_execution_commands(self, feature: str, enabled: bool) -> list[list[str]]:
-        """Exercise the in-tree DCA decoder without an external FATE corpus."""
+        """Exercise the in-tree DCA decoder without an external FATE corpus.
+
+        The ``enabled`` workload (encode a sine to DCA, decode it back) is the
+        fixed T used for mapping; :meth:`get_test_plan` derives it. The
+        ``disabled`` workload asserts the decoder is *absent*, which is the
+        post-removal check and not part of T.
+        """
         if feature.lower() != "decoder=dca":
             return super().get_execution_commands(feature, enabled)
 

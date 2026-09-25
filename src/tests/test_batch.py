@@ -172,6 +172,7 @@ class TestAlgorithmOneBuildCount:
     def _patched_batch(self, tmp_path, features, compile_mock, coverage_mock):
         adapter = MagicMock()
         adapter.get_execution_commands.return_value = [["make", "test"]]
+        adapter.get_test_plan.return_value = [["make", "test"]]
         adapter.coverage_command_executes_tests.return_value = False
         return patch.multiple(
             "prat.batch",
@@ -437,6 +438,7 @@ class TestAlgorithmOneBuildCount:
         adapter.source_directories = ["src"]
         adapter.coverage_command_executes_tests.return_value = False
         adapter.get_execution_commands.return_value = [["make", "test"]]
+        adapter.get_test_plan.return_value = [["make", "test"]]
         adapter.get_build_commands_for_set.return_value = [["make"]]
 
         def fake_compile(*_args, **_kwargs):

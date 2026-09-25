@@ -131,6 +131,13 @@ class TestPaperValidator:
             "run_id": run_id,
             "project": "mosquitto",
             "feature": "TLS",
+            "baseline_mode": "all-features",
+            "baseline_all_features": True,
+            "mapping_build_states": [
+                {"TLS": True, "BRIDGE": True},
+                {"TLS": False, "BRIDGE": True},
+            ],
+            "test_plan_identical": True,
             "coverage_enabled": {
                 "dynamic_execution": dynamic,
                 "execution_succeeded": 1 if dynamic else 0,
@@ -226,6 +233,43 @@ class TestPaperValidator:
         assert result.provenance["source_commit"] == "abc123"
         assert result.provenance["checkpoint_run_id"] == "run-1"
         assert result.provenance["host"]["image_id"] == "sha256:image"
+
+    def test_project_default_baseline_is_not_compatible(self, tmp_path):
+        """Algorithm 1 measures L_all against B_all, not the project default."""
+        validator = load_script(
+            "prat_validator_baseline_test", "scripts/validate_paper_results.py"
+        )
+        target = self._bundle(tmp_path)
+        checkpoint = json.loads((target / "workflow_checkpoint.json").read_text())
+        checkpoint["baseline_mode"] = "project-default"
+        checkpoint["baseline_all_features"] = False
+        manifest = json.loads((target / "manifest.json").read_text())
+        host = json.loads((target / "demo_manifest.json").read_text())
+
+        result = validator.validate_target(
+            "demo", self.expected(), checkpoint, manifest, host, strict=True
+        )
+
+        assert result.status == "FAIL"
+        assert "all-features baseline" in result.error_message
+
+    def test_divergent_test_plan_is_not_compatible(self, tmp_path):
+        """T must be the same set for L_all and L_f."""
+        validator = load_script(
+            "prat_validator_plan_test", "scripts/validate_paper_results.py"
+        )
+        target = self._bundle(tmp_path)
+        checkpoint = json.loads((target / "workflow_checkpoint.json").read_text())
+        checkpoint["test_plan_identical"] = False
+        manifest = json.loads((target / "manifest.json").read_text())
+        host = json.loads((target / "demo_manifest.json").read_text())
+
+        result = validator.validate_target(
+            "demo", self.expected(), checkpoint, manifest, host, strict=True
+        )
+
+        assert result.status == "FAIL"
+        assert "test plan T differed" in result.error_message
 
     def test_zero_cannot_reproduce_nonzero_paper_result(self, tmp_path):
         validator = load_script(

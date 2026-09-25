@@ -29,7 +29,7 @@ make docker-demo-aom
 | 1 | `mosquitto-tls` | Mosquitto v2.0.15 | TLS | Make | 790 LOC | 2–5 min |
 | 2 | `mosquitto-bridge` | Mosquitto v2.0.15 | Bridge | Make | 640 LOC | 2–5 min |
 | 3 | `ffmpeg-dca` | FFmpeg n5.1.4 | `decoder=dca` | Autotools | no paper value | 10–20 min |
-| 4 | `uamqp-websockets` | azure-uamqp-c | `use_wsio` | CMake | paper: 26 | 5–10 min |
+| 4 | `uamqp-websockets` | azure-uamqp-c v1.2.0 | `use_wsio` | CMake | paper: 26 | 5–10 min |
 | 5 | `opendds-content-filtered-topic` | OpenDDS DDS-3.25 | `content-filtered-topic` | MPC | paper: 73 | 10–20 min |
 | 6 | `quiche-qlog` | Quiche 0.20.1 | qlog | Cargo | no paper value | 5–15 min |
 | 7 | `rav1e-serialize` | rav1e v0.7.1 | serialize | Cargo | no paper value | 5–15 min |

@@ -55,9 +55,9 @@ prat = "prat.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-# Ship the self-contained web UI template (and its docs) inside the wheel so
-# prat.reporting.generate_html_report can load it at runtime.
-"prat.web" = ["*.html", "*.md"]
+# Ship the self-contained web UI template (and its docs) and the vendored D3
+# build inside the wheel so the report and feature graph render offline.
+"prat.web" = ["*.html", "*.md", "*.js", "D3-LICENSE"]
 
 [tool.ruff]
 target-version = "py39"
@@ -70,6 +70,9 @@ select = ["E", "F", "W", "I", "N", "UP", "B", "SIM"]
 ignore = ["E501"]
 
 [tool.mypy]
+# The package declares requires-python >= 3.9. Current mypy releases refuse a
+# 3.9 target, so type checking runs against 3.10; ruff's target-version = "py39"
+# is what enforces 3.9 syntax compatibility.
 python_version = "3.10"
 warn_return_any = true
 warn_unused_configs = true

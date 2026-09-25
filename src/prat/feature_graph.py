@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any
 
 from .extraction import ExtractionResult
 from .gcov import format_ranges, merge_contiguous
+from .web import load_d3_bundle
 
 if TYPE_CHECKING:
     from .batch import BatchResult
@@ -1023,7 +1024,7 @@ _GRAPH_HTML_TEMPLATE = """\
   </aside>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+<script>__PRAT_D3_SOURCE__</script>
 <script>
 const GRAPH_DATA = {graph_json};
 
@@ -1583,7 +1584,8 @@ def generate_feature_graph_html(
     """
     Generate an interactive HTML feature graph visualization.
 
-    The visualization is self-contained aside from D3.js from a CDN.
+    The output is a single self-contained file: the vendored D3 build from
+    :mod:`prat.web` is inlined, so the graph renders offline.
     """
     print(f"[+] Generating interactive feature graph: {output_path}")
 
@@ -1595,6 +1597,11 @@ def generate_feature_graph_html(
         total_lines=graph.total_removable_lines,
         graph_json=graph_json,
     )
+    # D3 is substituted after ``.format`` so its braces never reach the formatter.
+    d3_source = load_d3_bundle()
+    if "</script" in d3_source.lower():
+        raise RuntimeError("Vendored D3 contains a closing script tag; refusing to inline it")
+    html = html.replace("__PRAT_D3_SOURCE__", d3_source, 1)
 
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     with open(output_path, "w") as f:

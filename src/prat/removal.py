@@ -59,6 +59,9 @@ class RemovalResult:
     # Non-executable structural lines absorbed to keep delimiters balanced.
     absorbed_structural: int = 0
     missing_source_files: list[str] = field(default_factory=list)
+    # Sources in D_f that lie outside the project tree (system headers whose
+    # inline code the build executed). Never modified.
+    out_of_tree_sources: list[str] = field(default_factory=list)
     target_lines: int = 0
 
     @property
@@ -329,7 +332,10 @@ def remove_feature_code(
         RemovalResult. ``success`` is False when the rebuild failed, so callers
         can treat a broken build as a failed removal.
     """
-    project = Path(project_path)
+    # Resolve once: gcov often records absolute source paths (CMake builds do),
+    # and the backup's relative layout, the restore, and the in-tree check all
+    # depend on comparing against an absolute project root.
+    project = Path(project_path).resolve()
     total_removed = 0
     files_modified = 0
     files_stubbed = 0
@@ -337,6 +343,7 @@ def remove_feature_code(
     skipped_unbalanced: dict[str, list[tuple[int, int]]] = {}
     absorbed_total = 0
     missing_source_files: list[str] = []
+    out_of_tree_sources: list[str] = []
     backup_dir: str | None = None
 
     protected = {path: set(lines) for path, lines in (protected_lines or {}).items()}
@@ -371,6 +378,14 @@ def remove_feature_code(
 
             source_file = _find_source_file(project, source_path)
             if source_file is None:
+                if _is_outside(project, source_path):
+                    # A system header (an inline function in OpenSSL's headers,
+                    # say) can appear in D_f because the build executed it,
+                    # but it is not part of P and PRAT must never write to it.
+                    print(f"    [!] Not in the project tree, left untouched: "
+                          f"{source_path}")
+                    out_of_tree_sources.append(source_path)
+                    continue
                 print(f"    [!] Source file not found: {source_path}")
                 missing_source_files.append(source_path)
                 continue
@@ -427,6 +442,11 @@ def remove_feature_code(
             )
             if missing_source_files:
                 message += f"; {len(missing_source_files)} source file(s) missing"
+            if out_of_tree_sources:
+                message += (
+                    f"; {len(out_of_tree_sources)} source(s) outside the project "
+                    "tree were left untouched"
+                )
             if skipped_unbalanced:
                 message += "; one or more mapped ranges were syntactically unsafe"
             restored = bool(backup_dir and restore_from_backup(backup_dir, project_path))
@@ -442,6 +462,7 @@ def remove_feature_code(
                 skipped_unbalanced=skipped_unbalanced,
                 absorbed_structural=absorbed_total,
                 missing_source_files=missing_source_files,
+                out_of_tree_sources=out_of_tree_sources,
                 target_lines=extraction_result.total_removable_lines,
             )
 
@@ -462,6 +483,7 @@ def remove_feature_code(
             skipped_unbalanced=skipped_unbalanced,
             absorbed_structural=absorbed_total,
             missing_source_files=missing_source_files,
+            out_of_tree_sources=out_of_tree_sources,
             target_lines=extraction_result.total_removable_lines,
         )
 
@@ -511,6 +533,7 @@ def remove_feature_code(
             skipped_unbalanced=skipped_unbalanced,
             absorbed_structural=absorbed_total,
             missing_source_files=missing_source_files,
+            out_of_tree_sources=out_of_tree_sources,
             target_lines=extraction_result.total_removable_lines,
             restored=restored,
         )
@@ -553,13 +576,25 @@ def _backup_file(
 ) -> None:
     if not (backup and backup_dir):
         return
-    try:
-        rel = source_file.relative_to(project)
-    except ValueError:
-        rel = Path(source_file.name)
+    # The backup mirrors the project layout, so restore_from_backup can put
+    # every file back where it came from. _find_source_file only returns
+    # in-tree files, so relative_to cannot fail here.
+    rel = source_file.resolve().relative_to(project.resolve())
     backup_path = Path(backup_dir) / rel
     backup_path.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source_file, backup_path)
+
+
+def _is_outside(project: Path, source_path: str) -> bool:
+    """Whether a gcov-recorded source path points outside the project tree."""
+    candidate = Path(source_path)
+    if not candidate.is_absolute():
+        return False
+    try:
+        candidate.resolve().relative_to(project.resolve())
+    except ValueError:
+        return True
+    return False
 
 
 def _find_source_file(project: Path, source_path: str) -> Path | None:
@@ -567,15 +602,30 @@ def _find_source_file(project: Path, source_path: str) -> Path | None:
 
     gcov's ``Source:`` header is relative to the build root, so the exact join
     normally resolves. The fallbacks handle out-of-tree builds and coverage
-    output that carries only a basename.
+    output that carries only a basename. A path that resolves outside the
+    project tree (an absolute path into a system include directory) is never
+    returned: PRAT modifies the program under analysis, not its toolchain.
     """
-    exact = project / source_path
-    if exact.is_file():
+    project = project.resolve()
+
+    def in_tree(path: Path) -> Path | None:
+        resolved = path.resolve()
+        try:
+            resolved.relative_to(project)
+        except ValueError:
+            return None
+        return resolved if resolved.is_file() else None
+
+    exact = in_tree(project / source_path)
+    if exact is not None:
         return exact
 
+    if _is_outside(project, source_path):
+        return None
+
     for search_dir in ("src", "lib", "build", "."):
-        candidate = project / search_dir / source_path
-        if candidate.is_file():
+        candidate = in_tree(project / search_dir / source_path)
+        if candidate is not None:
             return candidate
 
     basename = os.path.basename(source_path)

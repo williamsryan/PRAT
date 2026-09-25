@@ -82,6 +82,19 @@ def _write_manifest(
         "adapter": type(adapter).__name__ if adapter else None,
         "build_system": adapter.build_system.value if adapter else None,
         "coverage_tool": adapter.coverage_tool if adapter else None,
+        # Which baseline L_all was measured against. Algorithm 1 requires
+        # "all-features" (B_all vs B_f); "project-default" is exploratory.
+        "baseline_mode": result.baseline_mode,
+        "baseline_all_features": result.baseline_all_features,
+        "mapping_build_states": result.mapping_build_states,
+        "features_excluded": result.features_excluded,
+        "out_of_tree_sources": result.out_of_tree_sources,
+        # The fixed T (Algorithm 1 line 3) and which of its commands could not
+        # run against B_f (they contribute no coverage to L_f).
+        "test_plan_id": result.test_plan_id,
+        "test_plan_commands": result.test_plan_commands,
+        "test_plan_identical": result.test_plan_identical,
+        "tests_not_run_in_b_f": result.tests_not_run_in_b_f,
         "python": sys.version.split()[0],
         "platform": platform.platform(),
         "environment": {
@@ -136,9 +149,24 @@ def main() -> int:
         help="Remove the mapped feature code after analysis",
     )
     parser.add_argument(
+        "--default-baseline",
+        action="store_true",
+        help="Exploratory: build the project default configuration with the "
+             "feature forced on/off instead of Algorithm 1's B_all / B_f",
+    )
+    parser.add_argument(
         "--no-verify",
         action="store_true",
         help="Skip post-removal rebuild and test replay",
+    )
+    parser.add_argument(
+        "--skip-feature",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="Leave a discovered build option out of F because this image "
+             "cannot compile it (library not installed). Repeatable; recorded "
+             "in the checkpoint and manifest as features_excluded",
     )
     args = parser.parse_args()
 
@@ -168,6 +196,8 @@ def main() -> int:
         symbolic=args.symbolic,
         remove=args.remove,
         verify=not args.no_verify,
+        all_features_baseline=not args.default_baseline,
+        skip_features=args.skip_feature or None,
     )
 
     _write_manifest(output_dir, project_path, args.feature, result)

@@ -6,6 +6,9 @@ FROM python:3.11-slim-bookworm
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Install build dependencies (stable package names, no pinned apt revisions)
+# Algorithm 1 builds B_all with every discovered option on, so the image needs
+# the libraries the non-default Mosquitto options link against (SRV -> c-ares,
+# JEMALLOC, SYSTEMD, WRAP), plus CUnit for the unit tests that form T (make utest).
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     gcc \
@@ -18,6 +21,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libcjson-dev \
     libwebsockets-dev \
     uuid-dev \
+    libc-ares-dev \
+    libjemalloc-dev \
+    libsystemd-dev \
+    libwrap0-dev \
+    libcunit1-dev \
     xsltproc \
     docbook-xsl \
     && rm -rf /var/lib/apt/lists/*

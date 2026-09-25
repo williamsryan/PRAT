@@ -175,7 +175,9 @@ PRAT generates:
   for a batch run's baseline
 - `report.html` — removable lines per source file
 - `FDG.dot` — the feature graph as Graphviz (feature → file → line-range)
-- `feature_graph.html` — interactive three-tier graph (batch runs)
+- `feature_graph.html` — interactive three-tier graph (feature → files → line sets); a
+  single-feature run yields a one-root graph, a batch run the whole DAG. Self-contained: D3
+  is vendored and inlined, so the page opens offline
 - `comparison_reports/` — the paper's side-by-side reports: per-line execution state in both
   builds with `D_f` marked, and original-vs-debloated source after a removal
 - `report.json` and `workflow_checkpoint.json` — machine-readable results
@@ -197,15 +199,16 @@ why each substitution was necessary.
 |---|---|---|---|---|
 | `mosquitto-tls` | Mosquitto v2.0.15 | `TLS` | make | **790** LOC |
 | `mosquitto-bridge` | Mosquitto v2.0.15 | `Bridge` | make | **640** LOC |
-| `uamqp-websockets` | azure-uamqp-c | `use_wsio` | cmake | **26** LOC |
+| `uamqp-websockets` | azure-uamqp-c v1.2.0 | `use_wsio` | cmake | **26** LOC |
 | `opendds-content-filtered-topic` | OpenDDS DDS-3.25 | `content-filtered-topic` | MPC | **73** LOC |
 | `ffmpeg-dca` | FFmpeg n5.1.4 | `decoder=dca` | autotools | none published |
 | `quiche-qlog` | quiche 0.20.1 | `qlog` | cargo | none published |
 | `rav1e-serialize` | rav1e v0.7.1 | `serialize` | cargo | none published |
 | `aom-encoder` | libaom v3.7.1 | `CONFIG_AV1_ENCODER` | cmake | none published |
 
-> **The committed results under `results/` are stale** — they predate a correction to the mapping
-> algorithm and must be regenerated. See [`results/README.md`](results/README.md).
+> **No results are committed.** The mapping algorithm was corrected after the last snapshot was
+> taken, so every number must be regenerated on the reviewer's machine. See
+> [`results/README.md`](results/README.md) and [`ARTIFACT.md`](ARTIFACT.md).
 
 ```bash
 # Disk-safe compatibility corpus: map → remove → verify each source-pinned target
@@ -244,9 +247,10 @@ ruff check src/
 
 ## Documentation
 
-- [Reproducibility report](REPRODUCIBILITY.md) — per-target results vs. the paper, methodology, and honest limitations
+- [Artifact guide](ARTIFACT.md) — for reviewers: what to run first, how long it takes, what success looks like
+- [Reproducibility report](REPRODUCIBILITY.md) — methodology, provenance of every paper number, and limitations
+- [Paper Alignment](docs/PAPER_ALIGNMENT.md) — each paper claim mapped to the code and the tests that pin it
 - [API Reference](docs/API.md)
-- [Paper Alignment](docs/PAPER_ALIGNMENT.md)
 - [Usage Examples](docs/EXAMPLES.md)
 - [Troubleshooting](docs/TROUBLESHOOTING.md)
 - [Docker Demos](docker/README.md)

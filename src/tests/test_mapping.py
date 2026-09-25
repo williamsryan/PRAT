@@ -19,6 +19,7 @@ from prat.mapping import (
     map_feature,
     map_feature_from_coverage,
     protected_lines,
+    restrict_to_project,
 )
 
 
@@ -164,6 +165,35 @@ class TestCoverageStatistics:
         write_gcov(directory, "src/a.c", {1: "1"})
 
         assert function_percent(load_coverage_dir(str(directory))) is None
+
+
+class TestRestrictToProject:
+    """System headers the build executed are not part of P."""
+
+    def test_drops_absolute_paths_outside_the_tree_and_keeps_the_rest(self, tmp_path):
+        project = tmp_path / "proj"
+        (project / "lib").mkdir(parents=True)
+        inside = str((project / "lib" / "net.c").resolve())
+        outside = str((tmp_path / "usr" / "include" / "openssl" / "x509v3.h").resolve())
+        directory = tmp_path / "cov"
+        write_gcov(directory, "src/a.c", {1: "1"})            # relative: kept
+        write_gcov(directory, inside, {1: "1"})               # absolute, in tree
+        write_gcov(directory, outside, {1: "1"})              # absolute, out of tree
+
+        kept, dropped = restrict_to_project(load_coverage_dir(str(directory)), str(project))
+
+        assert set(kept) == {"src/a.c", inside}
+        assert dropped == [outside]
+
+    def test_nothing_dropped_when_all_in_tree(self, tmp_path):
+        directory = tmp_path / "cov"
+        write_gcov(directory, "src/a.c", {1: "1"})
+        coverage = load_coverage_dir(str(directory))
+
+        kept, dropped = restrict_to_project(coverage, str(tmp_path))
+
+        assert kept == coverage
+        assert dropped == []
 
 
 class TestMapFeatureFromCoverage:

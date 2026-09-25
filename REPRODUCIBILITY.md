@@ -1,7 +1,7 @@
 # PRAT — Reproducibility
 
-**Tool:** PRAT (Program feature Analysis Toolkit) — differential dynamic coverage analysis for
-feature identification and removal.
+**Tool:** PRAT (Protocol Representation and Analysis Toolkit) — differential dynamic coverage
+analysis for feature identification and removal.
 **Paper:** Williams et al., *Guided Feature Identification and Removal for Resource-constrained
 Firmware*, ACM TOSEM 2021 ([doi:10.1145/3487568](https://doi.org/10.1145/3487568)).
 
@@ -11,11 +11,12 @@ Firmware*, ACM TOSEM 2021 ([doi:10.1145/3487568](https://doi.org/10.1145/3487568
 > measurements can test the implementation and compare trends; they cannot establish an exact
 > numerical reproduction of an unrecorded 2021 environment.
 >
-> **Status: results require regeneration.** The mapping algorithm was corrected (see §1), so the
-> result files committed under `results/` were produced by the superseded rule and do not reflect
-> what PRAT computes. `results/README.md` records this. This document describes the methodology,
-> the provenance of every paper number, and how to regenerate and validate — it does not quote
-> measurements from a run that predates the correction.
+> **Status: no results are committed.** The mapping algorithm was corrected (see §1) and the
+> single-feature baseline and test plan were brought in line with Algorithm 1 afterwards, so every
+> earlier result snapshot was produced by superseded rules. Those snapshots were removed rather than
+> left in place; `results/README.md` records this. This document describes the methodology, the
+> provenance of every paper number, and how to regenerate and validate — it does not quote
+> measurements from a run that predates the corrections.
 
 ---
 
@@ -58,11 +59,14 @@ set difference (`src/prat/mapping.py`). The three line classes are pinned by
 `src/tests/test_mapping.py`, and `src/tests/test_integration.py` runs the whole pipeline against a
 real compiler and real gcov on a project shaped like the paper's case.
 
-Four further corrections affect measured numbers:
+Further corrections affect measured numbers:
 
 | Area | Was | Now |
 |---|---|---|
 | Batch analysis | 2 builds per feature, baseline = project defaults | Algorithm 1's **n+1 builds**, with a required all-features baseline |
+| Single-feature analysis (every Docker demo) | Project defaults with `f` forced on vs. forced off | **`B_all` vs. `B_f`** over the discovered feature set, recorded as `baseline_mode = "all-features"` with both configurations in `mapping_build_states`; the old mode survives as `--default-baseline` (`"project-default"`) and is rejected by strict validation |
+| Test set `T` | A different workload per build polarity (single-feature), or the union of both polarities run in every build (batch) | **One fixed `T`** (`ProjectAdapter.get_test_plan`) run unchanged against every build; per-build digests of what actually ran must match. Tests of `f` that cannot pass against `B_f` are tolerated there and listed in the checkpoint; against `B_all` every command must pass |
+| Post-removal verification | Re-ran the adapter's `enabled=False` workload; reference oracle required every command to pass | **Re-runs the same fixed `T`**, rebuilt in the removal configuration; every pre-removal outcome (exit code, output, or inability to run) must be reproduced. Tests of the removed feature are expected failures, reported separately |
 | Removal | Rebuild failure logged, removal reported successful | Rebuild failure **fails the removal and restores** the tree; a delimiter-balance guard prevents removals that would not compile |
 | KLEE | `max_time = 60` **seconds**; generated tests discarded | `max_time_minutes = 60` per Table 3; tests are replayed into coverage, so `T = U u S` |
 | Function coverage | Not collected | `gcov -f` always requested; available for the paper's per-variant table |
@@ -108,8 +112,12 @@ nothing published to compare it to.
 ## 3. Platform and environment
 
 - **Host used during development:** macOS (Apple Silicon, arm64) with Docker Desktop.
-- **Containers:** Linux aarch64. Each demo clones its target at a pinned tag, builds it twice
-  (feature on/off) with `--coverage`, runs the tests, invokes `gcov -f`, and computes `D_f`.
+- **Containers:** Linux aarch64. Each demo clones its target at a pinned tag, discovers `F`,
+  builds `B_all` (every feature on) and `B_f` (every feature but the analyzed one) with
+  `--coverage`, runs the same fixed `T` against both, invokes `gcov -f`, and computes `D_f`.
+  The `B_all` builds inside the pinned images have not yet been re-run since the baseline
+  correction; a demo whose all-features build does not compile fails loudly rather than
+  substituting a different baseline.
 - **Required:** `cc`/`gcc`, `make`, `gcov` (or `llvm-cov`), `python3` ≥ 3.9.
 - **Optional:** `cmake` (CMake targets), `cargo` + `cargo-llvm-cov` (Rust targets), Docker
   (demos, KLEE), `boofuzz` (fuzzing), `klee` or the `klee/klee` image (symbolic tests).
@@ -142,7 +150,7 @@ The paper evaluates seven codebases. Eight compatibility demos cover all seven
 | 1 | `mosquitto-tls` | Mosquitto v2.0.15 | make | `TLS` | **790** LOC |
 | 2 | `mosquitto-bridge` | Mosquitto v2.0.15 | make | `Bridge` | **640** LOC |
 | 3 | `ffmpeg-dca` | FFmpeg n5.1.4 | autotools | `decoder=dca` | none published |
-| 4 | `uamqp-websockets` | azure-uamqp-c | cmake | `use_wsio` | **26** LOC |
+| 4 | `uamqp-websockets` | azure-uamqp-c v1.2.0 | cmake | `use_wsio` | **26** LOC |
 | 5 | `opendds-content-filtered-topic` | OpenDDS DDS-3.25 | MPC | `content-filtered-topic` | **73** LOC |
 | 6 | `quiche-qlog` | quiche 0.20.1 | cargo | `qlog` | none published |
 | 7 | `rav1e-serialize` | rav1e v0.7.1 | cargo | `serialize` | none published |
@@ -250,6 +258,23 @@ against a real compiler and real gcov, then removes the code and rebuilds.
 **Algorithm 1 performs n+1 builds.** `src/tests/test_batch.py::TestAlgorithmOneBuildCount`
 asserts the build count and that the baseline enables everything while each subsequent build
 leaves exactly one feature off. `BatchResult.builds_performed` reports it at runtime.
+
+**The single-feature path builds `B_all` and `B_f`, not default ± f.**
+`src/tests/test_workflow.py::TestAlgorithmOneBaseline` asserts both builds range over the
+discovered feature set, that the configurations are recorded, and that `--default-baseline` is
+labelled `project-default`. `src/tests/test_reproduction.py` asserts strict validation rejects
+that label.
+
+**One `T` runs against every build.** The same class asserts both coverage runs receive the same
+`execution_commands`, that only `B_f` may tolerate failing tests, and that a run whose executed
+plan differs between builds fails. `src/tests/test_coverage.py::TestExecuteForCoverage` pins the
+tolerance semantics (failures fatal for `B_all`, recorded for `B_f`, and something must still run).
+
+**Verification re-runs `T` and reproduces every outcome.**
+`src/tests/test_verification.py::TestReferenceOracle` asserts that a test of the removed feature
+failing identically before and after removal is preserved behaviour, that passing instead is
+divergence, that a passing reference which now fails or can no longer start is divergence, and
+that a reference in which nothing passes is refused.
 
 **The build gate actually gates.** `src/tests/test_removal.py::TestBuildGate` asserts that a
 failed rebuild fails the removal and restores the tree.

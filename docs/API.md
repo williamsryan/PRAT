@@ -153,8 +153,16 @@ def generate_coverage_with_adapter(
     label: str | None = None,
     execution_commands: list[list[str]] | None = None,
     test_plan_id: str | None = None,
+    allow_test_failures: bool = False,
 ) -> CoverageResult
 ```
+
+`execution_commands` is the fixed test plan `T` (from `ProjectAdapter.get_test_plan()`), run
+unchanged against every build. The recorded `test_plan_id` is recomputed from the commands that
+actually ran, not taken from the caller. `allow_test_failures` is set for `B_f` builds only:
+Algorithm 1 runs the same `T` against `B_f`, where the tests of `f` cannot pass; their failure
+is recorded (`execution_errors`, `test_failures_tolerated`) and coverage comes from the rest of
+`T`. `B_all` never tolerates a failing command.
 
 #### `execute_for_coverage()`
 
@@ -169,11 +177,13 @@ def execute_for_coverage(
     symbolic_tests: list[str] | None = None,
     binary_path: str | None = None,
     execution_commands: list[list[str]] | None = None,
+    allow_failures: bool = False,
 ) -> ExecutionResult
 ```
 
 The result succeeds only when at least one unit-test command or symbolic replay
-completes and no command fails or times out.
+completes and, unless `allow_failures` is set, no command fails or times out.
+`ExecutionResult.executed` lists the commands attempted, in order.
 
 ### gcov.py
 
@@ -439,11 +449,15 @@ class CoverageResult:
     execution_timed_out: int = 0
     symbolic_tests_replayed: int = 0
     test_plan_id: Optional[str] = None
+    test_failures_tolerated: bool = False
+    execution_errors: List[str] = field(default_factory=list)
 ```
 
-`test_plan_id` binds the enabled and disabled measurements to the same workload
-plan. Production workflows reject coverage that lacks successful dynamic
-execution.
+`test_plan_id` is the digest of the commands this build actually executed; the workflow and
+batch paths require it to match between `B_all` and every `B_f`, so the two measurements are
+bound to the same `T`. `execution_errors` lists the commands of `T` that could not run against
+this build (tolerated for `B_f` only). Production workflows reject coverage that lacks
+successful dynamic execution.
 
 ### ExecutionResult
 
@@ -673,6 +687,16 @@ class MyProjectAdapter(ProjectAdapter):
     def format_feature_flag(self, feature: str, enabled: bool) -> str:
         return f"WITH_{feature.upper()}={'yes' if enabled else 'no'}"
 ```
+
+Two more hooks matter for Algorithm 1 and are worth overriding when the defaults do not fit:
+
+- `get_test_plan(features)` — the fixed test set `T`, run unchanged against `B_all` and every
+  `B_f`. It must not depend on which feature is being analysed. The default returns
+  `get_execution_commands(f, True)` for each feature in `F`, deduplicated. Override it when the
+  enabled workload only works with the feature present, so that at least part of `T` runs against
+  every `B_f` (the Mosquitto adapter runs a plain-listener broker session alongside its TLS one).
+- `get_execution_commands(feature, enabled)` — the polarity-specific workload. The `enabled=True`
+  form feeds the default `get_test_plan()`; the `enabled=False` form is not used for mapping.
 
 ## Error Handling
 

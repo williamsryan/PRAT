@@ -15,6 +15,7 @@ from prat.coverage import (
     generate_coverage_with_adapter,
     organize_coverage_files,
 )
+from prat.coverage import test_plan_digest as plan_digest
 
 
 class TestCoverageInputs:
@@ -68,6 +69,45 @@ class TestOrganizeCoverageFiles:
         organize_coverage_files([], "TLS", True, str(tmp_path))
 
         assert not (result_dir / "stale.gcov").exists()
+
+    def test_same_source_from_two_objects_is_merged_not_overwritten(self, tmp_path):
+        """Mosquitto compiles lib/*.c into both libmosquitto and the broker, so
+        gcov yields one .gcov per object for the same source. A line executed
+        in either compilation unit is executed."""
+        from prat.gcov import parse_gcov
+
+        lib_dir = tmp_path / "lib"
+        src_dir = tmp_path / "srcobj"
+        lib_dir.mkdir()
+        src_dir.mkdir()
+        header = "        -:    0:Source:lib/net.c\n"
+        (lib_dir / "net.c.gcov").write_text(
+            header
+            + "        3:    1:int a;\n"
+            + "    #####:    2:int b;\n"
+            + "        -:    3:/* only code in the broker build */\n"
+            + "        -:    4:}\n"
+        )
+        (src_dir / "net.c.gcov").write_text(
+            header
+            + "        2:    1:int a;\n"
+            + "        7:    2:int b;\n"
+            + "    #####:    3:/* only code in the broker build */\n"
+            + "        -:    4:}\n"
+        )
+
+        result_dir = organize_coverage_files(
+            [str(lib_dir / "net.c.gcov"), str(src_dir / "net.c.gcov")],
+            "TLS", True, str(tmp_path),
+        )
+
+        staged = list(Path(result_dir).glob("*-net.c.gcov"))
+        assert len(staged) == 1
+        parsed = parse_gcov(str(staged[0]))
+        assert parsed.executed == {1, 2}
+        assert parsed.never_executed == {3}
+        assert parsed.non_executable == {4}
+        assert "        5:    1:" in staged[0].read_text()
 
 
 class TestGenerateCoverage:
@@ -153,6 +193,81 @@ class TestExecuteForCoverage:
         assert result.success is False
         assert result.timed_out == 1
 
+    @patch("prat.coverage.subprocess.run")
+    def test_a_fixed_plan_is_run_instead_of_the_polarity_workload(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=0)
+        adapter = MagicMock()
+        adapter.project_path = "/fake/project"
+        adapter.get_coverage_environment.return_value = {}
+        adapter.get_execution_commands.return_value = [["polarity", "specific"]]
+
+        result = execute_for_coverage(
+            adapter, "TLS", False, execution_commands=[["fixed", "T"]]
+        )
+
+        adapter.get_execution_commands.assert_not_called()
+        assert mock_run.call_args.args[0] == ["fixed", "T"]
+        assert result.executed == [["fixed", "T"]]
+
+    @patch("prat.coverage.subprocess.run")
+    def test_failures_are_fatal_for_b_all(self, mock_run):
+        mock_run.side_effect = [
+            MagicMock(returncode=0),
+            MagicMock(returncode=1, stderr="tls: no such listener", stdout=""),
+        ]
+        adapter = MagicMock()
+        adapter.project_path = "/fake/project"
+        adapter.get_coverage_environment.return_value = {}
+
+        result = execute_for_coverage(
+            adapter, "TLS", True,
+            execution_commands=[["plain"], ["tls"]],
+        )
+
+        assert result.success is False
+        assert result.failed == 1
+        assert "tls: no such listener" in result.error_message()
+
+    @patch("prat.coverage.subprocess.run")
+    def test_failures_are_tolerated_and_recorded_for_b_f(self, mock_run):
+        """Algorithm 1 runs the same T against B_f; f's own tests cannot pass
+        there. Coverage comes from the rest of T, and the failures stay on
+        record."""
+        mock_run.side_effect = [
+            MagicMock(returncode=0),
+            MagicMock(returncode=1, stderr="tls: no such listener", stdout=""),
+        ]
+        adapter = MagicMock()
+        adapter.project_path = "/fake/project"
+        adapter.get_coverage_environment.return_value = {}
+
+        result = execute_for_coverage(
+            adapter, "TLS", False,
+            execution_commands=[["plain"], ["tls"]],
+            allow_failures=True,
+        )
+
+        assert result.success is True
+        assert result.succeeded == 1
+        assert result.failed == 1
+        assert result.executed == [["plain"], ["tls"]]
+        assert result.errors == ["tls: tls: no such listener"]
+
+    @patch("prat.coverage.subprocess.run")
+    def test_tolerance_still_requires_something_to_have_run(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=1, stderr="", stdout="")
+        adapter = MagicMock()
+        adapter.project_path = "/fake/project"
+        adapter.get_coverage_environment.return_value = {}
+
+        result = execute_for_coverage(
+            adapter, "TLS", False,
+            execution_commands=[["tls"]],
+            allow_failures=True,
+        )
+
+        assert result.success is False
+
 
 class TestGenerateCoverageWithAdapter:
     """Tests for generate_coverage_with_adapter()."""
@@ -182,6 +297,50 @@ class TestGenerateCoverageWithAdapter:
 
         assert isinstance(result, CoverageResult)
         assert result.success is True
+
+    @patch("prat.coverage.organize_coverage_files")
+    @patch("prat.coverage.execute_for_coverage")
+    @patch("prat.coverage.subprocess.run")
+    def test_records_the_digest_of_the_plan_actually_run(
+        self, mock_run, mock_exec, mock_organize, tmp_path
+    ):
+        """The caller's digest is not trusted; what ran is what is recorded,
+        with tolerated failures carried into the result."""
+        mock_exec.return_value = ExecutionResult(
+            commands=2, succeeded=1, failed=1,
+            errors=["tls: exit code 1"],
+            executed=[["plain"], ["tls"]],
+            failures_tolerated=True,
+        )
+        mock_organize.side_effect = organize_coverage_files
+        src = tmp_path / "src"
+        src.mkdir()
+        gcov_file = src / "net.c.gcov"
+
+        def run_gcov(*_args, **_kwargs):
+            gcov_file.write_text("coverage data")
+            return MagicMock(returncode=0, stdout="", stderr="")
+
+        mock_run.side_effect = run_gcov
+        adapter = MagicMock()
+        adapter.project_path = str(tmp_path)
+        adapter.coverage_tool = "gcov"
+        adapter.source_directories = ["src"]
+        adapter.coverage_command_executes_tests.return_value = False
+
+        result = generate_coverage_with_adapter(
+            adapter, "TLS", False,
+            execution_commands=[["plain"], ["tls"]],
+            test_plan_id="caller-supplied",
+            allow_test_failures=True,
+        )
+
+        assert result.success is True
+        assert result.test_plan_id == plan_digest([["plain"], ["tls"]])
+        assert result.test_failures_tolerated is True
+        assert result.execution_errors == ["tls: exit code 1"]
+        assert result.execution_failed == 1
+        assert mock_exec.call_args.kwargs["allow_failures"] is True
 
     @patch("prat.coverage.organize_coverage_files")
     @patch("prat.coverage.execute_for_coverage")
