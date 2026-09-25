@@ -51,8 +51,25 @@ class FileMapping:
             the feature disabled. Removal must never touch these, so the set is
             carried through rather than just its size.
         never_executed_both: Lines executable in the enabled build but never
-            executed in either. Reported, never removed — this is the category
-            the paper's conservatism excludes.
+            executed in either. Reported, never removed as D_f — this is the
+            category the paper's conservatism excludes.
+        absorbable_lines: Lines carrying no code in either build: gcov ``-`` in
+            the enabled build (blank, comment, delimiter, preprocessor line,
+            preprocessed-out alternative) and not executable in the disabled
+            build. The removal guard may blank these to keep a file balanced.
+        unexecuted_feature_only: ``never_executed_both`` restricted to lines
+            with no code in the disabled build. Feature code the tests never
+            reached; removing it alongside its guard changes nothing the reduced
+            build does. The guard absorbs such a line only when a run cannot
+            otherwise close, and reports it separately.
+        unexecuted_shared: Code the disabled build compiles that no build
+            executed: shared lines the tests never reached, and disabled-only
+            stubs such as the ``#else`` arm of a feature conditional. Never
+            removed, and a guard whose body needs one stays too.
+        executable_disabled: Every line the disabled build compiles. A D_f line
+            in this set is a skeleton the reduced build keeps (the signature
+            or closing brace of a function B_f compiles but never calls);
+            removing it would orphan the reduced build's own body.
     """
 
     source_path: str
@@ -63,6 +80,10 @@ class FileMapping:
     executed_disabled: int = 0
     shared_lines: set[int] = field(default_factory=set)
     never_executed_both: list[int] = field(default_factory=list)
+    absorbable_lines: set[int] = field(default_factory=set)
+    unexecuted_feature_only: set[int] = field(default_factory=set)
+    unexecuted_shared: set[int] = field(default_factory=set)
+    executable_disabled: set[int] = field(default_factory=set)
 
     @property
     def count(self) -> int:
@@ -159,6 +180,17 @@ def map_feature_from_coverage(
         if not d_lines:
             continue
 
+        # What the reduced build compiles at each line decides what the removal
+        # guard may touch. A file absent from B_f compiles nothing there.
+        executable_disabled = cov_disabled.executable if cov_disabled else set()
+        never_both_set = set(never_both)
+        # Code B_f compiles that no build executed: unexecuted lines shared by
+        # both builds, plus B_f-only stubs (the ``#else`` arm of a feature
+        # conditional). D_f lines are excluded by construction.
+        unexecuted_shared = (
+            (cov_disabled.never_executed - cov_enabled.executed) if cov_disabled else set()
+        )
+
         mapping.files[source_path] = FileMapping(
             source_path=source_path,
             lines=d_lines,
@@ -168,6 +200,10 @@ def map_feature_from_coverage(
             executed_disabled=len(lines_disabled),
             shared_lines=set(lines_disabled),
             never_executed_both=never_both,
+            absorbable_lines=cov_enabled.non_executable - executable_disabled,
+            unexecuted_feature_only=never_both_set - executable_disabled,
+            unexecuted_shared=unexecuted_shared,
+            executable_disabled=set(executable_disabled),
         )
 
     return mapping
@@ -185,6 +221,32 @@ def protected_lines(mapping: FeatureMapping) -> dict[str, set[int]]:
         path: set(file_map.shared_lines)
         for path, file_map in mapping.files.items()
         if file_map.shared_lines
+    }
+
+
+@dataclass(frozen=True)
+class GuardContext:
+    """Per-file line classes the removal guard consults beyond D_f and L_f.
+
+    See :class:`FileMapping` for the meaning of each set.
+    """
+
+    absorbable: frozenset[int] = frozenset()
+    unexecuted_feature_only: frozenset[int] = frozenset()
+    unexecuted_shared: frozenset[int] = frozenset()
+    executable_disabled: frozenset[int] = frozenset()
+
+
+def guard_context(mapping: FeatureMapping) -> dict[str, GuardContext]:
+    """Guard context for every file in D_f, as ``source_path -> GuardContext``."""
+    return {
+        path: GuardContext(
+            absorbable=frozenset(file_map.absorbable_lines),
+            unexecuted_feature_only=frozenset(file_map.unexecuted_feature_only),
+            unexecuted_shared=frozenset(file_map.unexecuted_shared),
+            executable_disabled=frozenset(file_map.executable_disabled),
+        )
+        for path, file_map in mapping.files.items()
     }
 
 

@@ -6,10 +6,12 @@ import subprocess
 import pytest
 
 from prat.extraction import ExtractionResult
+from prat.mapping import GuardContext
 from prat.removal import (
     RemovalResult,
     compute_line_deltas,
     plan_removal,
+    plan_removal_detailed,
     remove_feature_code,
     restore_from_backup,
 )
@@ -160,6 +162,136 @@ class TestPlanRemoval:
 
 
 @pytest.mark.skipif(shutil.which("cc") is None, reason="no C compiler available")
+class TestGuardCategories:
+    """The three kinds of run the guard may keep, and the exact-removal rule."""
+
+    def test_guard_of_unexecuted_shared_code_is_kept_with_its_body(self):
+        """`if(!ctx){ return ERR; }` where the body compiles in B_f but never ran."""
+        lines = ["if (!ctx) {\n", "    return ERR;\n", "}\n", "use(ctx);\n"]
+
+        plan = plan_removal_detailed(
+            lines, {1}, protected={4},
+            unexecuted_shared={2}, executable_disabled={2, 4},
+        )
+
+        assert plan.approved == set()
+        assert plan.guards_shared_code == [(1, 1)]
+        assert plan.guards_shared_code_lines == 1
+        assert plan.skipped == []
+
+    def test_unexecuted_feature_only_body_is_absorbed(self):
+        """Body compiled only in B_all and never executed carries no code in B_f."""
+        lines = ["if (ssl) {\n", "    return ERR;\n", "}\n", "next();\n"]
+
+        plan = plan_removal_detailed(
+            lines, {1}, protected={4},
+            unexecuted_feature_only={2}, executable_disabled={4},
+        )
+
+        assert plan.approved == {1, 2, 3}
+        assert plan.absorbed_unexecuted == 1
+        assert plan.absorbed_structural == 1
+
+    def test_if_else_collapses_to_the_shared_arm(self):
+        """`if(f){A}else{B}` with B live: A and both braces go, B stays.
+
+        gcov marks `} else {` non-executable in both builds; the mapping
+        reports that as absorbable, which is what lets the walk step over it."""
+        lines = ["if (ssl) {\n", "    tls();\n", "} else {\n", "    plain();\n", "}\n"]
+
+        plan = plan_removal_detailed(lines, {1, 2}, protected={4}, absorbable={3, 5})
+
+        assert plan.approved == {1, 2, 3, 5}
+        assert plan.skipped == []
+
+    def test_arm_swap_keeps_the_reduced_build_header(self):
+        lines = [
+            "#ifdef WITH_TLS\n",
+            "if (a || ssl) {\n",
+            "#else\n",
+            "if (a) {\n",
+            "#endif\n",
+            "    body();\n",
+            "}\n",
+        ]
+
+        plan = plan_removal_detailed(lines, {2}, protected={4, 6, 7})
+
+        assert plan.approved == {1, 2, 3, 5}
+        assert plan.absorbed_structural == 3
+
+    def test_delimiter_only_run_shared_code_needs_is_retained(self):
+        lines = ["void f(void) {\n", "    keep();\n", "}\n"]
+
+        plan = plan_removal_detailed(lines, {3}, protected={1, 2})
+
+        assert plan.approved == set()
+        assert plan.retained_structural == [(3, 3)]
+        assert plan.retained_structural_lines == 1
+
+    def test_every_candidate_lands_in_exactly_one_category(self):
+        """A run merged during a walk that is later declined must be re-planned
+        on its own turn, never silently dropped."""
+        lines = [
+            "if (ssl) {\n",
+            "    a();\n",
+            "#ifdef X\n",
+            "    keep();\n",
+            "#endif\n",
+            "}\n",
+            "b();\n",
+        ]
+        candidates = {1, 2, 7}
+
+        plan = plan_removal_detailed(lines, candidates, protected={4})
+
+        declined = {
+            line for lo, hi in plan.all_skipped for line in range(lo, hi + 1)
+        } & candidates
+        assert (plan.approved & candidates) | declined == candidates
+        assert 7 in plan.approved
+
+    def test_kept_guards_do_not_fail_exact_removal(self, tmp_path):
+        (tmp_path / "net.c").write_text(
+            "if (!ctx) {\n    return ERR;\n}\nuse(ctx);\nrm();\n"
+        )
+        context = {
+            "net.c": GuardContext(
+                unexecuted_shared=frozenset({2}), executable_disabled=frozenset({2, 4})
+            )
+        }
+
+        result = remove_feature_code(
+            make_extraction({"net.c": [1, 5]}),
+            str(tmp_path),
+            "TLS",
+            protected_lines={"net.c": {4}},
+            guard_context=context,
+            rebuild=False,
+        )
+
+        assert result.success is True
+        assert result.lines_removed == 1
+        assert result.retained_lines == 1
+        assert result.guards_shared_code == {"net.c": [(1, 1)]}
+        assert result.skipped_unbalanced == {}
+
+    def test_a_genuinely_unbalanced_run_still_fails_exact_removal(self, tmp_path):
+        (tmp_path / "net.c").write_text("if (x) {\n    keep();\n}\n")
+
+        result = remove_feature_code(
+            make_extraction({"net.c": [1]}),
+            str(tmp_path),
+            "TLS",
+            protected_lines={"net.c": {2, 3}},
+            rebuild=False,
+        )
+
+        assert result.success is False
+        assert result.skipped_unbalanced == {"net.c": [(1, 1)]}
+        assert "syntactically unsafe" in (result.error_message or "")
+
+
 class TestGuardPreservesCompilation:
     def test_guarded_removal_still_compiles(self, tmp_path):
         source = tmp_path / "guarded.c"

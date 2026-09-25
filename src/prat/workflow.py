@@ -58,7 +58,6 @@ from .mapping import (
     map_feature_from_coverage,
     restrict_to_project,
 )
-from .mapping import protected_lines as mapping_protected
 from .removal import RemovalResult, remove_feature_code, restore_from_backup
 from .reporting import (
     generate_dot_graph,
@@ -577,7 +576,7 @@ def run_complete_workflow(
                 extraction_result,
                 project_path,
                 feature,
-                protected_lines=mapping_protected(mapping),
+                mapping=mapping,
                 rebuild=not verify,
                 build_commands=build_commands,
             )

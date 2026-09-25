@@ -8,6 +8,7 @@ from prat.compilation import BuildSystem, CompilationResult
 from prat.coverage import CoverageResult
 from prat.coverage import test_plan_digest as plan_digest
 from prat.environment import EnvironmentResult
+from prat.mapping import protected_lines as mapping_protected
 from prat.removal import RemovalResult
 from prat.verification import VerificationResult, VerificationStatus
 from prat.workflow import WorkflowCheckpoint, WorkflowResult, run_complete_workflow
@@ -254,8 +255,10 @@ class TestRemovalAndVerification:
         assert result.success is True
         assert result.removal_result.lines_removed == 1
         assert result.verification_result.status is VerificationStatus.PASSED
-        # Shared lines must be passed through so the guard cannot absorb them.
-        assert remove.call_args.kwargs["protected_lines"] == {"src/net.c": {14}}
+        # The mapping must be passed through: remove_feature_code derives the
+        # shared (protected) lines and the guard context from it.
+        passed = remove.call_args.kwargs["mapping"]
+        assert mapping_protected(passed) == {"src/net.c": {14}}
 
     def test_failed_removal_fails_the_workflow(self, happy_path, tmp_path):
         removal = RemovalResult(
