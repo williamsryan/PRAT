@@ -220,6 +220,51 @@ class TestGuardCategories:
         assert plan.approved == {1, 2, 3, 5}
         assert plan.absorbed_structural == 3
 
+    def test_net_closing_run_is_not_bridged_forward(self):
+        """A `}` gcov charged to the last statement of a block closes backward.
+
+        Bridging it forward would pair it with the *next* block's `{`, approve
+        that opener on the strength of a closer that belongs elsewhere, and leave
+        the shared body below with a dangling `}`."""
+        lines = [
+            "{\n",
+            "    tls(); }\n",
+            "\n",
+            "if (b) {\n",
+            "    shared();\n",
+            "}\n",
+        ]
+
+        plan = plan_removal_detailed(lines, {2, 4}, protected={5, 6})
+
+        assert plan.approved == {1, 2}
+        assert 4 not in plan.approved
+        declined = {
+            line for lo, hi in plan.all_skipped for line in range(lo, hi + 1)
+        }
+        assert declined == {4}
+
+    def test_skeleton_the_reduced_build_compiles_is_kept_as_a_guard(self):
+        """A candidate B_f also compiles is text the reduced build keeps (a
+        signature whose `#else` arm is a stub). It stays, is reported as a
+        guard, and does not drag the feature code around it into decline."""
+        lines = [
+            "int tls_set(struct m *m)\n",
+            "{\n",
+            "    m->ssl = 1;\n",
+            "    return 0;\n",
+            "}\n",
+        ]
+
+        plan = plan_removal_detailed(
+            lines, {1, 2, 3, 4, 5}, executable_disabled={1},
+        )
+
+        assert plan.guards_shared_code == [(1, 1)]
+        assert plan.guards_shared_code_lines == 1
+        assert plan.approved == {2, 3, 4, 5}
+        assert plan.skipped == []
+
     def test_delimiter_only_run_shared_code_needs_is_retained(self):
         lines = ["void f(void) {\n", "    keep();\n", "}\n"]
 

@@ -332,6 +332,12 @@ class _Planner:
         so the whole function goes or none of it does. Gaps are bridged only over
         lines that carry no code in either build; unexecuted feature code is not
         bridged over, it is absorbed only when a run cannot otherwise close.
+
+        A run whose own delimiters are net closing (a ``}`` gcov charged to the
+        last executed statement of a block) is never bridged *forward*: it has
+        nothing open for the following lines to close, and joining it to the
+        next block would pair that ``}`` with the next block's ``{`` and shift
+        every closer below by one block. Such a run closes backward on its own.
         """
         if not runs:
             return runs
@@ -339,7 +345,12 @@ class _Planner:
         for start, end in runs[1:]:
             previous_start, previous_end = bridged[-1]
             gap = range(previous_end + 1, start)
-            if gap and all(self.is_noncode(index) for index in gap):
+            previous_balance = self.balance(set(range(previous_start, previous_end + 1)))
+            if (
+                gap
+                and previous_balance >= 0
+                and all(self.is_noncode(index) for index in gap)
+            ):
                 bridged[-1] = (previous_start, end)
             else:
                 bridged.append((start, end))
@@ -582,11 +593,26 @@ def plan_removal_detailed(
             neither. Never removed; a run that would need one is declined as
             guarding shared code.
     """
-    protected = protected or set()
+    protected = set(protected or ())
     total = len(lines)
     candidate_lines = {
         line for line in candidates if 1 <= line <= total and line not in protected
     }
+    plan = RemovalPlan()
+
+    # A candidate the reduced build compiles is part of a skeleton B_f keeps:
+    # the signature of a function whose ``#else`` arm is a stub, the header of
+    # a ``switch`` whose other cases are shared. Removing it would change text
+    # B_f compiles, so it stays, and it must not be grouped with the feature
+    # code around it or that code is declined along with it.
+    skeleton = candidate_lines & set(executable_disabled or ())
+    if skeleton:
+        candidate_lines -= skeleton
+        protected |= skeleton
+        for start, end in merge_contiguous(sorted(skeleton)):
+            plan.guards_shared_code.append((start, end))
+            plan.guards_shared_code_lines += end - start + 1
+
     planner = _Planner(
         lines,
         candidate_lines,
@@ -596,7 +622,6 @@ def plan_removal_detailed(
         set(unexecuted_shared or ()),
         set(executable_disabled or ()),
     )
-    plan = RemovalPlan()
 
     raw_runs = merge_contiguous(sorted(candidate_lines))
     runs = planner.bridge_gaps(raw_runs) if absorb_structural else raw_runs
@@ -612,12 +637,9 @@ def plan_removal_detailed(
         if all(_is_structural(lines[line - 1]) for line in run_candidates):
             plan.retained_structural.append((start, end))
             plan.retained_structural_lines += len(run_candidates)
-        elif reason == "shared-unexecuted" or any(
-            line in planner.executable_disabled for line in run_candidates
-        ):
-            # Either closing the run needs code the reduced build compiles, or
-            # the run itself is part of a function skeleton the reduced build
-            # compiles (and never calls). Both stay, with that code.
+        elif reason == "shared-unexecuted":
+            # Closing the run needs code the reduced build compiles and never
+            # executed. That code stays, so its guard stays with it.
             plan.guards_shared_code.append((start, end))
             plan.guards_shared_code_lines += len(run_candidates)
         else:
