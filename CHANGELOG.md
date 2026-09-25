@@ -83,6 +83,25 @@ this is a major version and the committed results under `results/` must be regen
   produced files that do not compile. `plan_removal()` now joins runs separated only by
   non-executable structural lines, absorbs the delimiters needed to close a run, and declines any
   run it cannot balance.
+- **Exact removal reasons about unexecuted code instead of declining it.** With the mapping
+  corrected, roughly half of Mosquitto's `D_TLS` was declined: `if (mosq->ssl) {` was mapped
+  while the body it guards ran in neither build, so no run could close. `plan_removal_detailed()`
+  now distinguishes feature-only code `B_all` compiled but `T` never executed (absorbed: it is
+  not in `B_f`), shared code `B_f` compiles but never executed (its guard is **kept** and
+  reported in `RemovalResult.guards_shared_code`, since the paper forbids removing unexecuted
+  lines), a delimiter-only run shared code needs (`retained_structural`), a mapped line `B_f`
+  itself compiles (kept as a guard, not grouped with the feature code around it), and
+  `if(f){A}else{B}` where `B` is live (collapses to `B`). A run whose delimiters are net closing
+  is no longer bridged forward over a gap. `require_complete` accepts the two kept categories as
+  disclosed residue and still fails on any genuine decline. A run merged during a walk and then
+  declined is now re-planned rather than dropped from every category.
+- **Mosquitto's fixed `T` grew from two sessions to seven**: plain, TLS publish/subscribe, mutual
+  TLS with `require_certificate`, a `--capath`/`--ciphers`/`--tls-version`/`--tls-alpn` session,
+  and three expected-failure probes (plain client on the TLS port, wrong CA, missing `cafile`).
+  Both listener configurations carry a string-valued option so the generic config parser runs in
+  both builds. On macOS this takes `|D_TLS|` from 398 to 600 lines and exact removal from
+  failing to 501 removed, 99 kept for a disclosed reason, 0 declined; the debloated build
+  rebuilds and reproduces every pre-removal outcome.
 - **KLEE runs for 60 minutes, not 60 seconds.** `KleeConfig.max_time_minutes` matches the paper's
   Table 3 and converts to the seconds KLEE's flag expects.
 - **Symbolically generated tests are actually used.** They were generated and discarded; they are

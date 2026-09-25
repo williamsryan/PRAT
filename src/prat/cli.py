@@ -383,8 +383,13 @@ def run_analysis(
 
         if result.verification_result:
             ver = result.verification_result
-            print(f"\n✓ Verification: {ver.status.value} "
-                  f"({ver.total_tests_passed}/{ver.total_tests_run} tests passed)")
+            summary = f"{ver.total_tests_passed}/{ver.total_tests_run} tests passed"
+            if ver.expected_failures:
+                summary += (
+                    f", {len(ver.expected_failures)} expected failure(s) of the "
+                    "removed feature reproduced"
+                )
+            print(f"\n✓ Verification: {ver.status.value} ({summary})")
 
         if not remove:
             print("\n💡 Next steps:")

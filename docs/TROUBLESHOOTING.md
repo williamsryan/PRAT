@@ -157,14 +157,28 @@ not build at all and must be skipped.
 
 ### `Exact removal incomplete: ... one or more mapped ranges were syntactically unsafe`
 
-The balance guard declined runs in `D_f` whose removal would leave unbalanced delimiters, and
-`require_complete` (the default) fails the removal and restores the tree rather than remove part
-of `D_f`. The declined ranges are in `RemovalResult.skipped_unbalanced`. This is usually a
-coverage symptom: `if (x) {` reached `D_f` because `T` executed it under `B_all`, but the body
-never ran (so, per the paper, it stays) and the closing brace is not an executable line. A larger
-`T` (`--symbolic`, or more commands in the adapter's `get_test_plan()`) is the fix; the local
-two-session Mosquitto plan on macOS reaches about 20% line coverage and declines roughly half of
-`D_TLS` for this reason.
+The planner declined runs in `D_f` whose removal would leave unbalanced delimiters or would
+delete code the reduced build `B_f` still compiles, and `require_complete` (the default) fails the
+removal and restores the tree rather than remove part of `D_f`. The declined ranges are in
+`RemovalResult.skipped_unbalanced`.
+
+Two kinds of mapped line are *kept* without failing the run, because the paper's correctness rule
+("never remove a line that was not executed") forbids removing them; both are reported per file
+in the manifest and in `report.html`:
+
+- `RemovalResult.retained_structural`: a delimiter-only line (`}`, `);`) that shared code still
+  needs.
+- `RemovalResult.guards_shared_code`: a guard such as `if (!ctx) {` whose body is compiled by
+  `B_f` but was never executed under `T`, so the body is in neither `L_all` nor `L_f`. Removing
+  the guard would leave the body unguarded. This covers structurally dead error branches and
+  function signatures whose `#else` arm is a stub.
+
+A genuine decline is therefore rare and usually a coverage symptom: `T` entered a block under
+`B_all` but exercised so little of it that neither closing the run nor absorbing its unexecuted
+body is possible. A larger `T` (`--symbolic`, or more commands in the adapter's `get_test_plan()`)
+is the fix. The Mosquitto plan grew from two to seven sessions for exactly this reason; with seven,
+the local macOS run removes 501 of 600 mapped lines, keeps 99 for the two reasons above, and
+declines none.
 
 ## Mapping Issues
 

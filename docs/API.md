@@ -252,7 +252,25 @@ def protected_lines(mapping: FeatureMapping) -> dict[str, set[int]]
 ```
 
 The `L_f` lines that must survive removal. Pass to `remove_feature_code()` so
-the balance guard cannot absorb shared code while repairing a run.
+the planner cannot absorb shared code while repairing a run.
+
+#### `guard_context()`
+
+```python
+def guard_context(mapping: FeatureMapping) -> dict[str, GuardContext]
+```
+
+Per-file line sets the removal planner needs beyond `D_f` and `L_f`, derived
+from the two coverage sets: `absorbable` (non-executable in both builds),
+`unexecuted_feature_only` (compiled by `B_all` only, never executed),
+`unexecuted_shared` (compiled by both, never executed) and
+`executable_disabled` (everything `B_f` compiles). Pass as
+`remove_feature_code(..., guard_context=...)`. With it the planner absorbs
+feature-only unexecuted code, keeps guards of shared unexecuted code
+(`RemovalResult.guards_shared_code`) and delimiter-only runs shared code needs
+(`RemovalResult.retained_structural`) without failing `require_complete`, and
+declines only runs it can neither close nor classify
+(`RemovalResult.skipped_unbalanced`).
 
 #### `coverage_percent()` / `function_percent()`
 

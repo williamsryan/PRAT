@@ -90,14 +90,18 @@ reports those as `OBSERVED`, never as a pass or a fail.
 **Known caveat.** The single-feature baseline was changed from project-defaults-±f to `B_all` vs
 `B_f` in this revision. A local run on macOS (`prat App/mosquitto TLS --remove` with the options
 this platform cannot build skipped via `--skip-feature`) exercised the whole path: `B_all` over 19
-options, the fixed two-session `T` against both builds with the TLS session tolerated against
-`B_TLS`, `|D_TLS| = 398` lines across 14 files at 19.9% line coverage under `T`. Removal then
-stopped because the balance guard declined about half of `D_TLS` (bodies never executed by so
-small a `T`, see `docs/TROUBLESHOOTING.md`). The Docker images, which run Mosquitto's unit tests
-as `T`, have not been rebuilt on our side since the change; their Dockerfiles install the
-libraries `B_all` needs. If a target's all-features configuration does not compile in its image,
-the demo fails with `Compilation failed (B_all)` rather than silently falling back to another
-baseline. That is the intended behaviour; report it rather than working around it.
+options, the fixed seven-session `T` (plain, TLS publish/subscribe, mutual TLS, a cipher/version/
+ALPN session, three expected-failure probes) against both builds, `|D_TLS| = 600` lines across
+12 files. Exact removal succeeded: 501 lines removed, 0 declined, 99 kept for a disclosed reason
+(8 delimiter-only lines shared code still needs, 91 guards of shared code the reduced build
+compiles but never executed, which the paper's correctness rule forbids removing). The debloated
+tree rebuilt, the plain session passed unchanged, and the six TLS sessions failed exactly as they
+did against the pre-removal `B_TLS` reference (`expected_failures`). The Docker images, which run
+Mosquitto's unit tests as `T`, have not been rebuilt on our side since the change; their
+Dockerfiles install the libraries `B_all` needs. If a target's all-features configuration does
+not compile in its image, the demo fails with `Compilation failed (B_all)` rather than silently
+falling back to another baseline. That is the intended behaviour; report it rather than working
+around it.
 
 ## Path 3: the full paper algorithm on one codebase (hours, optional)
 
