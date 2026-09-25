@@ -4,7 +4,7 @@ All notable changes to PRAT are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.0.0] — unreleased
+## [2.0.0] — 2026-09-25
 
 Corrects the feature-to-code mapping to the algorithm the paper specifies, and implements the
 paper claims that had no corresponding code. The mapping change alters measured results, so
