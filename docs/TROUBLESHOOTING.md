@@ -180,6 +180,16 @@ is the fix. The Mosquitto plan grew from two to seven sessions for exactly this 
 the local macOS run removes 501 of 600 mapped lines, keeps 99 for the two reasons above, and
 declines none.
 
+To see *why* a specific line was kept without rebuilding, replay the planner against the coverage
+a run retained (it never writes to the project):
+
+```bash
+python scripts/replay_removal_plan.py results/mosquitto-tls App/mosquitto TLS options.c
+```
+
+The output lists every kept range in its category (`SKIPPED`, `STRUCT`, `GUARD`) with the source
+line, and exits non-zero only if a range was genuinely declined.
+
 ## Mapping Issues
 
 The mapping is `D_f = L_all \ L_f`: the lines executed under `T` in the all-features build
